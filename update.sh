@@ -28,6 +28,13 @@ for T in "${TARGETS[@]}"; do
       cp -R "$HERE/dotfiles/claude-code/$d/." "$T/$d/"
     fi
   done
+  # Per-profile overlay — applied AFTER shared, so it wins.
+  # dotfiles/profiles/<name>/ maps to ~/.claude-<name> (~/.claude = "default")
+  P="$(basename "$T" | sed 's/^\.claude-\{0,1\}//')"; [ -z "$P" ] && P=default
+  if [ -d "$HERE/dotfiles/profiles/$P" ]; then
+    cp -R "$HERE/dotfiles/profiles/$P/." "$T/"
+    echo "==> profile overlay applied: $P"
+  fi
   echo "==> dotfiles refreshed: $T"
 done
 
