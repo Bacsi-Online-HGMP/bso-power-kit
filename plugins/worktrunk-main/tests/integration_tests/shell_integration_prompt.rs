@@ -1,0 +1,723 @@
+//! Tests for the shell integration first-run prompt
+//!
+//! These tests verify that `prompt_shell_integration` behaves correctly across scenarios:
+//! - Skips when shell integration is active (WORKTRUNK_DIRECTIVE_CD_FILE set)
+//! - Skips when already prompted (config flag true)
+//! - Skips when already installed (config line exists in shell config)
+//! - Shows hint when not a TTY (non-interactive)
+//! - Prompts and respects user's choice in interactive mode
+
+use crate::common::{TestRepo, repo};
+use rstest::rstest;
+use std::fs;
+use worktrunk::config::UserConfig;
+
+///
+/// When WORKTRUNK_DIRECTIVE_CD_FILE is set (shell integration active), we should:
+/// 1. Never call prompt_shell_integration()
+/// 2. Have zero overhead from the prompt feature
+#[rstest]
+fn test_switch_with_active_shell_integration_no_prompt(repo: TestRepo) {
+    // Create a worktree first
+    let create_output = repo
+        .wt_command()
+        .args(["switch", "--create", "feature"])
+        .output()
+        .unwrap();
+    assert!(
+        create_output.status.success(),
+        "First switch should succeed: {}",
+        String::from_utf8_lossy(&create_output.stderr)
+    );
+
+    // Now switch with shell integration "active" (CD directive file set)
+    // The file must exist (shell wrapper creates it before calling wt)
+    let cd_file = repo.root_path().join("directive_cd.txt");
+    let exec_file = repo.root_path().join("directive_exec.txt");
+    fs::write(&cd_file, "").unwrap();
+    fs::write(&exec_file, "").unwrap();
+    let mut cmd = repo.wt_command();
+    cmd.env("WORKTRUNK_DIRECTIVE_CD_FILE", &cd_file);
+    cmd.env("WORKTRUNK_DIRECTIVE_EXEC_FILE", &exec_file);
+
+    let output = cmd.args(["switch", "feature"]).output().unwrap();
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        output.status.success(),
+        "Switch should succeed.\nstderr: {stderr}\nstdout: {stdout}"
+    );
+
+    // The CD file should have a path (shell integration active)
+    let cd_content = fs::read_to_string(&cd_file).unwrap_or_default();
+    assert!(
+        !cd_content.trim().is_empty(),
+        "CD file should contain a path when shell integration active"
+    );
+
+    // No install prompt in output (would contain "Install shell integration")
+    assert!(
+        !stderr.contains("Install shell integration"),
+        "Should not show install prompt when shell integration active: {stderr}"
+    );
+}
+
+#[rstest]
+fn test_switch_with_skip_prompt_flag(repo: TestRepo) {
+    // Set the skip flag in config
+    let config_path = repo.test_config_path();
+    let config = UserConfig {
+        skip_shell_integration_prompt: true,
+        ..Default::default()
+    };
+    config.save_to(config_path).unwrap();
+
+    let output = repo
+        .wt_command()
+        .args(["switch", "--create", "feature"])
+        .output()
+        .unwrap();
+
+    assert!(output.status.success(), "Switch should succeed");
+
+    // No install prompt in output
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        !stderr.contains("Install shell integration"),
+        "Should not show install prompt when already prompted: {stderr}"
+    );
+}
+
+///
+/// When stdin is not a TTY (e.g., piped input), we should:
+/// - Skip the prompt (can't interact)
+/// - Always show the hint (not just first run)
+/// - NOT mark as prompted (hints are not prompts)
+#[rstest]
+fn test_switch_non_tty_shows_hint(repo: TestRepo) {
+    use std::process::Stdio;
+
+    // Run with piped stdin (not a TTY)
+    let output = repo
+        .wt_command()
+        .args(["switch", "--create", "feature"])
+        .stdin(Stdio::piped())
+        .output()
+        .unwrap();
+
+    assert!(output.status.success(), "Switch should succeed");
+
+    // Verify the switch succeeded without prompting
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("Created branch") && stderr.contains("and worktree"),
+        "Should create worktree: {stderr}"
+    );
+
+    // Should show hint
+    assert!(
+        stderr.contains("wt config shell install"),
+        "Should show install hint: {stderr}"
+    );
+
+    // Config should NOT have skip_shell_integration_prompt set (hints are not prompts)
+    let config_content = fs::read_to_string(repo.test_config_path()).unwrap_or_default();
+    assert!(
+        !config_content.contains("skip-shell-integration-prompt"),
+        "Should not mark as prompted for non-TTY (hints are not prompts): {config_content}"
+    );
+
+    // Second non-TTY run should also show hint
+    let output2 = repo
+        .wt_command()
+        .args(["switch", "--create", "feature2"])
+        .stdin(Stdio::piped())
+        .output()
+        .unwrap();
+
+    let stderr2 = String::from_utf8_lossy(&output2.stderr);
+    assert!(
+        stderr2.contains("wt config shell install"),
+        "Should show hint on every non-TTY run: {stderr2}"
+    );
+}
+
+///
+/// When SHELL is set to an unsupported shell (like tcsh), we should:
+/// - Show a hint that the shell is not supported
+/// - List the supported shells
+#[rstest]
+fn test_switch_unsupported_shell_shows_hint(repo: TestRepo) {
+    use std::process::Stdio;
+
+    // Run with an unsupported shell
+    let mut cmd = repo.wt_command();
+    cmd.env("SHELL", "/bin/tcsh");
+
+    let output = cmd
+        .args(["switch", "--create", "feature"])
+        .stdin(Stdio::piped())
+        .output()
+        .unwrap();
+
+    assert!(output.status.success(), "Switch should succeed");
+
+    // Should show unsupported shell message
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("not yet supported for tcsh"),
+        "Should show unsupported shell message: {stderr}"
+    );
+    assert!(
+        stderr.contains("bash, zsh, fish, nu, PowerShell"),
+        "Should list supported shells: {stderr}"
+    );
+}
+
+///
+/// When SHELL is not set (unusual Unix setup or Windows), we should:
+/// - Show the standard install hint
+#[rstest]
+fn test_switch_no_shell_env_shows_hint(repo: TestRepo) {
+    use std::process::Stdio;
+
+    // Run without SHELL set
+    let mut cmd = repo.wt_command();
+    cmd.env_remove("SHELL");
+
+    let output = cmd
+        .args(["switch", "--create", "feature"])
+        .stdin(Stdio::piped())
+        .output()
+        .unwrap();
+
+    assert!(output.status.success(), "Switch should succeed");
+
+    // Should show install hint
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("wt config shell install"),
+        "Should show install hint when SHELL not set: {stderr}"
+    );
+}
+
+// PTY-based tests for interactive scenarios
+#[cfg(all(unix, feature = "shell-integration-tests"))]
+mod pty_tests {
+    use super::*;
+    use crate::common::pty::{build_pty_command, exec_cmd_in_pty, exec_cmd_in_pty_prompted};
+    use crate::common::{add_pty_filters, setup_snapshot_settings, wt_bin};
+    use insta::assert_snapshot;
+    use std::path::Path;
+    use tempfile::TempDir;
+
+    /// Create insta settings for shell integration prompt PTY tests.
+    ///
+    /// Combines:
+    /// - Standard repo path filters (from setup_snapshot_settings)
+    /// - PTY-specific filters (^D, ANSI resets)
+    /// - Home directory filter (for isolated temp home)
+    fn prompt_pty_settings(repo: &TestRepo, home_dir: &Path) -> insta::Settings {
+        let mut settings = setup_snapshot_settings(repo);
+        add_pty_filters(&mut settings);
+
+        // Replace temp home directory with [HOME]
+        settings.add_filter(&regex::escape(&home_dir.to_string_lossy()), "[HOME]");
+
+        settings
+    }
+
+    /// Test: Already installed (config line exists) → skip prompt
+    ///
+    /// This covers the "installed but shell not restarted" scenario where:
+    /// - Shell integration is not active (no directive env vars)
+    /// - But the config line is already in shell config files
+    /// - We should detect this and skip the prompt (not show interactive prompt)
+    /// - We should NOT mark as prompted (no interactive prompt shown)
+    ///
+    /// Note: Since tests run via `cargo test`, argv[0] contains a path (`target/debug/wt`),
+    /// so the "restart shell" hint is suppressed. Shell integration won't intercept explicit
+    /// paths, so restarting wouldn't help. In production (PATH lookup), users see a restart hint.
+    #[rstest]
+    fn test_already_installed_skips_prompt(repo: TestRepo) {
+        // Create isolated HOME with shell config that already has integration
+        let temp_home = TempDir::new().unwrap();
+        let bashrc = temp_home.path().join(".bashrc");
+        let config_line = "if command -v wt >/dev/null 2>&1; then eval \"$(command wt config shell init bash)\"; fi";
+        fs::write(&bashrc, format!("{config_line}\n")).unwrap();
+
+        let mut env_vars = repo.test_env_vars();
+        // Remove directive env vars (ensure shell integration not active)
+        env_vars.retain(|(k, _)| {
+            k != "WORKTRUNK_DIRECTIVE_CD_FILE"
+                && k != "WORKTRUNK_DIRECTIVE_EXEC_FILE"
+                && k != "WORKTRUNK_DIRECTIVE_FILE"
+        });
+        // Set SHELL to bash since we're testing with .bashrc
+        env_vars.push(("SHELL".to_string(), "/bin/bash".to_string()));
+
+        let cmd = build_pty_command(
+            wt_bin().to_str().unwrap(),
+            &["switch", "--create", "feature"],
+            repo.root_path(),
+            &env_vars,
+            Some(temp_home.path()),
+        );
+        let (output, exit_code) = exec_cmd_in_pty(cmd, "");
+
+        assert_eq!(exit_code, 0);
+
+        // Should NOT contain prompt (detected already installed)
+        assert!(
+            !output.contains("Install shell integration"),
+            "Should not prompt when already installed: {output}"
+        );
+
+        // Should have created the worktree
+        assert!(
+            output.contains("Created branch") && output.contains("and worktree"),
+            "Should create worktree: {output}"
+        );
+
+        // Config should NOT have skip-shell-integration-prompt = true
+        // (no interactive prompt shown, just a hint)
+        let config_content = fs::read_to_string(repo.test_config_path()).unwrap_or_default();
+        assert!(
+            !config_content.contains("skip-shell-integration-prompt"),
+            "Should NOT mark as prompted when just showing hint: {config_content}"
+        );
+    }
+
+    /// Test: Not installed, user declines → mark prompted, no install
+    #[rstest]
+    fn test_user_declines_prompt(repo: TestRepo) {
+        // Create isolated HOME with empty shell config
+        let temp_home = TempDir::new().unwrap();
+        let bashrc = temp_home.path().join(".bashrc");
+        fs::write(&bashrc, "# empty bashrc\n").unwrap();
+
+        let mut env_vars = repo.test_env_vars();
+        env_vars.retain(|(k, _)| k != "WORKTRUNK_DIRECTIVE_FILE");
+        // Set SHELL to bash since we're testing with .bashrc
+        env_vars.push(("SHELL".to_string(), "/bin/bash".to_string()));
+
+        let cmd = build_pty_command(
+            wt_bin().to_str().unwrap(),
+            &["switch", "--create", "feature"],
+            repo.root_path(),
+            &env_vars,
+            Some(temp_home.path()),
+        );
+        let (output, exit_code) = exec_cmd_in_pty_prompted(cmd, &["n\n"], "[y/N");
+
+        assert_eq!(exit_code, 0);
+
+        // Should contain the prompt
+        assert!(
+            output.contains("Install shell integration"),
+            "Should show prompt: {output}"
+        );
+
+        // Should have created the worktree
+        assert!(
+            output.contains("Created branch") && output.contains("and worktree"),
+            "Should create worktree: {output}"
+        );
+
+        // Config should have skip-shell-integration-prompt = true
+        let config_content = fs::read_to_string(repo.test_config_path()).unwrap_or_default();
+        assert!(
+            config_content.contains("skip-shell-integration-prompt = true"),
+            "Should mark as prompted after decline: {config_content}"
+        );
+
+        // Shell config should NOT have the integration line
+        let bashrc_content = fs::read_to_string(&bashrc).unwrap();
+        assert!(
+            !bashrc_content.contains("eval \"$(command wt"),
+            "Should not install when declined: {bashrc_content}"
+        );
+
+        // Snapshot the output (filters applied via settings)
+        prompt_pty_settings(&repo, temp_home.path()).bind(|| {
+            assert_snapshot!("prompt_decline", &output);
+        });
+    }
+
+    /// Test: Not installed, user accepts → install and show success
+    #[rstest]
+    fn test_user_accepts_prompt(repo: TestRepo) {
+        // Create isolated HOME with empty shell config
+        let temp_home = TempDir::new().unwrap();
+        let bashrc = temp_home.path().join(".bashrc");
+        fs::write(&bashrc, "# empty bashrc\n").unwrap();
+
+        let mut env_vars = repo.test_env_vars();
+        env_vars.retain(|(k, _)| k != "WORKTRUNK_DIRECTIVE_FILE");
+        // Set SHELL to bash since we're testing with .bashrc
+        env_vars.push(("SHELL".to_string(), "/bin/bash".to_string()));
+
+        let cmd = build_pty_command(
+            wt_bin().to_str().unwrap(),
+            &["switch", "--create", "feature"],
+            repo.root_path(),
+            &env_vars,
+            Some(temp_home.path()),
+        );
+        let (output, exit_code) = exec_cmd_in_pty_prompted(cmd, &["y\n"], "[y/N");
+
+        assert_eq!(exit_code, 0);
+
+        // Should contain the prompt
+        assert!(
+            output.contains("Install shell integration"),
+            "Should show prompt: {output}"
+        );
+
+        // Should show success message for configuration
+        assert!(
+            output.contains("Configured") && output.contains("bash"),
+            "Should show configured message: {output}"
+        );
+
+        // Config should NOT have skip-shell-integration-prompt after accept
+        // (only set after explicit decline - if they uninstall, they can be prompted again)
+        let config_content = fs::read_to_string(repo.test_config_path()).unwrap_or_default();
+        assert!(
+            !config_content.contains("skip-shell-integration-prompt = true"),
+            "Should not set skip flag after accept (installation itself prevents future prompts): {config_content}"
+        );
+
+        // Shell config SHOULD have the integration line
+        let bashrc_content = fs::read_to_string(&bashrc).unwrap();
+        assert!(
+            bashrc_content.contains("eval \"$(command wt"),
+            "Should install when accepted: {bashrc_content}"
+        );
+
+        // Snapshot the output (filters applied via settings)
+        prompt_pty_settings(&repo, temp_home.path()).bind(|| {
+            assert_snapshot!("prompt_accept", &output);
+        });
+    }
+
+    /// Test: User requests preview with ? then declines
+    #[rstest]
+    fn test_user_requests_preview_then_declines(repo: TestRepo) {
+        // Create isolated HOME with empty shell config
+        let temp_home = TempDir::new().unwrap();
+        let bashrc = temp_home.path().join(".bashrc");
+        fs::write(&bashrc, "# empty bashrc\n").unwrap();
+
+        let mut env_vars = repo.test_env_vars();
+        env_vars.retain(|(k, _)| k != "WORKTRUNK_DIRECTIVE_FILE");
+        // Set SHELL to bash since we're testing with .bashrc
+        env_vars.push(("SHELL".to_string(), "/bin/bash".to_string()));
+
+        let cmd = build_pty_command(
+            wt_bin().to_str().unwrap(),
+            &["switch", "--create", "feature"],
+            repo.root_path(),
+            &env_vars,
+            Some(temp_home.path()),
+        );
+        // User requests preview, then declines
+        let (output, exit_code) = exec_cmd_in_pty_prompted(cmd, &["?\n", "n\n"], "[y/N");
+
+        assert_eq!(exit_code, 0);
+
+        // Should contain the prompt (shown twice - before and after preview)
+        assert!(
+            output.contains("Install shell integration"),
+            "Should show prompt: {output}"
+        );
+
+        // Should show preview content (gutter with config line)
+        assert!(
+            output.contains("Will add") && output.contains("bash"),
+            "Should show preview: {output}"
+        );
+
+        // Should show the config line in preview
+        assert!(
+            output.contains("eval") && output.contains("wt config shell init"),
+            "Should show config line in preview: {output}"
+        );
+
+        // Shell config should NOT have the integration line (user declined)
+        let bashrc_content = fs::read_to_string(&bashrc).unwrap();
+        assert!(
+            !bashrc_content.contains("eval \"$(command wt"),
+            "Should not install when declined after preview: {bashrc_content}"
+        );
+
+        // Snapshot the output (filters applied via settings)
+        prompt_pty_settings(&repo, temp_home.path()).bind(|| {
+            assert_snapshot!("prompt_preview_decline", &output);
+        });
+    }
+
+    /// Test: Second switch after first prompt → no prompt
+    #[rstest]
+    fn test_no_prompt_after_first_prompt(repo: TestRepo) {
+        // Create isolated HOME with empty shell config
+        let temp_home = TempDir::new().unwrap();
+        let bashrc = temp_home.path().join(".bashrc");
+        fs::write(&bashrc, "# empty bashrc\n").unwrap();
+
+        let mut env_vars = repo.test_env_vars();
+        env_vars.retain(|(k, _)| k != "WORKTRUNK_DIRECTIVE_FILE");
+        // Set SHELL to bash since we're testing with .bashrc
+        env_vars.push(("SHELL".to_string(), "/bin/bash".to_string()));
+
+        // First switch - decline the prompt
+        let cmd = build_pty_command(
+            wt_bin().to_str().unwrap(),
+            &["switch", "--create", "feature1"],
+            repo.root_path(),
+            &env_vars,
+            Some(temp_home.path()),
+        );
+        let (_, _) = exec_cmd_in_pty_prompted(cmd, &["n\n"], "[y/N");
+
+        // Second switch - should NOT prompt again
+        let cmd = build_pty_command(
+            wt_bin().to_str().unwrap(),
+            &["switch", "--create", "feature2"],
+            repo.root_path(),
+            &env_vars,
+            Some(temp_home.path()),
+        );
+        let (output, exit_code) = exec_cmd_in_pty(cmd, "");
+
+        assert_eq!(exit_code, 0);
+
+        assert!(
+            !output.contains("Install shell integration"),
+            "Should not prompt on second switch: {output}"
+        );
+    }
+}
+
+/// Tests for commit generation prompt (similar to shell integration prompt)
+#[cfg(all(unix, feature = "shell-integration-tests"))]
+mod commit_generation_prompt_tests {
+    use super::*;
+    use crate::common::pty::{build_pty_command, exec_cmd_in_pty, exec_cmd_in_pty_prompted};
+    use crate::common::wt_bin;
+    use std::os::unix::fs::PermissionsExt;
+    use std::path::{Path, PathBuf};
+    use tempfile::TempDir;
+
+    fn setup_fake_claude(temp_home: &Path) -> PathBuf {
+        // Create a fake claude executable that does nothing
+        let bin_dir = temp_home.join("bin");
+        fs::create_dir_all(&bin_dir).unwrap();
+        let claude_path = bin_dir.join("claude");
+        fs::write(&claude_path, "#!/bin/sh\nexit 0\n").unwrap();
+        // Make executable
+        let mut perms = fs::metadata(&claude_path).unwrap().permissions();
+        perms.set_mode(0o755);
+        fs::set_permissions(&claude_path, perms).unwrap();
+        bin_dir
+    }
+
+    /// Test: No LLM tool available, prompt is skipped and skip flag is set
+    #[rstest]
+    fn test_no_llm_tool_sets_skip_flag(repo: TestRepo) {
+        let temp_home = TempDir::new().unwrap();
+
+        // Stage a change so commit has something to do
+        let test_file = repo.root_path().join("test.txt");
+        fs::write(&test_file, "test content\n").unwrap();
+        repo.run_git(&["add", "test.txt"]);
+
+        let mut env_vars = repo.test_env_vars();
+        // Use minimal PATH to ensure claude/codex aren't found
+        env_vars.push(("PATH".to_string(), "/usr/bin:/bin".to_string()));
+
+        let cmd = build_pty_command(
+            wt_bin().to_str().unwrap(),
+            &["step", "commit"],
+            repo.root_path(),
+            &env_vars,
+            Some(temp_home.path()),
+        );
+        let (output, exit_code) = exec_cmd_in_pty(cmd, "");
+
+        // Should succeed (using fallback commit message)
+        assert_eq!(exit_code, 0, "Command should succeed: {output}");
+
+        // Config should have skip-commit-generation-prompt = true (no tool found)
+        let config_content = fs::read_to_string(repo.test_config_path()).unwrap_or_default();
+        assert!(
+            config_content.contains("skip-commit-generation-prompt = true"),
+            "Should set skip flag when no tool found: {config_content}"
+        );
+    }
+
+    /// Test: LLM tool available, user declines prompt
+    #[rstest]
+    fn test_user_declines_llm_prompt(repo: TestRepo) {
+        let temp_home = TempDir::new().unwrap();
+        let bin_dir = setup_fake_claude(temp_home.path());
+
+        // Stage a change
+        let test_file = repo.root_path().join("test.txt");
+        fs::write(&test_file, "test content\n").unwrap();
+        repo.run_git(&["add", "test.txt"]);
+
+        let mut env_vars = repo.test_env_vars();
+        // Add our fake claude to PATH
+        let path = format!("{}:/usr/bin:/bin", bin_dir.display());
+        env_vars.push(("PATH".to_string(), path));
+
+        let cmd = build_pty_command(
+            wt_bin().to_str().unwrap(),
+            &["step", "commit"],
+            repo.root_path(),
+            &env_vars,
+            Some(temp_home.path()),
+        );
+        let (output, exit_code) = exec_cmd_in_pty_prompted(cmd, &["n\n"], "[y/N");
+
+        assert_eq!(exit_code, 0, "Command should succeed: {output}");
+
+        // Should show the prompt
+        assert!(
+            output.contains("Configure") && output.contains("claude"),
+            "Should show LLM config prompt: {output}"
+        );
+
+        // Config should have skip-commit-generation-prompt = true
+        let config_content = fs::read_to_string(repo.test_config_path()).unwrap_or_default();
+        assert!(
+            config_content.contains("skip-commit-generation-prompt = true"),
+            "Should set skip flag when declined: {config_content}"
+        );
+    }
+
+    /// Test: LLM tool available, user accepts prompt
+    #[rstest]
+    fn test_user_accepts_llm_prompt(repo: TestRepo) {
+        let temp_home = TempDir::new().unwrap();
+        let bin_dir = setup_fake_claude(temp_home.path());
+
+        // Stage a change
+        let test_file = repo.root_path().join("test.txt");
+        fs::write(&test_file, "test content\n").unwrap();
+        repo.run_git(&["add", "test.txt"]);
+
+        let mut env_vars = repo.test_env_vars();
+        let path = format!("{}:/usr/bin:/bin", bin_dir.display());
+        env_vars.push(("PATH".to_string(), path));
+
+        let cmd = build_pty_command(
+            wt_bin().to_str().unwrap(),
+            &["step", "commit"],
+            repo.root_path(),
+            &env_vars,
+            Some(temp_home.path()),
+        );
+        let (output, _exit_code) = exec_cmd_in_pty_prompted(cmd, &["y\n"], "[y/N");
+
+        // Note: exit_code may be non-zero because our fake claude doesn't generate
+        // a real commit message. We're testing the prompt flow, not the LLM result.
+
+        // Should show success message for config save
+        assert!(
+            output.contains("Added to user config"),
+            "Should show config added message: {output}"
+        );
+
+        // Config should have the command configured
+        let config_content = fs::read_to_string(repo.test_config_path()).unwrap_or_default();
+        assert!(
+            config_content.contains("[commit.generation]") && config_content.contains("command"),
+            "Should add commit generation config: {config_content}"
+        );
+    }
+
+    /// Test: User requests preview (?)
+    #[rstest]
+    fn test_user_requests_preview(repo: TestRepo) {
+        let temp_home = TempDir::new().unwrap();
+        let bin_dir = setup_fake_claude(temp_home.path());
+
+        // Stage a change
+        let test_file = repo.root_path().join("test.txt");
+        fs::write(&test_file, "test content\n").unwrap();
+        repo.run_git(&["add", "test.txt"]);
+
+        let mut env_vars = repo.test_env_vars();
+        let path = format!("{}:/usr/bin:/bin", bin_dir.display());
+        env_vars.push(("PATH".to_string(), path));
+
+        let cmd = build_pty_command(
+            wt_bin().to_str().unwrap(),
+            &["step", "commit"],
+            repo.root_path(),
+            &env_vars,
+            Some(temp_home.path()),
+        );
+        // Request preview, then decline
+        let (output, exit_code) = exec_cmd_in_pty_prompted(cmd, &["?\n", "n\n"], "[y/N");
+
+        assert_eq!(exit_code, 0, "Command should succeed: {output}");
+
+        // Should show the preview
+        assert!(
+            output.contains("Would add to") && output.contains("[commit.generation]"),
+            "Should show preview: {output}"
+        );
+    }
+
+    /// Test: LLM tool available, user accepts, but the config save fails
+    ///
+    /// Points WORKTRUNK_CONFIG_PATH at a path whose parent is a regular file,
+    /// so the write fails with ENOTDIR — exercising the save-failure hint,
+    /// which names the resolved config path via `config_path_for_display`.
+    #[rstest]
+    fn test_user_accepts_but_save_fails_shows_manual_hint(repo: TestRepo) {
+        let temp_home = TempDir::new().unwrap();
+        let bin_dir = setup_fake_claude(temp_home.path());
+
+        // Stage a change
+        let test_file = repo.root_path().join("test.txt");
+        fs::write(&test_file, "test content\n").unwrap();
+        repo.run_git(&["add", "test.txt"]);
+
+        // A regular file standing in for the config's parent directory makes
+        // every write under it fail with ENOTDIR — root-proof, unlike chmod.
+        let blocker = temp_home.path().join("blocker");
+        fs::write(&blocker, "x").unwrap();
+        let unwritable_config = blocker.join("config.toml");
+
+        let mut env_vars = repo.test_env_vars();
+        let path = format!("{}:/usr/bin:/bin", bin_dir.display());
+        env_vars.push(("PATH".to_string(), path));
+        // Overrides the WORKTRUNK_CONFIG_PATH from test_env_vars (last wins).
+        env_vars.push((
+            "WORKTRUNK_CONFIG_PATH".to_string(),
+            unwritable_config.to_string_lossy().to_string(),
+        ));
+
+        let cmd = build_pty_command(
+            wt_bin().to_str().unwrap(),
+            &["step", "commit"],
+            repo.root_path(),
+            &env_vars,
+            Some(temp_home.path()),
+        );
+        let (output, exit_code) = exec_cmd_in_pty_prompted(cmd, &["y\n"], "[y/N");
+
+        // The commit still completes with a fallback message; only the config
+        // save fails, so the manual-add hint fires.
+        assert_eq!(exit_code, 0, "Command should succeed: {output}");
+        assert!(
+            output.contains("Config save failed"),
+            "Should show manual-add hint on save failure: {output}"
+        );
+    }
+}

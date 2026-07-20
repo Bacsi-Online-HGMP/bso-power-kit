@@ -1,0 +1,11 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Documentation
+    url: https://github.com/giancarloerra/socraticode#readme
+    about: Check the README for setup instructions, environment variables, and FAQ
+  - name: Developer Guide
+    url: https://github.com/giancarloerra/socraticode/blob/main/DEVELOPER.md
+    about: Architecture, data flows, and internals for contributors
+  - name: Questions & Discussions
+    url: https://github.com/giancarloerra/socraticode/discussions
+    about: Ask questions or start a discussion (please don't open issues for questions)

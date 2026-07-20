@@ -1,0 +1,24 @@
+
+services:
+  qdrant:
+    image: qdrant/qdrant:v1.17.0
+    container_name: socraticode-qdrant
+    ports:
+      - "${QDRANT_PORT:-16333}:6333"
+      - "${QDRANT_GRPC_PORT:-16334}:6334"
+    volumes:
+      - socraticode_qdrant_data:/qdrant/storage
+    restart: unless-stopped
+
+  ollama:
+    image: ollama/ollama:latest
+    container_name: socraticode-ollama
+    ports:
+      - "${OLLAMA_PORT:-11435}:11434"
+    volumes:
+      - socraticode_ollama_data:/root/.ollama
+    restart: unless-stopped
+
+volumes:
+  socraticode_qdrant_data:
+  socraticode_ollama_data:

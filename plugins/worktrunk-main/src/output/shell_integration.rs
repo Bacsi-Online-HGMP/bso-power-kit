@@ -1,0 +1,688 @@
+//! Shell integration warnings and prompts.
+//!
+//! # Shell Integration Warning Messages (Complete Spec)
+//!
+//! When shell integration is not active, warn that cd won't happen.
+//!
+//! ## Switch to Existing Worktree (`wt switch X` where X exists)
+//!
+//! | Condition | Warning | Hint |
+//! |-----------|---------|------|
+//! | Not installed | `Worktree for X @ path, but cannot change directory — shell integration not installed` | `To enable automatic cd, run wt config shell install` |
+//! | Needs restart | `Worktree for X @ path, but cannot change directory — shell requires restart` | `Restart shell to activate shell integration` |
+//! | Explicit path | `Worktree for X @ path, but cannot change directory — ran ./wt; shell integration wraps wt` | `To change directory, run wt switch X` |
+//! | Git subcommand | `Worktree for X @ path, but cannot change directory — ran git wt; running through git prevents cd` | `For automatic cd, invoke directly (with the -): git-wt` |
+//!
+//! ## Switch to New Worktree (`wt switch --create X`)
+//!
+//! Success message shown first, then warning if shell won't cd:
+//!
+//! | Condition | Success | Warning | Hint |
+//! |-----------|---------|---------|------|
+//! | Shell active | `Created new worktree for X from base @ path` | (none) | (none) |
+//! | Not installed | `Created new worktree for X from base @ path` | `Cannot change directory — shell integration not installed` | `To enable automatic cd, run wt config shell install` |
+//! | Explicit path | `Created new worktree for X from base @ path` | `Cannot change directory — ran ./wt; shell integration wraps wt` | `To change directory, run wt switch X` |
+//! | Git subcommand | `Created new worktree for X from base @ path` | `Cannot change directory — ran git wt; running through git prevents cd` | `For automatic cd, invoke directly (with the -): git-wt` |
+//!
+//! ## After Merge/Remove (switching to main worktree)
+//!
+//! | Condition | Warning | Hint |
+//! |-----------|---------|------|
+//! | Shell active | (info) `Switched to worktree for main @ path` | (none) |
+//! | Git subcommand | `Cannot change directory — ran git wt; running through git prevents cd` | `For automatic cd, invoke directly (with the -): git-wt` |
+//! | Explicit path | `Cannot change directory — ran ./wt; shell integration wraps wt` | `To change directory, run wt switch main` |
+//! | Other | `Cannot change directory — {reason}` | `To enable automatic cd, run wt config shell install` |
+//!
+//! ## Prompt Decision Flow
+//!
+//! When shell integration is not active, [`prompt_shell_integration`] decides what to show:
+//!
+//! | Condition | Action |
+//! |-----------|--------|
+//! | Git subcommand | Return early (warning already shown) |
+//! | Unsupported shell | Hint: `Shell integration not yet supported for <shell>` |
+//! | $SHELL not set | Hint: `To enable automatic cd, run wt config shell install` |
+//! | Current shell already installed | Hint: `Restart shell to activate shell integration` |
+//! | `skip-shell-integration-prompt` / Non-TTY | Hint: `To enable automatic cd, run wt config shell install` |
+//! | TTY | Prompt: `Install shell integration? [y/N/?]` |
+//!
+//! # Reason Values
+//!
+//! The [`compute_shell_warning_reason`] function returns these reason strings:
+//!
+//! | Reason | Meaning |
+//! |--------|---------|
+//! | `shell integration not installed` | Shell config doesn't have the `eval` line |
+//! | `shell requires restart` | Shell config has `eval` line but wrapper not active |
+//! | `ran X; shell integration wraps Y` | Invoked with explicit path (e.g., `./target/debug/wt`) |
+//!
+//! Note: The git subcommand case (`ran git wt; ...`) is handled separately via [`crate::is_git_subcommand`].
+
+use std::io::IsTerminal;
+
+use color_print::cformat;
+use worktrunk::config::{UserConfig, require_config_path};
+use worktrunk::git::Repository;
+use worktrunk::path::format_path_for_display;
+use worktrunk::shell::{Shell, current_shell, current_shell_name, extract_filename_from_path};
+use worktrunk::styling::{
+    eprintln, format_bash_with_gutter, hint_message, info_message, success_message, warning_message,
+};
+
+use crate::commands::configure_shell::{
+    ConfigAction, UninstallScanResult, handle_configure_shell, prompt_for_install,
+    scan_shell_configs,
+};
+
+/// Git config key tracking how many times the shell-integration install hint
+/// has been shown to this user. Stored as an integer count via the generic
+/// hints API; reaching 5 escalates the hint with a `wt config show` pointer.
+pub(crate) const SHELL_INTEGRATION_HINT: &str = "shell-integration";
+
+/// Shell integration install hint message.
+///
+/// `count` is how many times the hint has previously been shown (i.e., the
+/// current value of `worktrunk.hints.shell-integration`, before incrementing
+/// for this display). After 5+ prior shows, append a diagnostic suggestion
+/// pointing at `wt config show` so users who keep seeing this can investigate
+/// why their shell wrapper isn't intercepting.
+pub(crate) fn shell_integration_hint(count: u32) -> String {
+    if count >= 5 {
+        cformat!(
+            "To enable automatic cd, run <underline>wt config shell install</>; if this keeps appearing, run <underline>wt config show</> to diagnose"
+        )
+    } else {
+        cformat!("To enable automatic cd, run <underline>wt config shell install</>")
+    }
+}
+
+/// Print the shell-integration install hint and bump its display counter.
+///
+/// Reads the current count from `worktrunk.hints.shell-integration`, formats
+/// the hint (escalating at 5+), prints it, and persists `count + 1` so the
+/// next display sees an updated value. The persist step is best-effort — if
+/// `git config` fails, only the escalation is delayed, never the hint
+/// itself, so we deliberately ignore the error.
+pub(crate) fn print_shell_integration_hint(repo: &Repository) {
+    let count = repo.hint_count(SHELL_INTEGRATION_HINT);
+    eprintln!("{}", hint_message(shell_integration_hint(count)));
+    let _ = repo.mark_hint_shown(SHELL_INTEGRATION_HINT);
+}
+
+/// Hint when shell integration is installed but shell needs restart.
+pub(crate) fn shell_restart_hint() -> &'static str {
+    "Restart shell to activate shell integration"
+}
+
+/// Shell integration hint for unknown/unsupported shell.
+fn shell_integration_unsupported_shell(shell_path: &str) -> String {
+    // Extract shell name from path, handling both Unix and Windows paths
+    // e.g., "/bin/tcsh" -> "tcsh", "C:\...\tcsh.exe" -> "tcsh"
+    let shell_name = extract_filename_from_path(shell_path).unwrap_or(shell_path);
+    format!(
+        "Shell integration not yet supported for {shell_name} (supports bash, zsh, fish, nu, PowerShell)"
+    )
+}
+
+/// Warning message when running as git subcommand (cd cannot work).
+pub(crate) fn git_subcommand_warning() -> String {
+    cformat!("For automatic cd, invoke directly (with the <underline>-</>): <underline>git-wt</>")
+}
+
+/// Hint when shell integration IS configured but user ran an explicit path.
+/// Suggests using the shell-wrapped command for automatic cd.
+pub(crate) fn explicit_path_hint(branch: &str) -> String {
+    let wraps = crate::binary_name();
+    cformat!("To change directory, run <underline>{wraps} switch {branch}</>")
+}
+
+/// Check if we should show the explicit path hint.
+/// True when: explicit path invocation AND current shell has integration configured.
+pub(crate) fn should_show_explicit_path_hint() -> bool {
+    crate::was_invoked_with_explicit_path()
+        && current_shell()
+            .and_then(|shell| shell.is_shell_configured(&crate::binary_name()).ok())
+            .unwrap_or(false)
+}
+
+/// Compute the shell warning reason for display in messages.
+///
+/// Returns a reason string explaining why shell integration isn't working.
+/// See the module documentation for the complete spec of warning messages.
+///
+/// Checks specifically if the CURRENT shell (detected via $SHELL or PSModulePath
+/// fallback) has integration configured, not just any shell. This prevents misleading
+/// "shell requires restart" messages when e.g. bash has integration but the user is
+/// running fish.
+pub(crate) fn compute_shell_warning_reason() -> String {
+    // Check if the CURRENT shell has integration configured, not just ANY shell
+    let is_configured = current_shell()
+        .and_then(|shell| shell.is_shell_configured(&crate::binary_name()).ok())
+        .unwrap_or(false);
+    let explicit_path = crate::was_invoked_with_explicit_path();
+    let invoked = crate::invocation_path();
+    let wraps = crate::binary_name();
+
+    compute_shell_warning_reason_inner(is_configured, explicit_path, &invoked, &wraps)
+}
+
+/// Inner logic for computing shell warning reason.
+/// Separated for testability - the outer function handles environment queries.
+fn compute_shell_warning_reason_inner(
+    is_configured: bool,
+    explicit_path: bool,
+    invoked: &str,
+    wraps: &str,
+) -> String {
+    if is_configured {
+        if explicit_path {
+            // Invoked with explicit path - shell wrapper won't intercept this binary.
+            let invoked_name = std::path::Path::new(invoked)
+                .file_name()
+                .and_then(|s| s.to_str())
+                .unwrap_or(invoked);
+
+            // Windows: check if the only difference is .exe suffix (case-insensitive)
+            #[cfg(windows)]
+            {
+                let invoked_lower = invoked_name.to_lowercase();
+                let wraps_lower = wraps.to_lowercase();
+                if invoked_lower == format!("{wraps_lower}.exe") {
+                    // Windows .exe mismatch - give targeted advice
+                    return cformat!(
+                        "ran <bold>{invoked_name}</>; use <bold>{wraps}</> (without .exe) for auto-cd"
+                    );
+                }
+            }
+
+            if invoked_name == wraps {
+                // Filename matches but full path differs - show full path for clarity
+                // (e.g., "./target/debug/wt" vs "wt" - the path IS the useful info)
+                cformat!("ran <bold>{invoked}</>; shell integration wraps <bold>{wraps}</>")
+            } else {
+                // Different binary name - show just the filename
+                cformat!("ran <bold>{invoked_name}</>; shell integration wraps <bold>{wraps}</>")
+            }
+        } else {
+            "shell requires restart".to_string()
+        }
+    } else {
+        "shell integration not installed".to_string()
+    }
+}
+
+/// Print skipped shells (config file not found).
+pub fn print_skipped_shells(skipped: &[(worktrunk::shell::Shell, std::path::PathBuf)]) {
+    for (shell, path) in skipped {
+        let path = format_path_for_display(path);
+        eprintln!(
+            "{}",
+            hint_message(cformat!(
+                "Skipped <underline>{shell}</>; <underline>{path}</> not found"
+            ))
+        );
+    }
+}
+
+/// Per-shell label distinguishing Fish (its completions live in a
+/// separate file under `~/.config/fish/completions/` rendered on its own
+/// line) from every other supported shell, which ships completions
+/// inline with the extension — bash/zsh via the init script, nushell via
+/// the `@complete` attribute on the wrapper, and powershell via
+/// `Register-ArgumentCompleter`. Single source of truth so the label
+/// can't drift across the install/uninstall/preview/config-show paths.
+pub(crate) fn shell_extension_label(shell: Shell) -> &'static str {
+    if matches!(shell, Shell::Fish) {
+        "shell extension"
+    } else {
+        "shell extension & completions"
+    }
+}
+
+fn print_config_action_result(action: &ConfigAction, message: String) {
+    match action {
+        ConfigAction::Added | ConfigAction::Created => {
+            eprintln!("{}", success_message(message));
+        }
+        ConfigAction::AlreadyExists => {
+            eprintln!("{}", info_message(message));
+        }
+        ConfigAction::WouldAdd | ConfigAction::WouldCreate => {
+            unreachable!("Preview actions handled by confirmation prompt")
+        }
+    }
+}
+
+/// Print the result of shell integration installation.
+///
+/// Shows:
+/// - Configured shells with their paths
+/// - Completion results (for fish)
+/// - Skipped shells
+/// - Summary count
+/// - Zsh compinit warning if needed
+/// - Restart hint for current shell
+///
+/// Used by both `wt config shell install` and the interactive prompt after `wt switch`.
+pub fn print_shell_install_result(scan_result: &crate::commands::configure_shell::ScanResult) {
+    // Count shells that became (more) configured
+    let shells_configured_count = scan_result
+        .configured
+        .iter()
+        .filter(|ext_result| {
+            let ext_changed = !matches!(ext_result.action, ConfigAction::AlreadyExists);
+            let comp_changed = scan_result
+                .completion_results
+                .iter()
+                .find(|c| c.shell == ext_result.shell)
+                .is_some_and(|c| !matches!(c.action, ConfigAction::AlreadyExists));
+            ext_changed || comp_changed
+        })
+        .count();
+
+    // Show configured shells grouped with their completions
+    for result in &scan_result.configured {
+        let shell = result.shell;
+        let path = format_path_for_display(&result.path);
+        let what = shell_extension_label(shell);
+        let message = cformat!(
+            "{} {what} for <bold>{shell}</> @ <bold>{path}</>",
+            result.action.description()
+        );
+        print_config_action_result(&result.action, message);
+
+        if matches!(shell, Shell::Nushell) && !matches!(result.action, ConfigAction::AlreadyExists)
+        {
+            eprintln!("{}", hint_message("Nushell support is experimental"));
+        }
+
+        // Show completion result for this shell (fish has separate completion files)
+        if let Some(comp_result) = scan_result
+            .completion_results
+            .iter()
+            .find(|r| r.shell == shell)
+        {
+            let comp_path = format_path_for_display(&comp_result.path);
+            let comp_message = cformat!(
+                "{} completions for <bold>{shell}</> @ <bold>{comp_path}</>",
+                comp_result.action.description()
+            );
+            print_config_action_result(&comp_result.action, comp_message);
+        }
+    }
+
+    // Show legacy file cleanups (fish conf.d → functions, nushell config-dir →
+    // data-dir vendor/autoload).
+    for (shell, legacy_path) in &scan_result.legacy_cleanups {
+        let old_path = format_path_for_display(legacy_path);
+        // Find the new canonical path for this shell from the configured results
+        let new_path = scan_result
+            .configured
+            .iter()
+            .find(|r| r.shell == *shell)
+            .map(|r| format_path_for_display(&r.path))
+            .unwrap_or_default();
+        eprintln!(
+            "{}",
+            info_message(cformat!(
+                "Removed <bold>{old_path}</> (deprecated; now using <bold>{new_path}</>)"
+            ))
+        );
+    }
+
+    // Show skipped shells
+    print_skipped_shells(&scan_result.skipped);
+
+    // Summary
+    if shells_configured_count > 0 {
+        eprintln!();
+        let plural = if shells_configured_count == 1 {
+            ""
+        } else {
+            "s"
+        };
+        eprintln!(
+            "{}",
+            success_message(format!(
+                "Configured {shells_configured_count} shell{plural}"
+            ))
+        );
+    } else {
+        eprintln!("{}", info_message("All shells already configured"));
+    }
+
+    // Zsh compinit advisory
+    if scan_result.zsh_needs_compinit {
+        eprintln!(
+            "{}",
+            warning_message("Completions require compinit; add to ~/.zshrc before the wt line:",)
+        );
+        eprintln!(
+            "{}",
+            format_bash_with_gutter("autoload -Uz compinit && compinit")
+        );
+    }
+
+    // Restart hint for current shell
+    if shells_configured_count > 0 {
+        let current_shell = current_shell_name();
+
+        let current_shell_result = current_shell.as_ref().and_then(|shell_name| {
+            scan_result
+                .configured
+                .iter()
+                .filter(|r| !matches!(r.action, ConfigAction::AlreadyExists))
+                .find(|r| r.shell.to_string().eq_ignore_ascii_case(shell_name))
+        });
+
+        if current_shell_result.is_some() {
+            eprintln!("{}", hint_message(shell_restart_hint()));
+        }
+    }
+}
+
+/// Handle shell integration prompt/hint after switch when shell integration is not active.
+///
+/// Called after `wt switch` when shell integration is NOT active.
+/// See module documentation for the complete decision flow.
+///
+/// `repo` is threaded through so the install hint can read and bump
+/// `worktrunk.hints.shell-integration`.
+///
+/// Returns `Ok(true)` if installed, `Ok(false)` otherwise.
+pub fn prompt_shell_integration(
+    repo: &Repository,
+    config: &mut UserConfig,
+    binary_name: &str,
+    skip_prompt: bool,
+) -> anyhow::Result<bool> {
+    // Skip when running as git subcommand - shell integration can't help there
+    // (running through git prevents cd, so the shell wrapper won't intercept)
+    // The git subcommand warning is already shown by the caller
+    if crate::is_git_subcommand() {
+        return Ok(false);
+    }
+
+    let is_tty = std::io::stdin().is_terminal() && std::io::stderr().is_terminal();
+
+    // Check the current shell (via $SHELL or PSModulePath fallback)
+    // Only prompt if current shell is supported (so they benefit immediately)
+    let shell_env = std::env::var("SHELL").ok();
+    if current_shell().is_none() {
+        match &shell_env {
+            Some(path) => {
+                eprintln!(
+                    "{}",
+                    hint_message(shell_integration_unsupported_shell(path))
+                );
+            }
+            // $SHELL not set: could be Windows PowerShell, or unusual Unix setup
+            // Point them to manual installation (and count it as a shown install hint)
+            None => print_shell_integration_hint(repo),
+        }
+        return Ok(false);
+    };
+
+    // Scan ALL shells (same as `wt config shell install`)
+    // Only includes shells where config files already exist
+    let scan = scan_shell_configs(None, true, binary_name)
+        .map_err(|e| anyhow::anyhow!("Failed to scan shell configs: {e}"))?;
+
+    // No config files exist - show install hint
+    if scan.configured.is_empty() {
+        print_shell_integration_hint(repo);
+        return Ok(false);
+    }
+
+    // Check if current shell is already configured (user just needs to restart)
+    let current_shell_installed = scan
+        .configured
+        .iter()
+        .filter(|r| Some(r.shell) == current_shell())
+        .any(|r| matches!(r.action, ConfigAction::AlreadyExists));
+
+    if current_shell_installed {
+        // Shell integration is configured but not active for this invocation
+        if !crate::was_invoked_with_explicit_path() {
+            // Invoked via PATH but wrapper isn't active - needs shell restart
+            eprintln!("{}", hint_message(shell_restart_hint()));
+        }
+        // For explicit paths: no hint needed - handle_switch_output() warning already explains
+        return Ok(false);
+    }
+
+    // Can't or shouldn't prompt - show install hint
+    if config.skip_shell_integration_prompt || !is_tty || skip_prompt {
+        print_shell_integration_hint(repo);
+        return Ok(false);
+    }
+
+    // TTY + first time: Show interactive prompt
+    // Accepting installs for all shells with config files (same as `wt config shell install`)
+    let confirmed = prompt_for_install(
+        &scan.configured,
+        &scan.completion_results,
+        binary_name,
+        "Install shell integration?",
+    )
+    .map_err(|e| anyhow::anyhow!("{e}"))?;
+
+    if !confirmed {
+        // Only skip future prompts after explicit decline (not Ctrl+C)
+        let _ =
+            require_config_path().and_then(|path| config.set_skip_shell_integration_prompt(&path));
+        print_shell_integration_hint(repo);
+        return Ok(false);
+    }
+
+    // Install for all shells with config files (same as `wt config shell install`)
+    let install_result = handle_configure_shell(None, true, false, binary_name.to_string())
+        .map_err(|e| anyhow::anyhow!("Failed to configure shell integration: {e}"))?;
+
+    print_shell_install_result(&install_result);
+
+    Ok(true)
+}
+
+/// Print the result of shell integration uninstallation.
+///
+/// Shows removed extensions/completions, not-found warnings, summary, and restart hint.
+pub fn print_shell_uninstall_result(scan_result: &UninstallScanResult, explicit_shell: bool) {
+    // Count unique shells, not file results (fish may have 2 files: functions/ and legacy conf.d/)
+    let mut shells: Vec<_> = scan_result.results.iter().map(|r| r.shell).collect();
+    shells.sort_by_key(|s| s.to_string());
+    shells.dedup();
+    let shell_count = shells.len();
+    let completion_count = scan_result.completion_results.len();
+    let total_changes = shell_count + completion_count;
+
+    // Show shell extension results
+    for result in &scan_result.results {
+        let shell = result.shell;
+        let path = format_path_for_display(&result.path);
+        let what = shell_extension_label(shell);
+
+        eprintln!(
+            "{}",
+            success_message(cformat!(
+                "{} {what} for <bold>{shell}</> @ <bold>{path}</>",
+                result.action.description(),
+            ))
+        );
+    }
+
+    // Show completion results
+    for result in &scan_result.completion_results {
+        let shell = result.shell;
+        let path = format_path_for_display(&result.path);
+
+        eprintln!(
+            "{}",
+            success_message(cformat!(
+                "{} completions for <bold>{shell}</> @ <bold>{path}</>",
+                result.action.description(),
+            ))
+        );
+    }
+
+    // Show not found - warning if explicit shell, hint if auto-scan
+    for (shell, path) in &scan_result.not_found {
+        let path = format_path_for_display(path);
+        let what = shell_extension_label(*shell);
+        if explicit_shell {
+            eprintln!(
+                "{}",
+                warning_message(cformat!("No {what} found in <bold>{path}</>"))
+            );
+        } else {
+            eprintln!(
+                "{}",
+                hint_message(cformat!("No <underline>{shell}</> {what} in {path}"))
+            );
+        }
+    }
+
+    // Show completion files not found (only fish has separate completion files)
+    // Only show this if the shell extension was ALSO not found - if we removed
+    // the shell extension, no need to warn about missing completions
+    for (shell, path) in &scan_result.completion_not_found {
+        let shell_was_removed = scan_result.results.iter().any(|r| r.shell == *shell);
+        if shell_was_removed {
+            continue; // Shell extension was removed, don't warn about completions
+        }
+        let path = format_path_for_display(path);
+        if explicit_shell {
+            eprintln!(
+                "{}",
+                warning_message(cformat!("No completions found in <bold>{path}</>"))
+            );
+        } else {
+            eprintln!(
+                "{}",
+                hint_message(cformat!("No <underline>{shell}</> completions in {path}"))
+            );
+        }
+    }
+
+    // Exit with info if nothing was found
+    let all_not_found = scan_result.not_found.len() + scan_result.completion_not_found.len();
+    if total_changes == 0 {
+        if all_not_found == 0 {
+            eprintln!();
+            eprintln!("{}", hint_message("No shell integration found to remove"));
+        }
+        return;
+    }
+
+    // Summary
+    eprintln!();
+    let plural = if shell_count == 1 { "" } else { "s" };
+    eprintln!(
+        "{}",
+        success_message(format!(
+            "Removed integration from {shell_count} shell{plural}"
+        ))
+    );
+
+    // Hint about restarting shell (only if current shell was affected)
+    let current_shell = current_shell_name();
+
+    let current_shell_affected = current_shell.as_ref().is_some_and(|shell_name| {
+        scan_result
+            .results
+            .iter()
+            .any(|r| r.shell.to_string().eq_ignore_ascii_case(shell_name))
+    });
+
+    if current_shell_affected {
+        eprintln!("{}", hint_message("Restart shell to complete uninstall"));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use insta::assert_snapshot;
+
+    #[test]
+    fn test_shell_integration_hint() {
+        // Below the escalation threshold — base message only.
+        assert_snapshot!(
+            shell_integration_hint(0),
+            @"To enable automatic cd, run [4mwt config shell install[24m"
+        );
+        assert_snapshot!(
+            shell_integration_hint(4),
+            @"To enable automatic cd, run [4mwt config shell install[24m"
+        );
+
+        // At and above the escalation threshold — append diagnostic suggestion.
+        assert_snapshot!(
+            shell_integration_hint(5),
+            @"To enable automatic cd, run [4mwt config shell install[24m; if this keeps appearing, run [4mwt config show[24m to diagnose"
+        );
+        assert_snapshot!(
+            shell_integration_hint(10),
+            @"To enable automatic cd, run [4mwt config shell install[24m; if this keeps appearing, run [4mwt config show[24m to diagnose"
+        );
+    }
+
+    #[test]
+    fn test_git_subcommand_warning() {
+        let warning = git_subcommand_warning();
+        assert_snapshot!(warning, @"For automatic cd, invoke directly (with the [4m-[24m): [4mgit-wt[24m");
+    }
+
+    #[test]
+    fn test_compute_shell_warning_reason() {
+        // Shell integration not configured -> "not installed"
+        let reason = compute_shell_warning_reason_inner(false, false, "wt", "wt");
+        assert_eq!(reason, "shell integration not installed");
+
+        // When filename matches wraps, show full path (the path IS the useful info)
+        let reason = compute_shell_warning_reason_inner(true, true, "./target/debug/wt", "wt");
+        assert_snapshot!(reason, @"ran [1m./target/debug/wt[22m; shell integration wraps [1mwt[22m");
+
+        // When invoked binary differs from wrapped binary, show both
+        let reason = compute_shell_warning_reason_inner(true, true, "/usr/local/bin/git-wt", "wt");
+        assert_snapshot!(reason, @"ran [1mgit-wt[22m; shell integration wraps [1mwt[22m");
+
+        // Shell integration configured + NOT explicit path -> "shell requires restart"
+        let reason = compute_shell_warning_reason_inner(true, false, "wt", "wt");
+        assert_eq!(reason, "shell requires restart");
+    }
+
+    #[test]
+    #[cfg(windows)]
+    fn test_compute_shell_warning_reason_windows() {
+        // Windows: invoked as git-wt.exe, wraps git-wt -> targeted .exe message
+        let reason = compute_shell_warning_reason_inner(
+            true,
+            true,
+            r"C:\Users\user\AppData\Local\Microsoft\WinGet\Packages\git-wt.exe",
+            "git-wt",
+        );
+        // Should extract filename and give targeted advice
+        assert!(!reason.contains(r"C:\Users")); // No full path
+        assert!(reason.contains("git-wt.exe"), "{reason}");
+        assert!(reason.contains("without .exe"), "{reason}");
+
+        // Windows paths are case-insensitive
+        let reason = compute_shell_warning_reason_inner(true, true, r"C:\path\to\WT.EXE", "wt");
+        assert!(
+            reason.contains("WT.EXE") || reason.contains(".exe"),
+            "{reason}"
+        );
+    }
+
+    #[test]
+    fn test_explicit_path_hint_format() {
+        let hint = explicit_path_hint("feature-branch");
+        // binary_name() returns the test binary hash in test context; normalize it
+        let mut settings = insta::Settings::clone_current();
+        settings.add_filter(r"wt-[0-9a-f]+", "wt");
+        settings.bind(|| {
+            assert_snapshot!(hint, @"To change directory, run [4mwt switch feature-branch[24m");
+        });
+    }
+}

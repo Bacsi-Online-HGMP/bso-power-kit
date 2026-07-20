@@ -1,0 +1,567 @@
+//! Project-level configuration
+//!
+//! Configuration that is checked into the repository and shared across all developers.
+
+use std::collections::BTreeMap;
+
+use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
+
+use super::ConfigError;
+use super::commands::CommandConfig;
+use super::is_default;
+use super::{CopyIgnoredConfig, HooksConfig, StepConfig};
+
+/// Project-level configuration for `wt list` output.
+///
+/// This is distinct from user-level `ListConfig` which controls CLI defaults.
+/// Project-level config is for project-specific features like dev server URLs.
+///
+/// # Example
+///
+/// ```toml
+/// [list]
+/// url = "http://localhost:{{ branch | hash_port }}"
+/// ```
+#[derive(Debug, Serialize, Deserialize, Clone, Default, PartialEq, JsonSchema)]
+pub struct ProjectListConfig {
+    /// URL template for dev server links shown in `wt list`.
+    ///
+    /// Available variable: `{{ branch }}` (the branch name).
+    /// Available filters: `{{ branch | hash_port }}` (deterministic port 10000-19999),
+    /// `{{ branch | sanitize }}` (filesystem-safe name).
+    ///
+    /// The URL is displayed with health-check styling: dim if the port is not
+    /// listening, normal if it is.
+    #[serde(default)]
+    pub url: Option<String>,
+}
+
+/// Project-level CI configuration.
+///
+/// Names the CI platform explicitly, for repos where URL-based detection can't
+/// determine it (e.g., GitHub Enterprise or self-hosted GitLab with custom
+/// domains).
+///
+/// # Example
+///
+/// ```toml
+/// [ci]
+/// platform = "github"  # or "gitlab"
+/// ```
+#[derive(Debug, Serialize, Deserialize, Clone, Default, PartialEq, JsonSchema)]
+pub struct ProjectCiConfig {
+    /// CI platform. When unset, the platform is detected from the remote URL.
+    ///
+    /// Deprecated alias for `[forge].platform`; same accepted values
+    /// ("github", "gitlab", "gitea", "azure-devops").
+    #[serde(default)]
+    pub platform: Option<String>,
+}
+
+/// Project-level commit message configuration. *(Experimental — fields may
+/// change in future releases.)*
+///
+/// Only fields appropriate as shared, checked-in settings live here. The LLM
+/// command and full prompt template stay in user/system config — they
+/// describe per-developer environment (which CLI is installed, which agent
+/// they prefer).
+#[derive(Debug, Serialize, Deserialize, Clone, Default, PartialEq, JsonSchema)]
+pub struct ProjectCommitConfig {
+    /// Commit message generation settings shared across the team.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub generation: Option<ProjectCommitGenerationConfig>,
+}
+
+/// Project-level commit message generation settings.
+#[derive(Debug, Serialize, Deserialize, Clone, Default, PartialEq, JsonSchema)]
+pub struct ProjectCommitGenerationConfig {
+    /// Text appended to the commit and squash prompts inside a
+    /// `<project-guidance>` block.
+    ///
+    /// Rendered with the same minijinja context as the main commit/squash
+    /// template (`{{ branch }}`, `{{ git_diff }}`, etc.), so it can
+    /// reference template variables directly. Use this for project-wide
+    /// commit conventions (e.g. "use conventional commits", "reference
+    /// issue numbers"). The user config has a `[commit.generation]
+    /// template-append` of its own; it renders into a separate
+    /// `<user-guidance>` block immediately before this one. The first time
+    /// the rendered text would reach the LLM, worktrunk prompts the user to
+    /// approve the raw fragment — the same gate as project-defined commands.
+    #[serde(default, rename = "template-append")]
+    pub template_append: Option<String>,
+}
+
+/// Project-level forge configuration.
+///
+/// Names the forge explicitly, for repos where URL-based detection can't
+/// determine it (e.g., SSH host aliases, GitHub Enterprise, or self-hosted
+/// GitLab with custom domains).
+///
+/// # Example
+///
+/// ```toml
+/// [forge]
+/// platform = "github"              # or "gitlab", "gitea" (experimental), "azure-devops" (experimental)
+/// hostname = "github.example.com"  # API hostname for GHE / self-hosted GitLab
+/// ```
+#[derive(Debug, Serialize, Deserialize, Clone, Default, PartialEq, JsonSchema)]
+pub struct ProjectForgeConfig {
+    /// Forge platform. When unset, the platform is detected from the remote URL.
+    ///
+    /// Values: "github", "gitlab", "gitea" (experimental), or "azure-devops"
+    /// (experimental). Both the `wt switch pr:` shortcut and `wt list --full`
+    /// CI status detection use `forge.platform` to pick the forge CLI (`gh`,
+    /// `glab`, `tea`, or `az`).
+    #[serde(default)]
+    pub platform: Option<String>,
+
+    /// API hostname for GitHub Enterprise or self-hosted GitLab.
+    ///
+    /// Only needed when the remote URL uses an SSH host alias that doesn't
+    /// resolve to the real API hostname. For standard github.com/gitlab.com
+    /// setups, this is not needed.
+    #[serde(default)]
+    pub hostname: Option<String>,
+}
+
+impl ProjectListConfig {
+    /// Returns true if any list configuration is set.
+    pub fn is_configured(&self) -> bool {
+        self.url.is_some()
+    }
+}
+
+impl ProjectConfig {
+    /// The CI platform set in `[ci]`, if any.
+    ///
+    /// Deprecated: use [`forge_platform()`](Self::forge_platform) instead.
+    pub fn ci_platform(&self) -> Option<&str> {
+        self.ci.platform.as_deref()
+    }
+
+    /// The configured forge platform, checking `[forge]` first then `[ci]`.
+    pub fn forge_platform(&self) -> Option<&str> {
+        self.forge
+            .platform
+            .as_deref()
+            .or_else(|| self.ci_platform())
+    }
+
+    /// Get the forge API hostname if configured.
+    pub fn forge_hostname(&self) -> Option<&str> {
+        self.forge.hostname.as_deref()
+    }
+
+    /// Get `wt step copy-ignored` configuration if configured.
+    pub fn copy_ignored(&self) -> Option<&CopyIgnoredConfig> {
+        self.step.copy_ignored.as_ref()
+    }
+
+    /// Project-level commit-message append fragment (trimmed, empty
+    /// treated as unset).
+    ///
+    /// Rendered with the main commit/squash template's variable context and
+    /// appended to the LLM prompt inside a `<project-guidance>` block.
+    /// Callers must gate the first use through the approval system before
+    /// sending the rendered output to the LLM.
+    pub fn commit_template_append(&self) -> Option<&str> {
+        self.commit
+            .generation
+            .as_ref()
+            .and_then(|g| g.template_append.as_deref())
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+    }
+}
+
+/// Project-specific configuration with hooks.
+///
+/// This config is stored at `<repo>/.config/wt.toml` within the repository and
+/// IS checked into git. It defines project-specific hooks that run automatically
+/// during worktree operations. All developers working on the project share this config.
+///
+/// # Template Variables
+///
+/// All hooks support these template variables:
+/// - `{{ repo }}` - Repository directory name (e.g., "myproject")
+/// - `{{ repo_path }}` - Absolute path to repository root (e.g., "/path/to/myproject")
+/// - `{{ branch }}` - Branch name (e.g., "feature/auth")
+/// - `{{ worktree_name }}` - Worktree directory name (e.g., "myproject.feature-auth")
+/// - `{{ worktree_path }}` - Absolute path to the worktree (e.g., "/path/to/myproject.feature-auth")
+/// - `{{ primary_worktree_path }}` - Primary worktree path (main worktree for normal repos; default branch worktree for bare repos)
+/// - `{{ default_branch }}` - Default branch name (e.g., "main")
+/// - `{{ commit }}` - Current HEAD commit SHA (full 40-character hash)
+/// - `{{ short_commit }}` - Current HEAD commit SHA, abbreviated per `core.abbrev` (auto-extends for ambiguous prefixes)
+/// - `{{ remote }}` - Primary remote name (e.g., "origin")
+/// - `{{ upstream }}` - Upstream tracking branch (e.g., "origin/feature"), if configured
+///
+/// Merge-related hooks (`pre-commit`, `pre-merge`, `post-merge`) also support:
+/// - `{{ target }}` - Target branch for the merge (e.g., "main")
+///
+/// # Filters
+///
+/// - `{{ branch | sanitize }}` - Replace `/` and `\` with `-` (e.g., "feature-auth")
+/// - `{{ branch | hash_port }}` - Hash string to deterministic port (10000-19999)
+#[derive(Debug, Serialize, Deserialize, Clone, Default, PartialEq, JsonSchema)]
+pub struct ProjectConfig {
+    /// Project hooks (same keys as user hooks, flattened at top level)
+    #[serde(flatten, default)]
+    pub hooks: HooksConfig,
+
+    /// Configuration for `wt list` output
+    #[serde(default, skip_serializing_if = "is_default")]
+    pub list: ProjectListConfig,
+
+    /// CI configuration (platform). Deprecated: use `[forge]` instead.
+    #[serde(default, skip_serializing_if = "is_default")]
+    pub ci: ProjectCiConfig,
+
+    /// Forge configuration (platform, API hostname)
+    #[serde(default, skip_serializing_if = "is_default")]
+    pub forge: ProjectForgeConfig,
+
+    /// Project-wide commit message settings (shared across teammates)
+    #[serde(default, skip_serializing_if = "is_default")]
+    pub commit: ProjectCommitConfig,
+
+    /// Configuration for `wt step` subcommands.
+    #[serde(default, skip_serializing_if = "is_default")]
+    pub step: StepConfig,
+
+    /// Command aliases for `wt <name>`.
+    ///
+    /// Each alias maps a name to a [`CommandConfig`] — a string for a single
+    /// command, a named table (`[aliases.NAME]`) for concurrent commands, or
+    /// `[[aliases.NAME]]` blocks for sequential pipeline steps. All hook
+    /// template variables are available (e.g., `{{ branch }}`,
+    /// `{{ worktree_path }}`).
+    ///
+    /// ```toml
+    /// [aliases]
+    /// deploy = "cd {{ worktree_path }} && make deploy"
+    /// lint = "npm run lint"
+    /// ```
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub aliases: BTreeMap<String, CommandConfig>,
+}
+
+impl ProjectConfig {
+    /// Load project configuration from .config/wt.toml in the repository root
+    ///
+    /// Set `write_hints` to true for normal usage. Set to false during completion
+    /// to avoid side effects (writing git config hints).
+    pub fn load(
+        repo: &crate::git::Repository,
+        write_hints: bool,
+    ) -> Result<Option<Self>, ConfigError> {
+        let config_path = match repo
+            .project_config_path()
+            .map_err(|e| ConfigError(format!("Failed to get config path: {}", e)))?
+        {
+            Some(path) if path.exists() => path,
+            _ => return Ok(None),
+        };
+
+        // Load directly with toml crate to preserve insertion order (with preserve_order feature)
+        let contents = std::fs::read_to_string(&config_path)
+            .map_err(|e| ConfigError(format!("Failed to read config file: {}", e)))?;
+
+        // Check for deprecated template variables and create migration file if needed
+        // Only write migration file in main worktree, not linked worktrees
+        // emit_inline_warnings=true: print per-kind warnings inline during config load
+        let is_main_worktree = !repo.current_worktree().is_linked().unwrap_or(true);
+        let repo_for_hints = if write_hints { Some(repo) } else { None };
+        let migrated = super::deprecation::check_and_migrate(
+            &config_path,
+            &contents,
+            is_main_worktree,
+            "Project config",
+            repo_for_hints,
+            true, // emit_inline_warnings
+        )
+        .map_err(|e| ConfigError(e.to_string()))?
+        .migrated_content;
+
+        // Warn about unknown fields (only in main worktree where it's actionable).
+        // Runs on the raw contents so deprecated keys are detected as written;
+        // `DEPRECATED_SECTION_KEYS` defers them to the deprecation messaging.
+        if is_main_worktree {
+            super::deprecation::warn_unknown_fields::<ProjectConfig>(
+                &contents,
+                &config_path,
+                "Project config",
+            );
+        }
+
+        // Deserialize the structurally migrated content so deprecated keys
+        // (e.g. `pre-start`/`post-start`) still load into their canonical fields.
+        let config: ProjectConfig = toml::from_str(&migrated).map_err(|e| {
+            ConfigError(format!(
+                "Project config at {} failed to parse:\n{e}",
+                crate::path::format_path_for_display(&config_path),
+            ))
+        })?;
+
+        Ok(Some(config))
+    }
+}
+
+/// All valid top-level keys in project config (ProjectConfig + flattened
+/// HooksConfig), derived from the JsonSchema via
+/// `config::schema_top_level_keys`. Public for use by the
+/// `WorktrunkConfig` trait implementation.
+pub fn valid_project_config_keys() -> Vec<String> {
+    crate::config::schema_top_level_keys::<ProjectConfig>()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_deserialize_all_hooks() {
+        let contents = r#"
+pre-switch = "echo switching"
+post-switch = "rename-tab"
+pre-start = "npm install"
+post-start = "npm run watch"
+pre-commit = "cargo fmt --check"
+post-commit = "echo committed"
+pre-merge = "cargo test"
+post-merge = "git push"
+pre-remove = "echo bye"
+post-remove = "echo removed"
+"#;
+        let config: ProjectConfig = toml::from_str(contents).unwrap();
+        assert!(config.hooks.pre_switch.is_some());
+        assert!(config.hooks.post_switch.is_some());
+        assert!(config.hooks.pre_create.is_some());
+        assert!(config.hooks.post_create.is_some());
+        assert!(config.hooks.pre_commit.is_some());
+        assert!(config.hooks.post_commit.is_some());
+        assert!(config.hooks.pre_merge.is_some());
+        assert!(config.hooks.post_merge.is_some());
+        assert!(config.hooks.pre_remove.is_some());
+        assert!(config.hooks.post_remove.is_some());
+    }
+
+    // ============================================================================
+    // ListConfig Tests
+    // ============================================================================
+
+    #[test]
+    fn test_deserialize_list_url() {
+        let contents = r#"
+[list]
+url = "http://localhost:{{ branch | hash_port }}"
+"#;
+        let config: ProjectConfig = toml::from_str(contents).unwrap();
+        assert_eq!(
+            config.list.url.as_deref(),
+            Some("http://localhost:{{ branch | hash_port }}")
+        );
+        assert!(config.list.is_configured());
+    }
+
+    #[test]
+    fn test_deserialize_list_empty() {
+        let contents = r#"
+[list]
+"#;
+        let config: ProjectConfig = toml::from_str(contents).unwrap();
+        assert!(config.list.url.is_none());
+        assert!(!config.list.is_configured());
+    }
+
+    #[test]
+    fn test_deserialize_step_copy_ignored() {
+        let contents = r#"
+[step.copy-ignored]
+exclude = [".conductor/", ".entire/"]
+"#;
+        let config: ProjectConfig = toml::from_str(contents).unwrap();
+        assert_eq!(
+            config.copy_ignored().unwrap().exclude,
+            vec![".conductor/".to_string(), ".entire/".to_string()]
+        );
+    }
+
+    // ============================================================================
+    // CiConfig Tests
+    // ============================================================================
+
+    #[test]
+    fn test_deserialize_ci_platform_github() {
+        let contents = r#"
+[ci]
+platform = "github"
+"#;
+        let config: ProjectConfig = toml::from_str(contents).unwrap();
+        assert_eq!(config.ci.platform.as_deref(), Some("github"));
+    }
+
+    #[test]
+    fn test_deserialize_ci_platform_gitlab() {
+        let contents = r#"
+[ci]
+platform = "gitlab"
+"#;
+        let config: ProjectConfig = toml::from_str(contents).unwrap();
+        assert_eq!(config.ci.platform.as_deref(), Some("gitlab"));
+    }
+
+    #[test]
+    fn test_deserialize_ci_empty() {
+        let contents = r#"
+[ci]
+"#;
+        let config: ProjectConfig = toml::from_str(contents).unwrap();
+        assert!(config.ci.platform.is_none());
+    }
+
+    #[test]
+    fn test_ci_config_default() {
+        let config = ProjectCiConfig::default();
+        assert!(config.platform.is_none());
+    }
+
+    // ============================================================================
+    // ForgeConfig Tests
+    // ============================================================================
+
+    #[test]
+    fn test_deserialize_forge_platform() {
+        let contents = r#"
+[forge]
+platform = "github"
+"#;
+        let config: ProjectConfig = toml::from_str(contents).unwrap();
+        assert_eq!(config.forge_platform(), Some("github"));
+        assert!(config.forge_hostname().is_none());
+    }
+
+    #[test]
+    fn test_deserialize_forge_hostname() {
+        let contents = r#"
+[forge]
+platform = "github"
+hostname = "github.example.com"
+"#;
+        let config: ProjectConfig = toml::from_str(contents).unwrap();
+        assert_eq!(config.forge_platform(), Some("github"));
+        assert_eq!(config.forge_hostname(), Some("github.example.com"));
+    }
+
+    #[test]
+    fn test_forge_platform_falls_back_to_ci() {
+        let contents = r#"
+[ci]
+platform = "gitlab"
+"#;
+        let config: ProjectConfig = toml::from_str(contents).unwrap();
+        // forge.platform not set, falls back to ci.platform
+        assert_eq!(config.forge_platform(), Some("gitlab"));
+    }
+
+    #[test]
+    fn test_forge_platform_takes_precedence_over_ci() {
+        let contents = r#"
+[ci]
+platform = "gitlab"
+
+[forge]
+platform = "github"
+"#;
+        let config: ProjectConfig = toml::from_str(contents).unwrap();
+        // forge.platform takes precedence
+        assert_eq!(config.forge_platform(), Some("github"));
+        // ci.platform still accessible directly
+        assert_eq!(config.ci_platform(), Some("gitlab"));
+    }
+
+    #[test]
+    fn test_forge_config_default() {
+        let config = ProjectForgeConfig::default();
+        assert!(config.platform.is_none());
+        assert!(config.hostname.is_none());
+    }
+
+    // ============================================================================
+    // Serialization Tests
+    // ============================================================================
+
+    #[test]
+    fn test_serialize_empty_config() {
+        let config = ProjectConfig::default();
+        let serialized = toml::to_string(&config).unwrap();
+        // Default config should serialize to empty or minimal string
+        assert!(serialized.is_empty() || serialized.trim().is_empty());
+    }
+
+    #[test]
+    fn test_config_equality() {
+        let config1 = ProjectConfig::default();
+        let config2 = ProjectConfig::default();
+        assert_eq!(config1, config2);
+    }
+
+    #[test]
+    fn test_config_clone() {
+        let contents = r#"pre-merge = "cargo test""#;
+        let config: ProjectConfig = toml::from_str(contents).unwrap();
+        let cloned = config.clone();
+        assert_eq!(config, cloned);
+    }
+
+    // ============================================================================
+    // ProjectCommitConfig Tests
+    // ============================================================================
+
+    #[test]
+    fn test_commit_template_append_parses() {
+        let toml = r#"
+[commit.generation]
+template-append = "Use conventional commits"
+"#;
+        let config: ProjectConfig = toml::from_str(toml).unwrap();
+        assert_eq!(
+            config.commit_template_append(),
+            Some("Use conventional commits")
+        );
+    }
+
+    /// `commit_template_append()` trims whitespace and treats a blank value
+    /// as unset. Otherwise an empty `<project-guidance>` block would still
+    /// render (confusing the LLM) and an empty approval would prompt.
+    #[test]
+    fn test_commit_template_append_blank_treated_as_unset() {
+        let toml = r#"
+[commit.generation]
+template-append = "   \n\t  "
+"#;
+        let config: ProjectConfig = toml::from_str(toml).unwrap();
+        assert_eq!(config.commit_template_append(), None);
+
+        // Whitespace inside the body is preserved — only leading/trailing trimmed.
+        let toml = r#"
+[commit.generation]
+template-append = "  - a\n  - b  "
+"#;
+        let config: ProjectConfig = toml::from_str(toml).unwrap();
+        assert_eq!(config.commit_template_append(), Some("- a\n  - b"));
+    }
+
+    #[test]
+    fn test_commit_template_append_missing_returns_none() {
+        let config = ProjectConfig::default();
+        assert_eq!(config.commit_template_append(), None);
+
+        // `[commit.generation]` present but no `template-append` field also returns None.
+        let toml = r#"
+[commit.generation]
+"#;
+        let config: ProjectConfig = toml::from_str(toml).unwrap();
+        assert_eq!(config.commit_template_append(), None);
+    }
+}

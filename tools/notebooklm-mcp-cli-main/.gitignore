@@ -1,0 +1,96 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual environments
+.venv/
+venv/
+ENV/
+
+# IDE
+.idea/
+.vscode/
+.cursor/
+*.swp
+*.swo
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Misc
+.DS_Store
+*.log
+run_log.txt
+
+# Credentials
+cookies.txt
+
+# uv
+.uv/
+
+# Internal planning docs (do not push)
+Studio_tools_plan.md
+
+# Local project memory (personal, not shared)
+CLAUDE.local.md
+PROJECT_RECAP.md
+todo.md
+.notebooklm*/
+
+
+# Data and Artifacts
+download/
+downloads/
+
+# Auto Claude data directory
+.auto-claude/
+.worktrees/
+.claude/
+run*.notebooklm-py-analysis/
+*.code-workspace
+
+# Build artifacts
+*.mcpb
+test_pr_61.py
+notebooklm-mcp-*.mcpb
+
+# Agent config (local, not project source)
+.agent/
+.agents/
+
+# Claude / AI assistant settings
+.claude_settings.json
+
+# GitHub CLI temp files
+.gh_comment_body.md
+
+# Local ad-hoc test scripts
+scratch/
+
+# PR diff/patch scratch files
+*.diff
+*.patch
+
+# Internal planning docs
+docs/plans/
+docs/superpowers/

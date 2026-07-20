@@ -1,0 +1,2197 @@
+use crate::common::{
+    TestRepo,
+    mock_commands::{MockConfig, MockResponse},
+    repo, wt_command, wt_completion_command,
+};
+use insta::Settings;
+use rstest::rstest;
+
+fn only_option_suggestions(stdout: &str) -> bool {
+    stdout
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .all(|line| line.starts_with('-'))
+}
+
+fn has_any_options(stdout: &str) -> bool {
+    stdout.lines().any(|line| line.trim().starts_with('-'))
+}
+
+fn value_suggestions(stdout: &str) -> Vec<&str> {
+    stdout
+        .lines()
+        .map(str::trim)
+        .filter(|line| {
+            if line.is_empty() {
+                false
+            } else if line.starts_with('-') {
+                line.contains('=')
+            } else {
+                true
+            }
+        })
+        .collect()
+}
+
+#[rstest]
+fn test_complete_switch_shows_branches(repo: TestRepo) {
+    repo.commit("initial");
+
+    // Create some branches using git
+    repo.run_git(&["branch", "feature/new"]);
+    repo.run_git(&["branch", "hotfix/bug"]);
+
+    // Test completion for switch command
+    let mut settings = Settings::clone_current();
+    settings.set_snapshot_path("../snapshots");
+    settings.bind(|| {
+        let output = repo.completion_cmd(&["wt", "switch", ""]).output().unwrap();
+        assert!(output.status.success());
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert!(stdout.contains("feature/new"));
+        assert!(stdout.contains("hotfix/bug"));
+        assert!(stdout.contains("main"));
+    });
+}
+
+/// `WORKTRUNK_VERBOSE` reaches the completion subprocess, which exits before
+/// `main`'s `logging::init` and is otherwise silent. It is the env-var
+/// equivalent of `-v`/`-vv`, so at level 2 completion writes the same
+/// humanized timing (`✓ git …`) and `$ git …` start records to
+/// `.git/wt/logs/trace.log` that `-vv` produces — the only way to profile a
+/// slow tab-completion, since the shell invokes completion with nowhere to
+/// pass `-vv`. Unset, completion writes nothing and keeps the candidate output
+/// clean.
+#[rstest]
+fn test_completion_honors_worktrunk_verbose(repo: TestRepo) {
+    repo.commit("initial");
+    repo.run_git(&["branch", "feature/new"]);
+
+    let logs_dir = repo.root_path().join(".git").join("wt/logs");
+    let trace_log = logs_dir.join("trace.log");
+
+    // Control: a normal completion logs nothing and still emits candidates.
+    let _ = std::fs::remove_dir_all(&logs_dir);
+    let output = repo
+        .completion_cmd(&["wt", "switch", ""])
+        .env_remove("WORKTRUNK_VERBOSE")
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    assert!(
+        String::from_utf8_lossy(&output.stdout).contains("feature/new"),
+        "completion should produce candidates"
+    );
+    assert!(
+        !trace_log.exists(),
+        "completion must not log without WORKTRUNK_VERBOSE"
+    );
+
+    // WORKTRUNK_VERBOSE=2 == -vv: completion writes the trace files, without
+    // disturbing the candidate list.
+    let _ = std::fs::remove_dir_all(&logs_dir);
+    let output = repo
+        .completion_cmd(&["wt", "switch", ""])
+        .env("WORKTRUNK_VERBOSE", "2")
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    assert!(
+        String::from_utf8_lossy(&output.stdout).contains("feature/new"),
+        "logging must not disturb the candidate list"
+    );
+    let trace = std::fs::read_to_string(&trace_log)
+        .expect("WORKTRUNK_VERBOSE=2 should write trace.log during completion");
+    assert!(
+        trace.contains("✓ git"),
+        "completion trace should capture humanized command timing: {trace}"
+    );
+    assert!(
+        trace.contains("$ git"),
+        "completion trace should capture the git subprocesses it runs: {trace}"
+    );
+}
+
+#[rstest]
+fn test_complete_switch_shows_all_branches_including_worktrees(mut repo: TestRepo) {
+    repo.commit("initial");
+
+    // Create worktree (this creates a new branch "feature/new")
+    repo.add_worktree("feature/new");
+
+    // Create another branch without worktree
+    repo.run_git(&["branch", "hotfix/bug"]);
+
+    // Test completion - should show branches WITH worktrees and WITHOUT worktrees
+    let mut settings = Settings::clone_current();
+    settings.set_snapshot_path("../snapshots");
+    settings.bind(|| {
+        let output = repo.completion_cmd(&["wt", "switch", ""]).output().unwrap();
+        assert!(output.status.success());
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert!(stdout.contains("feature/new"));
+        assert!(stdout.contains("hotfix/bug"));
+        assert!(stdout.contains("main"));
+    });
+}
+
+#[rstest]
+fn test_complete_push_shows_all_branches(mut repo: TestRepo) {
+    repo.commit("initial");
+
+    // Create worktree (creates "feature/new" branch)
+    repo.add_worktree("feature/new");
+
+    // Create another branch without worktree
+    repo.run_git(&["branch", "hotfix/bug"]);
+
+    // Test completion for step push (should show ALL branches, including those with worktrees)
+    let mut settings = Settings::clone_current();
+    settings.set_snapshot_path("../snapshots");
+    settings.bind(|| {
+        let output = repo
+            .completion_cmd(&["wt", "step", "push", ""])
+            .output()
+            .unwrap();
+        assert!(output.status.success());
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let values = value_suggestions(&stdout);
+        assert!(
+            values.contains(&"feature/new"),
+            "values should list feature/new\n{stdout}"
+        );
+        assert!(values.contains(&"hotfix/bug"));
+        assert!(values.contains(&"main"));
+    });
+}
+
+#[rstest]
+fn test_complete_base_flag_all_formats(repo: TestRepo) {
+    repo.commit("initial");
+
+    // Create branches
+    repo.run_git(&["branch", "develop"]);
+    repo.run_git(&["branch", "feature/existing"]);
+
+    // Test all base flag formats: --base, -b, --base=, -b=
+    // For space-separated (--base ""), cursor is on empty arg after flag
+    // For equals (--base=), cursor is completing the value after equals
+    let test_cases: &[&[&str]] = &[
+        &["wt", "switch", "--create", "new-branch", "--base", ""], // long form with space
+        &["wt", "switch", "--create", "new-branch", "-b", ""],     // short form with space
+        &["wt", "switch", "--create", "new-branch", "--base="],    // long form with equals
+        &["wt", "switch", "--create", "new-branch", "-b="],        // short form with equals
+    ];
+
+    for args in test_cases {
+        let output = repo.completion_cmd(args).output().unwrap();
+        assert!(output.status.success(), "Failed for args: {:?}", args);
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let branches = value_suggestions(&stdout);
+
+        assert!(
+            branches.iter().any(|b| b.contains("develop")),
+            "Missing develop for {:?}: {:?}",
+            args,
+            branches
+        );
+        assert!(
+            branches.iter().any(|b| b.contains("feature/existing")),
+            "Missing feature/existing for {:?}: {:?}",
+            args,
+            branches
+        );
+    }
+
+    // Test partial completion --base=m (clap returns "--base=<value>" form,
+    // so bash prefix filter matches correctly: "--base=main".starts_with("--base=m"))
+    let output = repo
+        .completion_cmd(&["wt", "switch", "--create", "new-branch", "--base=m"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let branches = value_suggestions(&stdout);
+    assert!(branches.iter().any(|b| b.contains("main")));
+}
+
+#[rstest]
+fn test_complete_outside_git_repo() {
+    let temp = tempfile::tempdir().unwrap();
+    let mut settings = Settings::clone_current();
+    settings.set_snapshot_path("../snapshots");
+
+    settings.bind(|| {
+        let output = wt_completion_command(&["wt", "switch", ""])
+            .current_dir(temp.path())
+            .output()
+            .unwrap();
+        assert!(output.status.success());
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert!(
+            stdout
+                .lines()
+                .filter(|line| !line.trim().is_empty())
+                .all(|line| line.starts_with('-')),
+            "expected only option suggestions outside git repo, got:\n{stdout}"
+        );
+    });
+}
+
+#[rstest]
+fn test_complete_empty_repo() {
+    // Regression for #3094: in a fresh `git init`'d repo, the unborn
+    // default branch exists only as a `symbolic-ref` target, not under
+    // `refs/heads/`. `branches_for_completion()` falls back to
+    // `git worktree list --porcelain` so the primary worktree's branch
+    // still surfaces.
+    let repo = TestRepo::empty();
+    let mut settings = Settings::clone_current();
+    settings.set_snapshot_path("../snapshots");
+
+    settings.bind(|| {
+        let output = repo.completion_cmd(&["wt", "switch", ""]).output().unwrap();
+        assert!(output.status.success());
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let values = value_suggestions(&stdout);
+        assert!(
+            values.contains(&"main"),
+            "expected `main` to appear as a completion candidate in an empty repo, got:\n{stdout}"
+        );
+    });
+}
+
+#[rstest]
+fn test_complete_unknown_command(repo: TestRepo) {
+    repo.commit("initial");
+    let mut settings = Settings::clone_current();
+    settings.set_snapshot_path("../snapshots");
+
+    settings.bind(|| {
+        let output = repo
+            .completion_cmd(&["wt", "unknown-command", ""])
+            .output()
+            .unwrap();
+        assert!(output.status.success());
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let suggestions = value_suggestions(&stdout);
+        assert!(
+            suggestions.contains(&"config"),
+            "should fall back to root completions, got:\n{stdout}"
+        );
+        assert!(suggestions.contains(&"list"));
+    });
+}
+
+#[rstest]
+fn test_complete_step_commit_no_positionals(repo: TestRepo) {
+    repo.commit("initial");
+    let mut settings = Settings::clone_current();
+    settings.set_snapshot_path("../snapshots");
+
+    settings.bind(|| {
+        let output = repo
+            .completion_cmd(&["wt", "step", "commit", ""])
+            .output()
+            .unwrap();
+        assert!(output.status.success());
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert!(
+            stdout
+                .lines()
+                .filter(|line| !line.trim().is_empty())
+                .all(|line| line.starts_with('-')),
+            "step commit should only suggest flags, got:\n{stdout}"
+        );
+    });
+}
+
+#[rstest]
+fn test_complete_list_command(repo: TestRepo) {
+    repo.commit("initial");
+    let mut settings = Settings::clone_current();
+    settings.set_snapshot_path("../snapshots");
+
+    settings.bind(|| {
+        let output = repo.completion_cmd(&["wt", "list", ""]).output().unwrap();
+        assert!(output.status.success());
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        // wt list suggests flags (--format, --branches, etc.) and subcommands (statusline)
+        assert!(
+            stdout
+                .lines()
+                .filter(|line| !line.trim().is_empty())
+                .all(|line| line.starts_with('-') || line == "statusline"),
+            "wt list should only suggest flags or 'statusline' subcommand, got:\n{stdout}"
+        );
+    });
+}
+
+#[rstest]
+fn test_init_fish_no_inline_completions() {
+    // Test that fish init does NOT have inline completions (they're in a separate file)
+    let mut cmd = wt_command();
+    let output = cmd
+        .arg("config")
+        .arg("shell")
+        .arg("init")
+        .arg("fish")
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    // Verify completions are NOT inline - they go to ~/.config/fish/completions/wt.fish
+    assert!(
+        !stdout.contains("complete --keep-order --exclusive --command wt --arguments"),
+        "Fish init should NOT have inline completions (they go to separate file)"
+    );
+    // But should reference where completions are
+    assert!(
+        stdout.contains("Completions are in"),
+        "Fish init should mention where completions are"
+    );
+}
+
+#[rstest]
+fn test_complete_with_partial_prefix_returns_all_branches_in_fish(repo: TestRepo) {
+    repo.commit("initial");
+
+    // Create branches with common prefix
+    repo.run_git(&["branch", "feature/one"]);
+    repo.run_git(&["branch", "feature/two"]);
+    repo.run_git(&["branch", "hotfix/bug"]);
+
+    // Fish/zsh apply their own matching (substring, fuzzy), so the binary returns
+    // ALL candidates. This enables fish/zsh substring matching.
+    let output = repo
+        .completion_cmd_for_shell(&["wt", "switch", "feat"], "fish")
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let values = value_suggestions(&stdout);
+
+    // All branches returned for fish (no prefix filtering)
+    assert!(values.iter().any(|v| v.contains("feature/one")));
+    assert!(values.iter().any(|v| v.contains("feature/two")));
+    assert!(values.iter().any(|v| v.contains("hotfix/bug")));
+    assert!(values.iter().any(|v| v.contains("main")));
+}
+
+/// Typing a substring that appears mid-branch (e.g. "auth") should still return
+/// branches containing that substring, because the binary no longer prefix-filters.
+/// Fish/zsh apply their own matching (substring, fuzzy), so the binary returns
+/// all candidates for those shells. This is the core use case from #1468:
+/// `wt switch auth<TAB>` should let fish/zsh match `feature/user-auth`.
+#[rstest]
+fn test_complete_switch_returns_candidates_for_substring_matching(repo: TestRepo) {
+    repo.commit("initial");
+
+    repo.run_git(&["branch", "feature/user-auth"]);
+    repo.run_git(&["branch", "bugfix/user-auth-timeout"]);
+    repo.run_git(&["branch", "release/2024-q1"]);
+
+    // Type "auth" in fish — not a prefix of any branch, but fish does substring matching
+    let output = repo
+        .completion_cmd_for_shell(&["wt", "switch", "auth"], "fish")
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let values = value_suggestions(&stdout);
+
+    assert!(
+        values.iter().any(|v| v.contains("feature/user-auth")),
+        "should return feature/user-auth for shell substring matching\n{stdout}"
+    );
+    assert!(
+        values
+            .iter()
+            .any(|v| v.contains("bugfix/user-auth-timeout")),
+        "should return bugfix/user-auth-timeout for shell substring matching\n{stdout}"
+    );
+    assert!(
+        values.iter().any(|v| v.contains("release/2024-q1")),
+        "should return all branches regardless of typed prefix\n{stdout}"
+    );
+}
+
+/// Bash does not filter COMPREPLY by prefix — the binary must return only
+/// prefix-matching candidates. (#1621)
+#[rstest]
+fn test_complete_switch_bash_filters_by_prefix(repo: TestRepo) {
+    repo.commit("initial");
+
+    repo.run_git(&["branch", "feature/user-auth"]);
+    repo.run_git(&["branch", "feature/login"]);
+    repo.run_git(&["branch", "bugfix/crash"]);
+    repo.run_git(&["branch", "release/2024-q1"]);
+
+    // Type "feat" in bash — should only return branches starting with "feat"
+    let output = repo
+        .completion_cmd_for_shell(&["wt", "switch", "feat"], "bash")
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let values = value_suggestions(&stdout);
+
+    assert!(
+        values.iter().any(|v| v.contains("feature/user-auth")),
+        "should include feature/user-auth (prefix match)\n{stdout}"
+    );
+    assert!(
+        values.iter().any(|v| v.contains("feature/login")),
+        "should include feature/login (prefix match)\n{stdout}"
+    );
+    assert!(
+        !values.iter().any(|v| v.contains("bugfix/crash")),
+        "should NOT include bugfix/crash (not a prefix match)\n{stdout}"
+    );
+    assert!(
+        !values.iter().any(|v| v.contains("release/2024-q1")),
+        "should NOT include release/2024-q1 (not a prefix match)\n{stdout}"
+    );
+}
+
+/// Cross-shell completion contract: each shell gets the filtering it needs.
+///
+/// This captures the tension between #1468 (fish/zsh need all candidates for
+/// substring/fuzzy matching) and #1621 (bash needs prefix filtering because
+/// its programmable completion doesn't filter COMPREPLY).
+///
+/// The same set of branches with the same typed prefix must produce different
+/// results depending on the shell:
+/// - bash: only prefix matches (binary filters)
+/// - fish: all candidates (fish does substring matching)
+/// - zsh: all candidates (zsh does fuzzy matching)
+#[rstest]
+fn test_completion_cross_shell_filtering_contract(repo: TestRepo) {
+    repo.commit("initial");
+
+    repo.run_git(&["branch", "feature/user-auth"]);
+    repo.run_git(&["branch", "bugfix/auth-timeout"]);
+    repo.run_git(&["branch", "release/2024-q1"]);
+
+    // Prefix "feat" — matches feature/* but not bugfix/* or release/*
+    for shell in ["fish", "zsh"] {
+        let output = repo
+            .completion_cmd_for_shell(&["wt", "switch", "feat"], shell)
+            .output()
+            .unwrap();
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let values = value_suggestions(&stdout);
+        assert!(
+            values.iter().any(|v| v.contains("bugfix/auth-timeout")),
+            "{shell} should return ALL candidates (shell does its own matching)\n{stdout}"
+        );
+        assert!(
+            values.iter().any(|v| v.contains("release/2024-q1")),
+            "{shell} should return ALL candidates\n{stdout}"
+        );
+    }
+
+    let output = repo
+        .completion_cmd_for_shell(&["wt", "switch", "feat"], "bash")
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let values = value_suggestions(&stdout);
+    assert!(
+        values.iter().any(|v| v.contains("feature/user-auth")),
+        "bash should return prefix matches\n{stdout}"
+    );
+    assert!(
+        !values.iter().any(|v| v.contains("bugfix/auth-timeout")),
+        "bash should NOT return non-prefix matches\n{stdout}"
+    );
+    assert!(
+        !values.iter().any(|v| v.contains("release/2024-q1")),
+        "bash should NOT return non-prefix matches\n{stdout}"
+    );
+
+    // Substring "auth" — appears mid-branch, not as a prefix
+    for shell in ["fish", "zsh"] {
+        let output = repo
+            .completion_cmd_for_shell(&["wt", "switch", "auth"], shell)
+            .output()
+            .unwrap();
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let values = value_suggestions(&stdout);
+        assert!(
+            values.iter().any(|v| v.contains("feature/user-auth")),
+            "{shell} should return all candidates so shell can substring-match 'auth'\n{stdout}"
+        );
+    }
+
+    let output = repo
+        .completion_cmd_for_shell(&["wt", "switch", "auth"], "bash")
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let values = value_suggestions(&stdout);
+    assert!(
+        !values.iter().any(|v| v.contains("feature/user-auth")),
+        "bash should not return 'feature/user-auth' — 'auth' is not a prefix\n{stdout}"
+    );
+}
+
+/// Bash with empty prefix should still return all branches.
+#[rstest]
+fn test_complete_switch_bash_empty_prefix_shows_all(repo: TestRepo) {
+    repo.commit("initial");
+
+    repo.run_git(&["branch", "feature/new"]);
+    repo.run_git(&["branch", "bugfix/crash"]);
+
+    let output = repo
+        .completion_cmd_for_shell(&["wt", "switch", ""], "bash")
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    assert!(stdout.contains("feature/new"));
+    assert!(stdout.contains("bugfix/crash"));
+    assert!(stdout.contains("main"));
+}
+
+#[rstest]
+fn test_complete_switch_shows_all_branches_even_with_worktrees(mut repo: TestRepo) {
+    repo.commit("initial");
+
+    // Create two branches, both with worktrees
+    repo.add_worktree("feature/new");
+    repo.add_worktree("hotfix/bug");
+
+    // From the main worktree, test completion - should show all branches
+    let output = repo.completion_cmd(&["wt", "switch", ""]).output().unwrap();
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    // Should include branches even if they have worktrees (can switch to them)
+    assert!(stdout.contains("feature/new"));
+    assert!(stdout.contains("hotfix/bug"));
+}
+
+#[rstest]
+fn test_complete_excludes_remote_branches(repo: TestRepo) {
+    repo.commit("initial");
+
+    // Create local branches
+    repo.run_git(&["branch", "feature/local"]);
+
+    // Create a new bare repo to act as remote (fixture already has origin remote)
+    let remote_dir = repo.root_path().parent().unwrap().join("remote.git");
+    repo.git_command()
+        .args(["init", "--bare", remote_dir.to_str().unwrap()])
+        .run()
+        .unwrap();
+
+    // Update origin URL to point to our bare repo
+    repo.run_git(&["remote", "set-url", "origin", remote_dir.to_str().unwrap()]);
+
+    // Push to create remote branches
+    repo.run_git(&["push", "origin", "main"]);
+    repo.run_git(&["push", "origin", "feature/local:feature/remote"]);
+
+    // Fetch to create remote-tracking branches
+    repo.run_git(&["fetch", "origin"]);
+
+    // Test completion
+    let output = repo.completion_cmd(&["wt", "switch", ""]).output().unwrap();
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    // Should include local branch without worktree
+    assert!(
+        stdout.contains("feature/local"),
+        "Should include feature/local branch, but got: {}",
+        stdout
+    );
+
+    // main branch has a worktree (the root repo), so it may or may not be included
+    // depending on switch context - not critical for this test
+
+    // Should NOT include remote-tracking branches (origin/*)
+    assert!(
+        !stdout.contains("origin/"),
+        "Completion should not include remote-tracking branches, but found: {}",
+        stdout
+    );
+}
+
+#[rstest]
+fn test_complete_merge_shows_branches(mut repo: TestRepo) {
+    repo.commit("initial");
+
+    // Create worktree (creates "feature/new" branch)
+    repo.add_worktree("feature/new");
+
+    // Create another branch without worktree
+    repo.run_git(&["branch", "hotfix/bug"]);
+
+    // Test completion for merge (should show ALL branches, including those with worktrees)
+    let output = repo.completion_cmd(&["wt", "merge", ""]).output().unwrap();
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let branches: Vec<&str> = stdout.lines().collect();
+
+    // Should include both branches (merge shows all)
+    assert!(branches.iter().any(|b| b.contains("feature/new")));
+    assert!(branches.iter().any(|b| b.contains("hotfix/bug")));
+}
+
+#[rstest]
+fn test_complete_with_special_characters_in_branch_names(repo: TestRepo) {
+    repo.commit("initial");
+
+    // Create branches with various special characters
+    let branch_names = vec![
+        "feature/FOO-123",         // Uppercase + dash + numbers
+        "release/v1.2.3",          // Dots
+        "hotfix/bug_fix",          // Underscore
+        "feature/multi-part-name", // Multiple dashes
+    ];
+
+    for branch in &branch_names {
+        repo.run_git(&["branch", branch]);
+    }
+
+    // Test completion
+    let output = repo.completion_cmd(&["wt", "switch", ""]).output().unwrap();
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let values = value_suggestions(&stdout);
+
+    // All branches should be present
+    for branch in &branch_names {
+        assert!(
+            values.contains(branch),
+            "Branch {} should be in completion output",
+            branch
+        );
+    }
+}
+
+#[rstest]
+fn test_complete_stops_after_branch_provided(repo: TestRepo) {
+    repo.commit("initial");
+
+    // Create branches
+    repo.run_git(&["branch", "feature/one"]);
+    repo.run_git(&["branch", "feature/two"]);
+
+    // Test that switch stops completing after branch is provided
+    let mut settings = Settings::clone_current();
+    settings.set_snapshot_path("../snapshots");
+    settings.bind(|| {
+        let output = repo
+            .completion_cmd(&["wt", "switch", "feature/one", ""])
+            .output()
+            .unwrap();
+        assert!(output.status.success());
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert!(
+            only_option_suggestions(&stdout),
+            "expected only option suggestions after positional provided, got:\n{stdout}"
+        );
+    });
+
+    // Test that step push stops completing after branch is provided
+    let mut settings = Settings::clone_current();
+    settings.set_snapshot_path("../snapshots");
+    settings.bind(|| {
+        let output = repo
+            .completion_cmd(&["wt", "step", "push", "feature/one", ""])
+            .output()
+            .unwrap();
+        assert!(output.status.success());
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert!(
+            only_option_suggestions(&stdout),
+            "expected only option suggestions after positional provided, got:\n{stdout}"
+        );
+    });
+
+    // Test that merge stops completing after branch is provided
+    let mut settings = Settings::clone_current();
+    settings.set_snapshot_path("../snapshots");
+    settings.bind(|| {
+        let output = repo
+            .completion_cmd(&["wt", "merge", "feature/one", ""])
+            .output()
+            .unwrap();
+        assert!(output.status.success());
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert!(
+            only_option_suggestions(&stdout),
+            "expected only option suggestions after positional provided, got:\n{stdout}"
+        );
+    });
+}
+
+#[rstest]
+fn test_complete_switch_with_create_flag_no_completion(repo: TestRepo) {
+    repo.commit("initial");
+
+    repo.run_git(&["branch", "feature/existing"]);
+
+    // Test with --create flag (long form)
+    let mut settings = Settings::clone_current();
+    settings.set_snapshot_path("../snapshots");
+    settings.bind(|| {
+        let output = repo
+            .completion_cmd(&["wt", "switch", "--create", ""])
+            .output()
+            .unwrap();
+        assert!(output.status.success());
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert!(
+            only_option_suggestions(&stdout),
+            "should not suggest branches when --create is present, got:\n{stdout}"
+        );
+    });
+
+    // Test with -c flag (short form)
+    let mut settings = Settings::clone_current();
+    settings.set_snapshot_path("../snapshots");
+    settings.bind(|| {
+        let output = repo
+            .completion_cmd(&["wt", "switch", "-c", ""])
+            .output()
+            .unwrap();
+        assert!(output.status.success());
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert!(
+            only_option_suggestions(&stdout),
+            "should not suggest branches when -c is present, got:\n{stdout}"
+        );
+    });
+}
+
+#[rstest]
+fn test_complete_switch_base_flag_after_branch(repo: TestRepo) {
+    repo.commit("initial");
+
+    // Create branches
+    repo.run_git(&["branch", "develop"]);
+
+    // Test completion for --base even after --create and branch name
+    let output = repo
+        .completion_cmd(&["wt", "switch", "--create", "new-feature", "--base", ""])
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    // Should complete base flag value with branches
+    assert!(stdout.contains("develop"));
+}
+
+#[rstest]
+fn test_complete_remove_excludes_remote_only_branches(mut repo: TestRepo) {
+    repo.commit("initial");
+
+    // Create worktree (creates "feature/new" branch)
+    repo.add_worktree("feature/new");
+
+    // Create another local branch without worktree
+    repo.run_git(&["branch", "hotfix/bug"]);
+
+    // Test completion for remove (should show local branches, exclude remote-only)
+    let output = repo.completion_cmd(&["wt", "remove", ""]).output().unwrap();
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let branches: Vec<&str> = stdout.lines().collect();
+
+    // Should include branches with worktrees
+    assert!(branches.iter().any(|b| b.contains("feature/new")));
+    // Should include local branches without worktrees (can still delete the branch)
+    assert!(branches.iter().any(|b| b.contains("hotfix/bug")));
+}
+
+#[rstest]
+fn test_complete_step_subcommands(repo: TestRepo) {
+    repo.commit("initial");
+
+    // Test: No input - shows all step subcommands (git operations only)
+    let output = repo.completion_cmd(&["wt", "step", ""]).output().unwrap();
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let subcommands = value_suggestions(&stdout);
+    // Git operations
+    assert!(subcommands.contains(&"commit"), "Missing commit");
+    assert!(subcommands.contains(&"squash"), "Missing squash");
+    assert!(subcommands.contains(&"push"), "Missing push");
+    assert!(subcommands.contains(&"rebase"), "Missing rebase");
+    assert!(
+        subcommands.contains(&"copy-ignored"),
+        "Missing copy-ignored"
+    );
+    assert!(subcommands.contains(&"diff"), "Missing diff");
+    assert!(subcommands.contains(&"eval"), "Missing eval");
+    assert!(subcommands.contains(&"for-each"), "Missing for-each");
+    assert!(subcommands.contains(&"promote"), "Missing promote");
+    assert!(subcommands.contains(&"prune"), "Missing prune");
+    assert!(subcommands.contains(&"relocate"), "Missing relocate");
+    assert!(subcommands.contains(&"tether"), "Missing tether");
+    assert_eq!(
+        subcommands.len(),
+        12,
+        "Should have exactly 12 step subcommands"
+    );
+}
+
+#[rstest]
+fn test_complete_hook_subcommands(repo: TestRepo) {
+    repo.commit("initial");
+
+    // Test 1: No input - shows all hook subcommands
+    let output = repo.completion_cmd(&["wt", "hook", ""]).output().unwrap();
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let subcommands = value_suggestions(&stdout);
+    // Hook types and commands
+    assert!(subcommands.contains(&"show"), "Missing show");
+    assert!(subcommands.contains(&"pre-start"), "Missing pre-start");
+    assert!(subcommands.contains(&"post-start"), "Missing post-start");
+    assert!(subcommands.contains(&"post-switch"), "Missing post-switch");
+    assert!(subcommands.contains(&"pre-switch"), "Missing pre-switch");
+    assert!(subcommands.contains(&"pre-commit"), "Missing pre-commit");
+    assert!(subcommands.contains(&"post-commit"), "Missing post-commit");
+    assert!(subcommands.contains(&"pre-merge"), "Missing pre-merge");
+    assert!(subcommands.contains(&"post-merge"), "Missing post-merge");
+    assert!(subcommands.contains(&"pre-remove"), "Missing pre-remove");
+    assert!(subcommands.contains(&"post-remove"), "Missing post-remove");
+    assert_eq!(
+        subcommands.len(),
+        11,
+        "Should have exactly 11 hook subcommands"
+    );
+
+    // Test 2: Partial input "po" - filters to post-* subcommands
+    let output = repo.completion_cmd(&["wt", "hook", "po"]).output().unwrap();
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let subcommands = value_suggestions(&stdout);
+    assert!(subcommands.contains(&"post-start"));
+    assert!(subcommands.contains(&"post-switch"));
+    assert!(subcommands.contains(&"post-commit"));
+    assert!(subcommands.contains(&"post-merge"));
+    assert!(subcommands.contains(&"post-remove"));
+    assert!(!subcommands.contains(&"pre-commit"));
+    assert!(!subcommands.contains(&"pre-merge"));
+}
+
+/// Cross-shell completion contract for hook command names.
+///
+/// Same contract as branch completions (test_completion_cross_shell_filtering_contract):
+/// - fish/zsh get ALL candidates (shell does its own substring/fuzzy matching)
+/// - bash gets only prefix-filtered candidates (binary must filter)
+#[rstest]
+fn test_hook_command_completion_cross_shell_filtering_contract(repo: TestRepo) {
+    repo.commit("initial");
+
+    // Set up a project config with named pre-merge commands
+    repo.write_project_config(
+        r#"
+pre-merge = [
+    {test = "cargo test"},
+    {lint = "cargo clippy"},
+    {build = "cargo build"},
+]
+"#,
+    );
+
+    // Prefix "te" — matches "test" but not "lint" or "build"
+    for shell in ["fish", "zsh"] {
+        let output = repo
+            .completion_cmd_for_shell(&["wt", "hook", "pre-merge", "te"], shell)
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "{shell}: completion failed");
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let values = value_suggestions(&stdout);
+
+        assert!(
+            values.contains(&"test"),
+            "{shell} should return 'test' (prefix match)\n{stdout}"
+        );
+        assert!(
+            values.contains(&"lint"),
+            "{shell} should return ALL candidates (shell does its own matching)\n{stdout}"
+        );
+        assert!(
+            values.contains(&"build"),
+            "{shell} should return ALL candidates\n{stdout}"
+        );
+    }
+
+    let output = repo
+        .completion_cmd_for_shell(&["wt", "hook", "pre-merge", "te"], "bash")
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let values = value_suggestions(&stdout);
+
+    assert!(
+        values.contains(&"test"),
+        "bash should return 'test' (prefix match)\n{stdout}"
+    );
+    assert!(
+        !values.contains(&"lint"),
+        "bash should NOT return 'lint' (not a prefix match)\n{stdout}"
+    );
+    assert!(
+        !values.contains(&"build"),
+        "bash should NOT return 'build' (not a prefix match)\n{stdout}"
+    );
+}
+
+#[rstest]
+fn test_complete_init_shell_all_variations(repo: TestRepo) {
+    repo.commit("initial");
+
+    // Test 1: No input - shows all supported shells
+    let output = repo
+        .completion_cmd(&["wt", "config", "shell", "init", ""])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let shells = value_suggestions(&stdout);
+    assert!(shells.contains(&"bash"));
+    assert!(shells.contains(&"fish"));
+    assert!(shells.contains(&"zsh"));
+    assert!(shells.contains(&"nu"));
+    assert!(!shells.contains(&"elvish"));
+    assert!(!shells.contains(&"nushell")); // clap name is "nu", not "nushell"
+
+    // Test 2: Partial input "fi" - filters to fish
+    let output = repo
+        .completion_cmd(&["wt", "config", "shell", "init", "fi"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let shells = value_suggestions(&stdout);
+    assert!(shells.contains(&"fish"));
+    assert!(!shells.contains(&"bash"));
+
+    // Test 3: Partial input "z" - filters to zsh
+    let output = repo
+        .completion_cmd(&["wt", "config", "shell", "init", "z"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let shells = value_suggestions(&stdout);
+    assert!(shells.contains(&"zsh"));
+    assert!(!shells.contains(&"bash"));
+    assert!(!shells.contains(&"fish"));
+
+    // Test 4: With --source flag - same behavior
+    let output = repo
+        .completion_cmd(&["wt", "--source", "config", "shell", "init", ""])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let shells = value_suggestions(&stdout);
+    assert!(shells.contains(&"bash"));
+    assert!(shells.contains(&"fish"));
+    assert!(shells.contains(&"zsh"));
+}
+
+#[rstest]
+fn test_complete_list_format_flag(repo: TestRepo) {
+    repo.commit("initial");
+
+    // Test completion for list --format flag
+    let output = repo
+        .completion_cmd(&["wt", "list", "--format", ""])
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    // Each line is "name\tdescription" (fish format)
+    // Just check that both format names appear
+    let values = value_suggestions(&stdout);
+    assert!(values.contains(&"table"));
+    assert!(values.contains(&"json"));
+}
+
+#[rstest]
+fn test_complete_switch_execute_all_formats(repo: TestRepo) {
+    repo.commit("initial");
+
+    repo.run_git(&["branch", "feature"]);
+
+    // Test all execute flag formats: --execute with space, --execute=, -xvalue
+    // All should complete branches after the execute value is provided
+    let test_cases: &[&[&str]] = &[
+        &["wt", "switch", "--execute", "code .", ""], // --execute with space
+        &["wt", "switch", "--execute=code .", ""],    // --execute= with equals
+        &["wt", "switch", "-xcode", ""],              // -x fused short form
+    ];
+
+    for args in test_cases {
+        let output = repo.completion_cmd(args).output().unwrap();
+        assert!(output.status.success(), "Failed for args: {:?}", args);
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let branches: Vec<&str> = stdout.lines().collect();
+        assert!(
+            branches.iter().any(|b| b.contains("feature")),
+            "Missing feature for {:?}: {:?}",
+            args,
+            branches
+        );
+        assert!(
+            branches.iter().any(|b| b.contains("main")),
+            "Missing main for {:?}: {:?}",
+            args,
+            branches
+        );
+    }
+}
+
+#[rstest]
+fn test_complete_switch_with_double_dash_terminator(repo: TestRepo) {
+    repo.commit("initial");
+
+    repo.run_git(&["branch", "feature"]);
+
+    // Test: wt switch -- <cursor>
+    // After --, everything is positional, should complete branches
+    let output = repo
+        .completion_cmd(&["wt", "switch", "--", ""])
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let branches: Vec<&str> = stdout.lines().collect();
+    assert!(branches.iter().any(|b| b.contains("feature")));
+    assert!(branches.iter().any(|b| b.contains("main")));
+}
+
+#[rstest]
+fn test_complete_switch_positional_already_provided(repo: TestRepo) {
+    repo.commit("initial");
+
+    repo.run_git(&["branch", "existing"]);
+
+    // Test: wt switch existing <cursor>
+    // Positional already provided, should NOT complete branches
+    let output = repo
+        .completion_cmd(&["wt", "switch", "existing", ""])
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        only_option_suggestions(&stdout),
+        "expected only option suggestions, got:\n{stdout}"
+    );
+}
+
+#[rstest]
+fn test_complete_switch_completing_execute_value(repo: TestRepo) {
+    repo.commit("initial");
+
+    repo.run_git(&["branch", "develop"]);
+
+    // Test: wt switch --execute <cursor>
+    // Currently typing the value for --execute, should NOT complete branches
+    let output = repo
+        .completion_cmd(&["wt", "switch", "--execute", ""])
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    // Should not suggest branches when completing option value
+    assert_eq!(stdout.trim(), "");
+}
+
+#[rstest]
+fn test_complete_merge_with_flags(repo: TestRepo) {
+    repo.commit("initial");
+
+    repo.run_git(&["branch", "hotfix"]);
+
+    // Test: wt merge --no-remove --yes <cursor>
+    // Should complete branches for positional (boolean flags don't consume arguments)
+    let output = repo
+        .completion_cmd(&["wt", "merge", "--no-remove", "--yes", ""])
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let branches: Vec<&str> = stdout.lines().collect();
+    assert!(branches.iter().any(|b| b.contains("hotfix")));
+    assert!(branches.iter().any(|b| b.contains("main")));
+}
+
+#[rstest]
+fn test_complete_switch_base_after_execute_equals(repo: TestRepo) {
+    repo.commit("initial");
+
+    // Create branches
+    repo.run_git(&["branch", "develop"]);
+    repo.run_git(&["branch", "production"]);
+
+    // Test: wt switch --create --execute=claude --base <cursor>
+    // This is the reported failing case - should complete branches for --base
+    let output = repo
+        .completion_cmd(&["wt", "switch", "--create", "--execute=claude", "--base", ""])
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let branches = value_suggestions(&stdout);
+
+    // Should show all branches as potential base
+    assert!(
+        branches.iter().any(|b| b.contains("develop")),
+        "Should complete develop branch for --base flag, got:\n{stdout}"
+    );
+    assert!(
+        branches.iter().any(|b| b.contains("production")),
+        "Should complete production branch for --base flag, got:\n{stdout}"
+    );
+    assert!(
+        branches.iter().any(|b| b.contains("main")),
+        "Should complete main branch for --base flag, got:\n{stdout}"
+    );
+}
+
+#[rstest]
+fn test_complete_switch_flexible_argument_ordering(repo: TestRepo) {
+    repo.commit("initial");
+
+    repo.run_git(&["branch", "develop"]);
+
+    // Test that .last(true) allows positional before flags
+    // wt switch feature --base <cursor>
+    let output = repo
+        .completion_cmd(&["wt", "switch", "feature", "--base", ""])
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let branches = value_suggestions(&stdout);
+
+    // Should complete --base value even when positional comes first
+    assert!(
+        branches.iter().any(|b| b.contains("develop")),
+        "Should complete branches for --base even after positional arg, got:\n{stdout}"
+    );
+    assert!(
+        branches.iter().any(|b| b.contains("main")),
+        "Should complete branches for --base even after positional arg, got:\n{stdout}"
+    );
+}
+
+#[rstest]
+fn test_complete_remove_flexible_argument_ordering(mut repo: TestRepo) {
+    repo.commit("initial");
+
+    // Create two worktrees
+    repo.add_worktree("feature");
+    repo.add_worktree("bugfix");
+
+    // Test that .last(true) allows positional before flags
+    // wt remove feature --no-delete-branch <cursor>
+    // Since remove accepts multiple worktrees, should suggest more worktrees
+    let output = repo
+        .completion_cmd(&["wt", "remove", "feature", "--no-delete-branch", ""])
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let suggestions = value_suggestions(&stdout);
+
+    // Should suggest additional worktrees (remove accepts Vec<String>)
+    assert!(
+        suggestions.iter().any(|s| s.contains("bugfix")),
+        "Should suggest additional worktrees after positional and flag, got:\n{stdout}"
+    );
+}
+
+#[rstest]
+fn test_complete_filters_options_when_positionals_exist(repo: TestRepo) {
+    repo.commit("initial");
+
+    repo.run_git(&["branch", "feature"]);
+
+    // Test: wt switch <cursor>
+    // Should show branches but NOT options like --config, --verbose, -C
+    let output = repo.completion_cmd(&["wt", "switch", ""]).output().unwrap();
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    // Should have branch completions
+    assert!(stdout.contains("feature"));
+    assert!(stdout.contains("main"));
+
+    // Should NOT have options (they're filtered out when positionals exist)
+    assert!(
+        !has_any_options(&stdout),
+        "Options should be filtered out when positional completions exist, got:\n{stdout}"
+    );
+}
+
+#[rstest]
+fn test_complete_subcommands_filter_options(repo: TestRepo) {
+    repo.commit("initial");
+
+    // Test: wt <cursor>
+    // Should show subcommands but NOT global options
+    let output = repo.completion_cmd(&["wt", ""]).output().unwrap();
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let suggestions = value_suggestions(&stdout);
+
+    // Should have subcommands
+    assert!(suggestions.contains(&"switch"));
+    assert!(suggestions.contains(&"list"));
+    assert!(suggestions.contains(&"merge"));
+
+    // Should NOT have global options
+    assert!(
+        !has_any_options(&stdout),
+        "Global options should be filtered out at subcommand position, got:\n{stdout}"
+    );
+
+    // Test: wt --<cursor>
+    // Now options SHOULD appear
+    let output = repo.completion_cmd(&["wt", "--"]).output().unwrap();
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    assert!(
+        has_any_options(&stdout),
+        "Options should appear when explicitly completing with --, got:\n{stdout}"
+    );
+}
+
+#[rstest]
+fn test_complete_switch_option_prefix_shows_options(repo: TestRepo) {
+    repo.commit("initial");
+
+    // Create branches that happen to contain "-c" in the name
+    repo.run_git(&["branch", "fish-switch-complete"]);
+    repo.run_git(&["branch", "zsh-bash-complete"]);
+
+    // Test: wt switch --c<cursor>
+    // Should show options starting with --c (like --create), NOT branches containing "-c"
+    let output = repo
+        .completion_cmd(&["wt", "switch", "--c"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    // Should NOT show branches (user is typing an option)
+    assert!(
+        !stdout.contains("fish-switch-complete"),
+        "Should not show branches when completing options, got:\n{stdout}"
+    );
+    assert!(
+        !stdout.contains("zsh-bash-complete"),
+        "Should not show branches when completing options, got:\n{stdout}"
+    );
+
+    // Should show options (--create, --config, etc.)
+    assert!(
+        only_option_suggestions(&stdout),
+        "Should only show options when input starts with --, got:\n{stdout}"
+    );
+}
+
+#[rstest]
+fn test_complete_switch_single_dash_shows_options_not_branches(repo: TestRepo) {
+    repo.commit("initial");
+
+    // Create a branch that contains "-" in the name
+    repo.run_git(&["branch", "feature-branch"]);
+
+    // Test: wt switch -<cursor>
+    // Should show short options, NOT branches containing "-"
+    let output = repo
+        .completion_cmd(&["wt", "switch", "-"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    // Should NOT show branches
+    assert!(
+        !stdout.contains("feature-branch"),
+        "Should not show branches when completing options, got:\n{stdout}"
+    );
+
+    // Should show options
+    assert!(
+        only_option_suggestions(&stdout),
+        "Should only show options when input starts with -, got:\n{stdout}"
+    );
+}
+
+/// Verify --help appears in completions across all supported shells.
+///
+/// This is a regression test for a bug where --help was missing from zsh completions
+/// because clap's built-in help flag was disabled (to participate in completion filtering)
+/// but not replaced with a visible alternative.
+#[rstest]
+fn test_complete_help_flag_all_shells(repo: TestRepo) {
+    repo.commit("initial");
+
+    for shell in ["bash", "zsh", "fish", "nu"] {
+        // Test: wt --help<cursor> - should complete --help
+        let output = repo
+            .completion_cmd_for_shell(&["wt", "--help"], shell)
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "{shell}: completion failed");
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert!(
+            stdout.contains("--help"),
+            "{shell}: --help should appear in completions for 'wt --help', got:\n{stdout}"
+        );
+
+        // Test: wt config --help<cursor> - should complete --help on subcommands too
+        let output = repo
+            .completion_cmd_for_shell(&["wt", "config", "--help"], shell)
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "{shell}: completion failed");
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert!(
+            stdout.contains("--help"),
+            "{shell}: --help should appear in completions for 'wt config --help', got:\n{stdout}"
+        );
+    }
+}
+
+/// Verify --version appears in completions across all supported shells (root command only).
+#[rstest]
+fn test_complete_version_flag_all_shells(repo: TestRepo) {
+    repo.commit("initial");
+
+    for shell in ["bash", "zsh", "fish", "nu"] {
+        // Test: wt --version<cursor> - should complete --version
+        let output = repo
+            .completion_cmd_for_shell(&["wt", "--version"], shell)
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "{shell}: completion failed");
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert!(
+            stdout.contains("--version"),
+            "{shell}: --version should appear in completions for 'wt --version', got:\n{stdout}"
+        );
+    }
+}
+
+/// Verify single dash '-' shows both short AND long flags.
+///
+/// When completing `wt -`, users should see both short flags like `-h` and long flags
+/// like `--help`. This is more discoverable than requiring users to type `--` first.
+#[rstest]
+fn test_complete_single_dash_shows_both_short_and_long_flags(repo: TestRepo) {
+    repo.commit("initial");
+
+    for shell in ["bash", "zsh", "fish", "nu"] {
+        // Test: wt -<cursor> - should show both -h and --help
+        let output = repo
+            .completion_cmd_for_shell(&["wt", "-"], shell)
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "{shell}: completion failed");
+        let stdout = String::from_utf8_lossy(&output.stdout);
+
+        // Should have short flags
+        assert!(
+            stdout.contains("-h"),
+            "{shell}: single dash should show -h, got:\n{stdout}"
+        );
+        assert!(
+            stdout.contains("-v") || stdout.contains("-V"),
+            "{shell}: single dash should show -v or -V, got:\n{stdout}"
+        );
+
+        // Should also have long flags
+        assert!(
+            stdout.contains("--help"),
+            "{shell}: single dash should show --help, got:\n{stdout}"
+        );
+        assert!(
+            stdout.contains("--verbose") || stdout.contains("--version"),
+            "{shell}: single dash should show --verbose or --version, got:\n{stdout}"
+        );
+
+        // Test: wt config -<cursor> - same behavior on subcommands
+        let output = repo
+            .completion_cmd_for_shell(&["wt", "config", "-"], shell)
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "{shell}: completion failed");
+        let stdout = String::from_utf8_lossy(&output.stdout);
+
+        assert!(
+            stdout.contains("-h") && stdout.contains("--help"),
+            "{shell}: subcommand single dash should show both -h and --help, got:\n{stdout}"
+        );
+    }
+}
+
+/// `wt config alias show <TAB>` and `wt config alias dry-run <TAB>` complete
+/// with the merged user + project alias name set.
+#[rstest]
+fn test_config_alias_name_completion(repo: TestRepo) {
+    repo.write_project_config(
+        r#"
+[aliases]
+deploy = "echo deploying"
+test = "cargo test"
+"#,
+    );
+    repo.commit("Add alias config");
+
+    for subcommand in ["show", "dry-run"] {
+        let output = repo
+            .completion_cmd(&["wt", "config", "alias", subcommand, ""])
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "completion for `wt config alias {subcommand} <TAB>` failed"
+        );
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let values = value_suggestions(&stdout);
+        assert!(
+            values.contains(&"deploy"),
+            "`wt config alias {subcommand}` should suggest configured aliases, got:\n{stdout}"
+        );
+        assert!(
+            values.contains(&"test"),
+            "`wt config alias {subcommand}` should suggest configured aliases, got:\n{stdout}"
+        );
+    }
+}
+
+/// Test shell completions command for package managers.
+///
+/// The `wt config shell completions <shell>` command outputs completion scripts
+/// suitable for package manager integration (e.g., Homebrew's
+/// `generate_completions_from_executable`). For bash and zsh the output is a
+/// *dynamic* registration that calls the binary at TAB time, so branch and
+/// worktree names complete on a plain package install.
+#[rstest]
+fn test_completions_for_all_shells() {
+    // Test each supported shell produces valid output
+    for shell in ["bash", "fish", "nu", "zsh", "powershell"] {
+        let output = wt_command()
+            .args(["config", "shell", "completions", shell])
+            .output()
+            .unwrap();
+
+        assert!(
+            output.status.success(),
+            "{shell}: completions command failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert!(
+            !stdout.is_empty(),
+            "{shell}: completions output should not be empty"
+        );
+
+        // Each shell should have some indication it's a completion script
+        match shell {
+            "bash" => {
+                assert!(
+                    stdout.contains("complete") || stdout.contains("_wt"),
+                    "{shell}: should contain bash completion markers"
+                );
+                // Dynamic registration: clap's runtime completer function plus a
+                // `complete -F` binding that calls the binary at TAB time.
+                assert!(
+                    stdout.contains("_clap_complete_wt"),
+                    "{shell}: should contain clap's dynamic completer function, got:\n{stdout}"
+                );
+                assert!(
+                    stdout.contains("complete -") && stdout.contains("-F _clap_complete_wt wt"),
+                    "{shell}: should register the dynamic completer via complete -F, got:\n{stdout}"
+                );
+                // The old static output built `COMPREPLY` from a hardcoded word list via
+                // `compgen`. Dynamic output asks the binary for candidates instead.
+                assert!(
+                    !stdout.contains("compgen"),
+                    "{shell}: should not contain static compgen boilerplate, got:\n{stdout}"
+                );
+            }
+            "fish" => {
+                assert!(
+                    stdout.contains("complete") && stdout.contains("wt"),
+                    "{shell}: should contain fish completion markers"
+                );
+                // Dynamic registration: a single `complete --command wt` whose argument
+                // source calls the binary at TAB time. The static output instead listed
+                // subcommands via `-n`/`__fish_*` predicates.
+                assert!(
+                    stdout.contains("--command wt") && stdout.contains("COMPLETE=fish"),
+                    "{shell}: should call the binary at TAB time, got:\n{stdout}"
+                );
+                assert!(
+                    !stdout.contains("__fish_"),
+                    "{shell}: should not contain static __fish_ predicate boilerplate, got:\n{stdout}"
+                );
+                // Regression for #3240: the registration must resolve the real
+                // binary (via `type -P`) rather than calling the bare `wt`
+                // command. When worktrunk's lazy-load wrapper function shadows
+                // the binary, a bare `COMPLETE=fish wt -- …` re-enters the
+                // wrapper. fish has already set `COMPLETE=fish`, so the wrapper's
+                // `command wt config shell init fish | source` emits completions
+                // instead of the init script — the real function is never
+                // defined — and the wrapper's trailing `wt $argv` recurses to
+                // fish's call-stack limit.
+                assert!(
+                    stdout.contains("type -P wt") && stdout.contains("WORKTRUNK_BIN"),
+                    "{shell}: completion must resolve the binary path to bypass the wrapper function (#3240), got:\n{stdout}"
+                );
+                assert!(
+                    !stdout.contains("COMPLETE=fish wt "),
+                    "{shell}: completion must not call the bare `wt` command — it recurses through the lazy-load wrapper (#3240), got:\n{stdout}"
+                );
+            }
+            "zsh" => {
+                assert!(
+                    stdout.contains("#compdef") || stdout.contains("_wt"),
+                    "{shell}: should contain zsh completion markers"
+                );
+                // Dynamic registration: the `#compdef` autoload marker, clap's runtime
+                // completer that calls the binary at TAB time, and the autoload guard.
+                assert!(
+                    stdout.contains("#compdef wt"),
+                    "{shell}: should contain the #compdef autoload marker, got:\n{stdout}"
+                );
+                assert!(
+                    stdout.contains(r#"COMPLETE="zsh""#)
+                        && stdout.contains(r#"wt -- "${words[@]}""#),
+                    "{shell}: should call the binary at TAB time, got:\n{stdout}"
+                );
+                // Dual-mode guard: autoloaded from fpath -> complete directly; sourced -> compdef.
+                // `funcstack[1]` is the discriminating token (absent from clap's raw output);
+                // the `compdef` must sit *inside* the guard (after the funcstack check), not as
+                // clap's bare trailing line. That ordering is what proves the transform applied.
+                let funcstack_pos = stdout
+                    .find("funcstack[1]")
+                    .expect("dynamic zsh registration should contain the autoload guard");
+                let compdef_pos = stdout
+                    .find("compdef _clap_dynamic_completer_wt wt")
+                    .expect("guard should register via compdef when sourced");
+                assert!(
+                    funcstack_pos < compdef_pos,
+                    "{shell}: compdef must sit inside the guard, after the funcstack check, got:\n{stdout}"
+                );
+                // Single-column display zstyles, matched to `templates/zsh.zsh`.
+                assert!(
+                    stdout.contains("list-max 1") && stdout.contains("list-grouped false"),
+                    "{shell}: should append the single-column display zstyles, got:\n{stdout}"
+                );
+                // The zstyles must precede the guard. In autoload mode the whole file body
+                // runs as `_wt` on every completion, so setting the styles before the
+                // completer call is what makes single-column listing apply on the FIRST TAB.
+                // Regression guard for the bug where the zstyles followed the guard.
+                let zstyle_pos = stdout.find("list-max 1").unwrap();
+                let guard_pos = stdout.find("funcstack[1]").unwrap();
+                assert!(
+                    zstyle_pos < guard_pos,
+                    "{shell}: display zstyles must come before the autoload guard, got:\n{stdout}"
+                );
+                // The old static output drove completion from `_arguments`. Dynamic output
+                // builds the candidate list from the binary instead.
+                assert!(
+                    !stdout.contains("_arguments"),
+                    "{shell}: should not contain static _arguments boilerplate, got:\n{stdout}"
+                );
+            }
+            "nu" => {
+                // Nushell uses template-based integration, not clap_complete
+                assert!(
+                    stdout.contains("def --wrapped") || stdout.contains("def --env"),
+                    "{shell}: should contain nushell function markers"
+                );
+                assert!(
+                    stdout.contains("nu-complete wt"),
+                    "{shell}: should contain nushell completer function"
+                );
+            }
+            "powershell" => {
+                assert!(
+                    stdout.contains("Register-ArgumentCompleter")
+                        || stdout.contains("$scriptBlock"),
+                    "{shell}: should contain PowerShell completion markers"
+                );
+                // Dynamic registration: the completer invokes the binary at TAB time
+                // (sets COMPLETE and calls `wt`), rather than embedding a static word list.
+                assert!(
+                    stdout.contains(r#"COMPLETE = "powershell""#) && stdout.contains("wt"),
+                    "{shell}: should call the binary at TAB time, got:\n{stdout}"
+                );
+            }
+            _ => {}
+        }
+    }
+}
+
+#[rstest]
+fn test_complete_switch_shows_all_remotes_for_ambiguous_branch(mut repo: TestRepo) {
+    repo.commit("initial");
+
+    // Set up two remotes: origin and upstream
+    repo.setup_remote("main");
+    repo.setup_custom_remote("upstream", "main");
+
+    // Create a branch locally and push to both remotes
+    repo.run_git(&["checkout", "-b", "shared-feature"]);
+    repo.commit_with_message("Add shared feature");
+    repo.run_git(&["push", "origin", "shared-feature"]);
+    repo.run_git(&["push", "upstream", "shared-feature"]);
+
+    // Delete local branch so it only exists on remotes
+    repo.run_git(&["checkout", "main"]);
+    repo.run_git(&["branch", "-D", "shared-feature"]);
+
+    // Test completion with fish shell to see help text (bash doesn't show descriptions)
+    let output = repo
+        .completion_cmd_for_shell(&["wt", "switch", ""], "fish")
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    // The branch should appear with both remotes listed
+    // Format: "shared-feature\t⇣ <time> origin, upstream" (sorted alphabetically)
+    assert!(
+        stdout.contains("shared-feature"),
+        "Should show shared-feature branch: {stdout}"
+    );
+    // Check that both remotes are shown (order is alphabetical: origin, upstream)
+    assert!(
+        stdout.contains("origin") && stdout.contains("upstream"),
+        "Should show both remotes for ambiguous branch: {stdout}"
+    );
+}
+
+#[rstest]
+fn test_complete_switch_excludes_remote_branches_when_over_threshold(mut repo: TestRepo) {
+    repo.commit("initial");
+    repo.setup_remote("main");
+
+    // Create 50 local branches
+    for i in 0..50 {
+        repo.run_git(&["branch", &format!("local/branch-{i}")]);
+    }
+
+    // Create 60 remote-only branches (push then delete locally)
+    for i in 0..60 {
+        let name = format!("remote/branch-{i}");
+        repo.run_git(&["branch", &name]);
+        repo.run_git(&["push", "origin", &name]);
+        repo.run_git(&["branch", "-D", &name]);
+    }
+    repo.run_git(&["fetch", "origin"]);
+
+    // Total branches: 1 (main worktree) + 50 local + 60 remote = 111 > 100
+    let output = repo.completion_cmd(&["wt", "switch", ""]).output().unwrap();
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let suggestions = value_suggestions(&stdout);
+
+    // Local branches should still appear
+    assert!(
+        suggestions.iter().any(|s| s.contains("local/branch-0")),
+        "Local branches should appear in completions: {stdout}"
+    );
+
+    // Remote-only branches should be excluded (threshold exceeded)
+    assert!(
+        !suggestions.iter().any(|s| s.contains("remote/branch-")),
+        "Remote-only branches should be excluded when total > 100: {stdout}"
+    );
+}
+
+#[rstest]
+fn test_complete_switch_includes_remote_branches_when_under_threshold(mut repo: TestRepo) {
+    repo.commit("initial");
+    repo.setup_remote("main");
+
+    // Create a few local branches
+    for i in 0..5 {
+        repo.run_git(&["branch", &format!("local/branch-{i}")]);
+    }
+
+    // Create a few remote-only branches
+    for i in 0..3 {
+        let name = format!("remote/branch-{i}");
+        repo.run_git(&["branch", &name]);
+        repo.run_git(&["push", "origin", &name]);
+        repo.run_git(&["branch", "-D", &name]);
+    }
+    repo.run_git(&["fetch", "origin"]);
+
+    // Total branches: 1 (main) + 5 local + 3 remote = 9 < 100
+    let output = repo
+        .completion_cmd_for_shell(&["wt", "switch", ""], "fish")
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    // Both local and remote branches should appear (under threshold)
+    assert!(
+        stdout.contains("local/branch-0"),
+        "Local branches should appear: {stdout}"
+    );
+    assert!(
+        stdout.contains("remote/branch-0"),
+        "Remote branches should appear when total <= 100: {stdout}"
+    );
+}
+
+#[rstest]
+fn test_complete_step_shows_aliases_from_project_config(repo: TestRepo) {
+    repo.commit("initial");
+    repo.write_project_config(
+        r#"
+[aliases]
+deploy = "make deploy"
+lint = "cargo clippy"
+"#,
+    );
+    repo.commit("add config");
+
+    let output = repo.completion_cmd(&["wt", "step", ""]).output().unwrap();
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let subcommands = value_suggestions(&stdout);
+
+    // Built-in commands still present
+    assert!(subcommands.contains(&"commit"), "Missing commit");
+    assert!(subcommands.contains(&"push"), "Missing push");
+    // Aliases appear
+    assert!(
+        subcommands.contains(&"deploy"),
+        "Missing alias 'deploy': {stdout}"
+    );
+    assert!(
+        subcommands.contains(&"lint"),
+        "Missing alias 'lint': {stdout}"
+    );
+}
+
+#[rstest]
+fn test_complete_step_shows_aliases_from_user_config(repo: TestRepo) {
+    repo.commit("initial");
+    repo.write_test_config(
+        r#"
+[aliases]
+update = "git pull --rebase"
+"#,
+    );
+
+    let output = repo.completion_cmd(&["wt", "step", ""]).output().unwrap();
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let subcommands = value_suggestions(&stdout);
+
+    assert!(
+        subcommands.contains(&"update"),
+        "Missing user alias 'update': {stdout}"
+    );
+}
+
+#[rstest]
+fn test_complete_step_alias_does_not_shadow_builtins(repo: TestRepo) {
+    repo.commit("initial");
+    repo.write_project_config(
+        r#"
+[aliases]
+commit = "echo 'shadowed'"
+deploy = "make deploy"
+"#,
+    );
+    repo.commit("add config");
+
+    let output = repo.completion_cmd(&["wt", "step", ""]).output().unwrap();
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let subcommands = value_suggestions(&stdout);
+
+    // 'commit' should appear exactly once (the built-in), not duplicated
+    let commit_count = subcommands.iter().filter(|&&s| s == "commit").count();
+    assert_eq!(commit_count, 1, "Built-in 'commit' should appear once");
+    // 'deploy' alias should appear
+    assert!(subcommands.contains(&"deploy"));
+}
+
+#[rstest]
+fn test_complete_step_alias_shows_flags(repo: TestRepo) {
+    repo.commit("initial");
+    repo.write_project_config(
+        r#"
+[aliases]
+deploy = "make deploy"
+"#,
+    );
+    repo.commit("add config");
+
+    // Complete flags for the alias subcommand
+    let output = repo
+        .completion_cmd(&["wt", "step", "deploy", "--"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    assert!(
+        stdout.contains("--dry-run"),
+        "Missing --dry-run flag: {stdout}"
+    );
+    assert!(stdout.contains("--yes"), "Missing --yes flag: {stdout}");
+    assert!(stdout.contains("--var"), "Missing --var flag: {stdout}");
+}
+
+// --- Alias argument-completion mirroring -------------------------------------
+//
+// An alias that forwards `{{ args }}` to a `wt` leaf built-in (`co = "wt switch
+// {{ args }}"`) mirrors that built-in's completion instead of the generic stub.
+// Detection: exactly one `{{ args }}`-forwarding command, leading `wt`, then a
+// tree-walk that lands on a leaf. See `mirror_builtin_leaf` in src/completion.rs.
+
+/// `wt co <Tab>` mirrors `wt switch <Tab>`: the positional completes branches,
+/// switch's flags are offered after `--`, and a bare positional tab does not
+/// spam flags (`hide_non_positional_options_for_completion` ordering).
+#[rstest]
+fn test_complete_alias_mirrors_wrapped_switch(repo: TestRepo) {
+    repo.commit("initial");
+    repo.write_project_config(
+        r#"
+[aliases]
+co = "wt switch {{ args }}"
+"#,
+    );
+    repo.commit("add config");
+    repo.run_git(&["branch", "feature/new"]);
+
+    // Bare positional → branch candidates (mirrored completer), no flag spam.
+    let output = repo.completion_cmd(&["wt", "co", ""]).output().unwrap();
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("feature/new"),
+        "mirrored switch should complete branches: {stdout}"
+    );
+    assert!(
+        !stdout.contains("--create"),
+        "bare tab must not list switch's flags: {stdout}"
+    );
+
+    // Flag prefix → switch's flags.
+    let output = repo.completion_cmd(&["wt", "co", "--"]).output().unwrap();
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("--create"),
+        "mirrored switch should offer --create: {stdout}"
+    );
+}
+
+/// A baked-in flag in the template (`mk = "wt switch --create {{ args }}"`)
+/// stops the tree-walk at `switch` but still mirrors it.
+#[rstest]
+fn test_complete_alias_mirrors_switch_with_baked_flag(repo: TestRepo) {
+    repo.commit("initial");
+    repo.write_project_config(
+        r#"
+[aliases]
+mk = "wt switch --create {{ args }}"
+"#,
+    );
+    repo.commit("add config");
+
+    let output = repo.completion_cmd(&["wt", "mk", "--"]).output().unwrap();
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("--create"),
+        "mk should offer --create: {stdout}"
+    );
+    assert!(
+        stdout.contains("--base"),
+        "mk should offer --base: {stdout}"
+    );
+}
+
+/// A nested leaf (`cm = "wt step commit {{ args }}"`) mirrors `step commit`:
+/// its flags appear (not the generic stub's), and `--branch`'s value completes
+/// via commit's worktree-only completer.
+#[rstest]
+fn test_complete_alias_mirrors_nested_step_command(mut repo: TestRepo) {
+    repo.commit("initial");
+    repo.write_project_config(
+        r#"
+[aliases]
+cm = "wt step commit {{ args }}"
+"#,
+    );
+    repo.commit("add config");
+    // `wt step commit`'s `--branch` uses `worktree_only_completer`, so create a
+    // worktree (which also creates its branch).
+    repo.add_worktree("feature/new");
+
+    // Flag prefix → step-commit's own flags (not the generic stub's --var).
+    let output = repo.completion_cmd(&["wt", "cm", "--"]).output().unwrap();
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("--stage"),
+        "mirrored step-commit should offer --stage: {stdout}"
+    );
+    assert!(
+        stdout.contains("--show-prompt"),
+        "mirrored step-commit should offer --show-prompt: {stdout}"
+    );
+    assert!(
+        !stdout.contains("--var"),
+        "mirrored step-commit must not expose the generic stub's --var: {stdout}"
+    );
+
+    // `--branch <value>` completes via commit's worktree_only_completer.
+    let output = repo
+        .completion_cmd(&["wt", "cm", "--branch", ""])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("feature/new"),
+        "mirrored step-commit --branch should complete worktree branches: {stdout}"
+    );
+}
+
+/// An alias that does not wrap a `wt` built-in falls back to the generic stub:
+/// no branch completion.
+#[rstest]
+fn test_complete_alias_falls_back_when_not_wrapping_builtin(repo: TestRepo) {
+    repo.commit("initial");
+    repo.write_project_config(
+        r#"
+[aliases]
+greet = "echo hi {{ branch }}"
+"#,
+    );
+    repo.commit("add config");
+    repo.run_git(&["branch", "feature/new"]);
+
+    let output = repo.completion_cmd(&["wt", "greet", ""]).output().unwrap();
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        !stdout.contains("feature/new"),
+        "non-wrapping alias must not complete branches: {stdout}"
+    );
+}
+
+/// A bare dispatcher (`s = "wt step {{ args }}"`) lands on a non-leaf and falls
+/// back to the generic stub — it must NOT offer `step`'s subcommands.
+#[rstest]
+fn test_complete_alias_bare_dispatcher_falls_back(repo: TestRepo) {
+    repo.commit("initial");
+    repo.write_project_config(
+        r#"
+[aliases]
+s = "wt step {{ args }}"
+"#,
+    );
+    repo.commit("add config");
+
+    let output = repo.completion_cmd(&["wt", "s", ""]).output().unwrap();
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        !stdout.contains("commit"),
+        "bare wt step wrapper must not mirror step's subcommands: {stdout}"
+    );
+    assert!(
+        !stdout.contains("diff"),
+        "bare wt step wrapper must not mirror step's subcommands: {stdout}"
+    );
+}
+
+/// Multiple commands forwarding `{{ args }}` is ambiguous → generic stub.
+#[rstest]
+fn test_complete_alias_multiple_forwarders_fall_back(repo: TestRepo) {
+    repo.commit("initial");
+    repo.write_project_config(
+        r#"
+[aliases]
+both = ["wt switch {{ args }}", "echo {{ args }}"]
+"#,
+    );
+    repo.commit("add config");
+    repo.run_git(&["branch", "feature/new"]);
+
+    let output = repo.completion_cmd(&["wt", "both", ""]).output().unwrap();
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        !stdout.contains("feature/new"),
+        "ambiguous multi-forwarder alias must not mirror: {stdout}"
+    );
+}
+
+/// An alias whose command doesn't reference `{{ args }}` doesn't forward CLI
+/// positionals → generic stub.
+#[rstest]
+fn test_complete_alias_no_args_forwarding_falls_back(repo: TestRepo) {
+    repo.commit("initial");
+    repo.write_project_config(
+        r#"
+[aliases]
+co = "wt switch --create main"
+"#,
+    );
+    repo.commit("add config");
+    repo.run_git(&["branch", "feature/new"]);
+
+    let output = repo.completion_cmd(&["wt", "co", ""]).output().unwrap();
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        !stdout.contains("feature/new"),
+        "alias that doesn't forward {{ args }} must not mirror: {stdout}"
+    );
+}
+
+/// The single forwarder need not be the first command — a pipeline that runs a
+/// prep step then `wt switch {{ args }}` still mirrors switch.
+#[rstest]
+fn test_complete_alias_mirrors_when_forwarder_not_first(repo: TestRepo) {
+    repo.commit("initial");
+    repo.write_project_config(
+        r#"
+[aliases]
+pre = ["npm install", "wt switch {{ args }}"]
+"#,
+    );
+    repo.commit("add config");
+    repo.run_git(&["branch", "feature/new"]);
+
+    let output = repo.completion_cmd(&["wt", "pre", ""]).output().unwrap();
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("feature/new"),
+        "forwarder-not-first alias should still mirror switch: {stdout}"
+    );
+}
+
+/// Prepend a directory to PATH on a Command.
+fn prepend_path(cmd: &mut std::process::Command, dir: &std::path::Path) {
+    let (path_var, current) = std::env::vars_os()
+        .find(|(k, _)| k.eq_ignore_ascii_case("PATH"))
+        .map(|(k, v)| (k.to_string_lossy().into_owned(), Some(v)))
+        .unwrap_or(("PATH".to_string(), None));
+
+    let mut paths: Vec<std::path::PathBuf> = current
+        .as_deref()
+        .map(|p| std::env::split_paths(p).collect())
+        .unwrap_or_default();
+    paths.insert(0, dir.to_path_buf());
+    let new_path = std::env::join_paths(&paths).unwrap();
+    cmd.env(path_var, new_path);
+}
+
+/// External `wt-*` binaries on PATH appear as subcommand completion candidates.
+#[rstest]
+fn test_complete_custom_subcommand_listed(repo: TestRepo) {
+    repo.commit("initial");
+
+    // Create a mock wt-testext binary on PATH
+    let ext_dir = tempfile::tempdir().unwrap();
+    MockConfig::new("wt-testext")
+        .command("_default", MockResponse::output("external ran\n"))
+        .write(ext_dir.path());
+
+    // Complete "wt " — should include "testext" from the `wt-testext` binary
+    let mut cmd = repo.completion_cmd(&["wt", ""]);
+    prepend_path(&mut cmd, ext_dir.path());
+    cmd.env("MOCK_CONFIG_DIR", ext_dir.path());
+    let output = cmd.output().unwrap();
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    assert!(
+        stdout.contains("testext"),
+        "Custom subcommand 'testext' missing from completion output: {stdout}"
+    );
+    // Built-in subcommands should still be present
+    assert!(
+        stdout.contains("switch"),
+        "Built-in 'switch' missing from completion output: {stdout}"
+    );
+}
+
+/// Completion for a custom subcommand's flags forwards to the `wt-*` binary.
+#[cfg(unix)]
+#[rstest]
+fn test_complete_custom_subcommand_forwards(repo: TestRepo) {
+    use std::os::unix::fs::PermissionsExt;
+    repo.commit("initial");
+
+    // Create a real shell script that outputs completions (not mock-stub,
+    // which needs MOCK_CONFIG_DIR and doesn't know about COMPLETE env var).
+    let ext_dir = tempfile::tempdir().unwrap();
+    let script = ext_dir.path().join("wt-testext");
+    std::fs::write(
+        &script,
+        "#!/bin/sh\nprintf '%s\\n%s' '--custom-flag' '--another'\n",
+    )
+    .unwrap();
+    std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+    // Complete "wt testext --" — should forward to wt-testext and show its output
+    let mut cmd = repo.completion_cmd(&["wt", "testext", "--"]);
+    prepend_path(&mut cmd, ext_dir.path());
+    let output = cmd.output().unwrap();
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    assert!(
+        stdout.contains("--custom-flag"),
+        "Forwarded completion output missing '--custom-flag': {stdout}"
+    );
+}

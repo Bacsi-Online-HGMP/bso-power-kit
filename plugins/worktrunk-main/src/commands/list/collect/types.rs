@@ -1,0 +1,241 @@
+//! Task result types and context structures.
+//!
+//! Contains all the type definitions used by the collection system:
+//! - `TaskResult` and `TaskKind` - result variants from task computations
+//! - `TaskError` and `ErrorCause` - error handling for failed tasks
+//! - `DrainOutcome` and `MissingResult` - timeout diagnostic info
+
+use worktrunk::git::LineDiff;
+
+use super::super::ci_status::PrStatus;
+use super::super::model::{
+    ActiveGitOperation, AheadBehind, BranchDiffTotals, UpstreamStatus, WorkingTreeStatus,
+};
+
+/// Task results sent as each git operation completes.
+/// These enable progressive rendering - update UI as data arrives.
+///
+/// Each spawned task produces exactly one TaskResult. Multiple results
+/// may feed into a single table column, and one result may feed multiple
+/// columns. See `drain_results()` for how results map to ListItem fields.
+///
+/// The `EnumDiscriminants` derive generates a companion `TaskKind` enum
+/// with the same variants but no payloads, used for type-safe tracking
+/// of expected vs received results.
+#[derive(Debug, Clone, strum::EnumDiscriminants)]
+#[strum_discriminants(
+    name(TaskKind),
+    vis(pub),
+    derive(Hash, Ord, PartialOrd, strum::IntoStaticStr, strum::EnumIter),
+    strum(serialize_all = "kebab-case")
+)]
+pub(crate) enum TaskResult {
+    /// Ahead/behind counts vs default branch
+    AheadBehind {
+        item_idx: usize,
+        counts: AheadBehind,
+        /// True if this is an orphan branch (no common ancestor with default branch)
+        is_orphan: bool,
+    },
+    /// Whether HEAD's tree SHA matches integration target's tree SHA (committed content identical)
+    CommittedTreesMatch {
+        item_idx: usize,
+        committed_trees_match: bool,
+    },
+    /// Whether branch has file changes beyond the merge-base with integration target (three-dot diff)
+    HasFileChanges {
+        item_idx: usize,
+        has_file_changes: bool,
+    },
+    /// Whether merging branch into integration target would add changes (merge simulation)
+    WouldMergeAdd {
+        item_idx: usize,
+        would_merge_add: bool,
+        is_patch_id_match: bool,
+    },
+    /// Whether branch HEAD is ancestor of integration target (same commit or already merged)
+    IsAncestor { item_idx: usize, is_ancestor: bool },
+    /// Line diff vs default branch
+    BranchDiff {
+        item_idx: usize,
+        branch_diff: BranchDiffTotals,
+    },
+    /// Working tree diff and status
+    WorkingTreeDiff {
+        item_idx: usize,
+        working_tree_diff: LineDiff,
+        /// Working tree change flags
+        working_tree_status: WorkingTreeStatus,
+        has_conflicts: bool,
+    },
+    /// Potential merge conflicts with default branch (merge-tree simulation on committed HEAD)
+    MergeTreeConflicts {
+        item_idx: usize,
+        has_merge_tree_conflicts: bool,
+    },
+    /// Potential merge conflicts including working tree changes
+    ///
+    /// For dirty worktrees, uses `git stash create` to get a tree object that
+    /// includes uncommitted changes, then runs merge-tree against that.
+    /// Returns None if working tree is clean (fall back to MergeTreeConflicts).
+    WorkingTreeConflicts {
+        item_idx: usize,
+        /// None = working tree clean (use MergeTreeConflicts result)
+        /// Some(true) = dirty working tree would conflict
+        /// Some(false) = dirty working tree would not conflict
+        has_working_tree_conflicts: Option<bool>,
+    },
+    /// Git operation in progress (rebase/merge)
+    GitOperation {
+        item_idx: usize,
+        git_operation: ActiveGitOperation,
+    },
+    /// User-defined status from git config
+    UserMarker {
+        item_idx: usize,
+        user_marker: Option<String>,
+    },
+    /// Upstream tracking status
+    Upstream {
+        item_idx: usize,
+        upstream: UpstreamStatus,
+    },
+    /// CI/PR status (slow operation)
+    CiStatus {
+        item_idx: usize,
+        pr_status: Option<PrStatus>,
+    },
+    /// URL status (expanded URL and health check result)
+    UrlStatus {
+        item_idx: usize,
+        /// Expanded URL from template (None if no template or no branch)
+        url: Option<String>,
+        /// Whether the port is listening (None if no URL or couldn't parse port)
+        active: Option<bool>,
+    },
+    /// LLM-generated branch summary (`--full` + `[list] summary = true` + LLM command)
+    SummaryGenerate {
+        item_idx: usize,
+        summary: Option<String>,
+    },
+}
+
+impl TaskResult {
+    /// Get the item index for this result
+    pub fn item_idx(&self) -> usize {
+        match self {
+            TaskResult::AheadBehind { item_idx, .. }
+            | TaskResult::CommittedTreesMatch { item_idx, .. }
+            | TaskResult::HasFileChanges { item_idx, .. }
+            | TaskResult::WouldMergeAdd { item_idx, .. }
+            | TaskResult::IsAncestor { item_idx, .. }
+            | TaskResult::BranchDiff { item_idx, .. }
+            | TaskResult::WorkingTreeDiff { item_idx, .. }
+            | TaskResult::MergeTreeConflicts { item_idx, .. }
+            | TaskResult::WorkingTreeConflicts { item_idx, .. }
+            | TaskResult::GitOperation { item_idx, .. }
+            | TaskResult::UserMarker { item_idx, .. }
+            | TaskResult::Upstream { item_idx, .. }
+            | TaskResult::CiStatus { item_idx, .. }
+            | TaskResult::UrlStatus { item_idx, .. }
+            | TaskResult::SummaryGenerate { item_idx, .. } => *item_idx,
+        }
+    }
+}
+
+impl TaskKind {
+    /// Whether this task requires network access.
+    ///
+    /// Network tasks are sorted to run last to avoid blocking local tasks.
+    pub fn is_network(self) -> bool {
+        matches!(
+            self,
+            TaskKind::CiStatus | TaskKind::UrlStatus | TaskKind::SummaryGenerate
+        )
+    }
+}
+
+/// Result of draining task results - indicates whether all results were received
+/// or if a timeout occurred.
+#[derive(Debug)]
+pub(super) enum DrainOutcome {
+    /// All results received (channel closed normally)
+    Complete,
+    /// Timeout occurred - contains diagnostic info about what was received
+    TimedOut {
+        /// Number of task results received before timeout
+        received_count: usize,
+        /// Items with missing results
+        items_with_missing: Vec<MissingResult>,
+    },
+}
+
+/// Item with missing task results (for timeout diagnostics)
+#[derive(Debug)]
+pub(super) struct MissingResult {
+    pub item_idx: usize,
+    pub name: String,
+    pub missing_kinds: Vec<TaskKind>,
+}
+
+/// Cause of a task error.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ErrorCause {
+    /// Command exceeded the configured timeout.
+    Timeout,
+    /// Any other error (permission denied, git error, etc.).
+    Other,
+}
+
+/// Error during task execution.
+///
+/// Tasks return this instead of swallowing errors. The drain layer
+/// collects errors for display after rendering; errored fields stay
+/// `None` so `refresh_status_symbols` naturally leaves the affected gate
+/// unresolved.
+#[derive(Debug, Clone)]
+pub struct TaskError {
+    pub item_idx: usize,
+    pub kind: TaskKind,
+    pub message: String,
+    /// What caused this error. Use `is_timeout()` to check.
+    cause: ErrorCause,
+}
+
+impl TaskError {
+    pub fn new(
+        item_idx: usize,
+        kind: TaskKind,
+        message: impl Into<String>,
+        cause: ErrorCause,
+    ) -> Self {
+        Self {
+            item_idx,
+            kind,
+            message: message.into(),
+            cause,
+        }
+    }
+
+    /// Whether this error was caused by a timeout.
+    pub fn is_timeout(&self) -> bool {
+        self.cause == ErrorCause::Timeout
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_task_error_other_is_not_timeout() {
+        let error = TaskError::new(0, TaskKind::AheadBehind, "test error", ErrorCause::Other);
+        assert!(!error.is_timeout());
+    }
+
+    #[test]
+    fn test_task_error_timeout_is_timeout() {
+        let error = TaskError::new(0, TaskKind::AheadBehind, "timed out", ErrorCause::Timeout);
+        assert!(error.is_timeout());
+    }
+}

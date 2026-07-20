@@ -1,0 +1,492 @@
+//! Recovery from a deleted current working directory.
+//!
+//! When a linked worktree is removed (via `wt remove` or `wt merge` from another
+//! terminal) while a shell is still in that directory, `Repository::current()` fails
+//! because git can't resolve the CWD. This module provides recovery by finding the
+//! parent repository from `$PWD` (which shells preserve after directory deletion).
+
+use std::path::{Path, PathBuf};
+
+use color_print::cformat;
+
+use crate::path::canonicalize_with_parents;
+use crate::styling::eprintln;
+
+use super::Repository;
+
+/// Try to get the current repository, recovering from a deleted CWD if possible.
+///
+/// Returns `(Repository, recovered)` where `recovered` is `true` if the CWD was
+/// deleted and we recovered by finding the parent repository.
+///
+/// Prints an info message when recovery occurs.
+pub fn current_or_recover() -> anyhow::Result<(Repository, bool)> {
+    or_recover(Repository::current(), recover_from_deleted_cwd)
+}
+
+/// Wiring between `Repository::current()` and `recover_from_deleted_cwd`.
+///
+/// Split out so tests can exercise each branch with explicit inputs rather
+/// than relying on the test binary's inherited CWD — which the Nix flake
+/// build sandbox strips of `.git`, breaking environment-coupled assertions.
+fn or_recover<F>(
+    current: anyhow::Result<Repository>,
+    recover: F,
+) -> anyhow::Result<(Repository, bool)>
+where
+    F: FnOnce() -> Option<Repository>,
+{
+    match current {
+        Ok(repo) => Ok((repo, false)),
+        Err(err) => match recover() {
+            Some(repo) => {
+                eprintln!(
+                    "{}",
+                    crate::styling::info_message("Current worktree was removed, recovering...")
+                );
+                Ok((repo, true))
+            }
+            None => Err(err),
+        },
+    }
+}
+
+/// Determine the hint to show when the user's CWD has been removed.
+///
+/// Tries to find the parent repository and checks if `wt switch ^` would work
+/// (i.e., the default branch has an existing worktree). Falls back to suggesting
+/// `wt list` when the default branch isn't resolvable. Returns `None` when no
+/// repository can be found (no actionable hint to give).
+pub fn cwd_removed_hint() -> Option<String> {
+    let repo = Repository::current()
+        .ok()
+        .or_else(recover_from_deleted_cwd)?;
+    Some(hint_for_repo(&repo))
+}
+
+fn hint_for_repo(repo: &Repository) -> String {
+    if let Some(branch) = repo.default_branch()
+        && repo
+            .worktree_for_branch(&branch)
+            .ok()
+            .flatten()
+            .is_some_and(|p| p.exists())
+    {
+        return cformat!("Current directory was removed. Try: <underline>wt switch ^</>");
+    }
+
+    cformat!("Current directory was removed. Run <underline>wt list</> to see worktrees")
+}
+
+/// Attempt to recover a repository when the current directory has been deleted.
+///
+/// Returns `Some(Repository)` if:
+/// 1. `std::env::current_dir()` fails or returns a non-existent path (CWD is gone)
+/// 2. `$PWD` points to a path whose ancestor contains a git repository
+/// 3. The deleted path was actually a worktree of that repository
+///
+/// Returns `None` if CWD is fine or recovery fails at any step.
+fn recover_from_deleted_cwd() -> Option<Repository> {
+    // If current_dir succeeds and the directory exists, nothing to recover from.
+    // On Windows, current_dir() may succeed even after the directory is removed
+    // (the process handle keeps it alive), so also check existence on disk.
+    match std::env::current_dir() {
+        Ok(p) if p.exists() => return None,
+        _ => {}
+    }
+
+    // Shells preserve the logical path in $PWD even after the directory is deleted
+    let pwd = std::env::var_os("PWD")?;
+    let deleted_path = PathBuf::from(pwd);
+
+    recover_from_path(&deleted_path)
+}
+
+/// Core recovery logic: given a deleted worktree path, find the parent repository.
+///
+/// Walks up from `deleted_path` checking each existing ancestor (and its immediate
+/// children) for git repositories. Each candidate repo is validated with
+/// `was_worktree_of` to ensure the deleted path actually belonged to it.
+///
+/// This handles both sibling layouts (worktree next to repo) and nested layouts
+/// (worktree inside repo) without needing to know the template structure.
+fn recover_from_path(deleted_path: &Path) -> Option<Repository> {
+    let mut candidate = deleted_path.parent()?;
+    loop {
+        if candidate.is_dir() {
+            tracing::debug!(
+                path = %deleted_path.display(),
+                ancestor = %candidate.display(),
+                "Deleted CWD recovery: path={}, checking ancestor={}",
+                deleted_path.display(),
+                candidate.display()
+            );
+            if let Some(repo) = find_validated_repo_near(candidate, deleted_path) {
+                return Some(repo);
+            }
+        }
+        candidate = candidate.parent()?;
+    }
+}
+
+/// Look for a git repository at `dir` or its immediate children that recognizes
+/// `deleted_path` as a (former) worktree.
+///
+/// Only checks for `.git` **directories** (main repos), not `.git` files
+/// (which are linked worktrees — we need the main repo to recover).
+fn find_validated_repo_near(dir: &Path, deleted_path: &Path) -> Option<Repository> {
+    // Check the directory itself first
+    if let Some(repo) = try_repo_at(dir)
+        && was_worktree_of(&repo, deleted_path)
+    {
+        return Some(repo);
+    }
+
+    // Check immediate children for .git directories.
+    // Uses is_some_and instead of ? so an unreadable entry (e.g., broken symlink)
+    // skips that entry rather than aborting the entire search.
+    let entries = std::fs::read_dir(dir).ok()?;
+    for entry in entries.flatten() {
+        if entry.file_type().ok().is_some_and(|ft| ft.is_dir())
+            && let Some(repo) = try_repo_at(&entry.path())
+            && was_worktree_of(&repo, deleted_path)
+        {
+            return Some(repo);
+        }
+    }
+
+    None
+}
+
+/// Try to discover a repository at the given path.
+///
+/// Returns `Some(repo)` if the path contains a `.git` directory (not a file)
+/// and `Repository::at()` succeeds.
+///
+/// Note: This only matches `.git` directories, so bare repos (which have no
+/// `.git` subdirectory) won't be discovered. `cwd_removed_hint()` handles
+/// this gracefully by falling back to progressively less specific hints.
+fn try_repo_at(dir: &Path) -> Option<Repository> {
+    let git_path = dir.join(".git");
+    // Only match .git directories (main repos), not .git files (linked worktrees)
+    if git_path.is_dir() {
+        Repository::at(dir).ok()
+    } else {
+        None
+    }
+}
+
+/// Check if the deleted path was a worktree of the given repository.
+///
+/// Uses `list_worktrees()` which includes prunable entries — a deleted worktree
+/// directory will show up as prunable, confirming it belonged to this repo.
+///
+/// Also matches when `deleted_path` is a subdirectory of a worktree (the shell
+/// may have been deeper than the worktree root when it was removed).
+fn was_worktree_of(repo: &Repository, deleted_path: &Path) -> bool {
+    repo.list_worktrees().is_ok_and(|worktrees| {
+        worktrees.iter().any(|wt| {
+            deleted_path.starts_with(&wt.path)
+                || (wt.is_prunable() && paths_match(&wt.path, deleted_path))
+        })
+    })
+}
+
+/// Compare worktree paths, accounting for the fact that the deleted path
+/// may not be canonical (e.g., symlinks in parent directories).
+///
+/// Returns true when `deleted_path` is the worktree itself, or a descendant
+/// of it, after symlinks anywhere in the existing portion of either path are
+/// resolved. This covers the case where the shell entered a worktree through
+/// a symlinked spelling (`~/link/repo.feature/src`) and the worktree was then
+/// removed — neither the literal `starts_with` nor a same-`file_name` check
+/// matches such a path.
+fn paths_match(worktree_path: &Path, deleted_path: &Path) -> bool {
+    // Direct prefix check (covers the no-symlink case cheaply).
+    if deleted_path.starts_with(worktree_path) {
+        return true;
+    }
+
+    // Canonicalize the existing prefix of each path so symlinked spellings
+    // collapse to the real on-disk path, then compare with starts_with so a
+    // descendant of the worktree still matches.
+    canonicalize_with_parents(deleted_path).starts_with(canonicalize_with_parents(worktree_path))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::testing::TestRepo;
+    use ansi_str::AnsiStr;
+
+    #[test]
+    fn test_try_repo_at_rejects_git_file() {
+        let tmp = tempfile::tempdir().unwrap();
+        // Create a .git file (not directory) — simulates a linked worktree
+        std::fs::write(tmp.path().join(".git"), "gitdir: /some/path").unwrap();
+        assert!(try_repo_at(tmp.path()).is_none());
+    }
+
+    #[test]
+    fn test_try_repo_at_accepts_git_dir() {
+        let test = TestRepo::new();
+        assert!(try_repo_at(test.path()).is_some());
+    }
+
+    #[test]
+    fn test_recover_returns_none_when_cwd_exists() {
+        // current_dir() succeeds in test environment, so recovery should return None
+        assert!(recover_from_deleted_cwd().is_none());
+    }
+
+    #[test]
+    fn test_paths_match_identical_paths() {
+        let p = PathBuf::from("/some/path/feature");
+        assert!(paths_match(&p, &p));
+    }
+
+    #[test]
+    fn test_paths_match_different_names() {
+        let a = PathBuf::from("/repos/feature-a");
+        let b = PathBuf::from("/repos/feature-b");
+        assert!(!paths_match(&a, &b));
+    }
+
+    #[test]
+    fn test_paths_match_same_name_same_parent() {
+        let tmp = tempfile::tempdir().unwrap();
+        // Both paths share the same existing parent and same name
+        let a = tmp.path().join("feature");
+        let b = tmp.path().join("feature");
+        assert!(paths_match(&a, &b));
+    }
+
+    #[test]
+    fn test_paths_match_different_parent() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir_a = tmp.path().join("a");
+        let dir_b = tmp.path().join("b");
+        std::fs::create_dir(&dir_a).unwrap();
+        std::fs::create_dir(&dir_b).unwrap();
+        let a = dir_a.join("feature");
+        let b = dir_b.join("feature");
+        assert!(!paths_match(&a, &b));
+    }
+
+    #[test]
+    fn test_was_worktree_of_finds_existing_worktree() {
+        let tmp = tempfile::tempdir().unwrap();
+        let base = dunce::canonicalize(tmp.path()).unwrap();
+        let test = TestRepo::at(&base.join("repo"));
+        test.commit("init");
+
+        // Add a linked worktree
+        let wt_path = base.join("feature-wt");
+        let wt_str = wt_path.to_string_lossy();
+        test.repo
+            .run_command(&["worktree", "add", &wt_str, "-b", "feature"])
+            .unwrap();
+
+        assert!(was_worktree_of(&test.repo, &wt_path));
+    }
+
+    #[test]
+    fn test_was_worktree_of_rejects_unknown_path() {
+        let test = TestRepo::with_initial_commit();
+        let unknown = PathBuf::from("/nonexistent/unknown");
+        assert!(!was_worktree_of(&test.repo, &unknown));
+    }
+
+    #[test]
+    fn test_or_recover_uses_current_repo_without_recovering() {
+        let test = TestRepo::new();
+        let (repo, recovered) = or_recover(Ok(test.repo.clone()), || None).unwrap();
+        assert!(!recovered);
+        assert!(repo.repo_path().unwrap().exists());
+    }
+
+    #[test]
+    fn test_or_recover_recovers_when_current_fails() {
+        let test = TestRepo::new();
+        let recovered_repo = test.repo.clone();
+        let (_, recovered) = or_recover(Err(anyhow::anyhow!("CWD missing")), move || {
+            Some(recovered_repo)
+        })
+        .unwrap();
+        assert!(recovered);
+    }
+
+    #[test]
+    fn test_or_recover_propagates_error_when_recovery_fails() {
+        let result = or_recover(Err(anyhow::anyhow!("CWD missing")), || None);
+        let err = result.unwrap_err();
+        assert!(err.to_string().contains("CWD missing"));
+    }
+
+    #[test]
+    fn test_recover_from_path_finds_deleted_worktree() {
+        let tmp = tempfile::tempdir().unwrap();
+        let base = dunce::canonicalize(tmp.path()).unwrap();
+        let test = TestRepo::at(&base.join("repo"));
+        test.commit("init");
+
+        // Add a linked worktree
+        let wt_path = base.join("feature-wt");
+        let wt_str = wt_path.to_string_lossy();
+        test.repo
+            .run_command(&["worktree", "add", &wt_str, "-b", "feature"])
+            .unwrap();
+
+        // Delete the worktree directory (simulating external removal)
+        std::fs::remove_dir_all(&wt_path).unwrap();
+
+        // recover_from_path should find the parent repo
+        assert!(recover_from_path(&wt_path).is_some());
+    }
+
+    #[test]
+    fn test_recover_from_path_returns_none_for_unrelated_path() {
+        let tmp = tempfile::tempdir().unwrap();
+        let base = dunce::canonicalize(tmp.path()).unwrap();
+        let test = TestRepo::at(&base.join("repo"));
+        test.commit("init");
+
+        // Try to recover from a path that was never a worktree
+        let unrelated = base.join("not-a-worktree");
+        assert!(recover_from_path(&unrelated).is_none());
+    }
+
+    #[test]
+    fn test_recover_from_path_multi_repo_siblings() {
+        let tmp = tempfile::tempdir().unwrap();
+        let base = dunce::canonicalize(tmp.path()).unwrap();
+
+        // Create two sibling repos
+        let alpha = TestRepo::at(&base.join("alpha"));
+        let beta = TestRepo::at(&base.join("beta"));
+        alpha.commit("init");
+        beta.commit("init");
+
+        // Add worktrees for both repos as siblings
+        let wt_a = base.join("alpha.feature");
+        let wt_b = base.join("beta.feature");
+        let wt_a_str = wt_a.to_string_lossy();
+        let wt_b_str = wt_b.to_string_lossy();
+        alpha
+            .repo
+            .run_command(&["worktree", "add", &wt_a_str, "-b", "feature"])
+            .unwrap();
+        beta.repo
+            .run_command(&["worktree", "add", &wt_b_str, "-b", "feature"])
+            .unwrap();
+
+        // Delete beta's worktree (simulating wt merge from another terminal)
+        std::fs::remove_dir_all(&wt_b).unwrap();
+
+        // Recovery should find beta's repo, not alpha's
+        let recovered = recover_from_path(&wt_b).unwrap();
+        assert_eq!(
+            dunce::canonicalize(recovered.repo_path().unwrap()).unwrap(),
+            base.join("beta")
+        );
+    }
+
+    #[test]
+    fn test_recover_from_path_nested_worktree() {
+        let tmp = tempfile::tempdir().unwrap();
+        let base = dunce::canonicalize(tmp.path()).unwrap();
+
+        let test = TestRepo::at(&base.join("myrepo"));
+        test.commit("init");
+
+        // Add a worktree nested under the repo
+        let wt_path = test.path().join(".worktrees").join("feature");
+        std::fs::create_dir_all(wt_path.parent().unwrap()).unwrap();
+        let wt_str = wt_path.to_string_lossy();
+        test.repo
+            .run_command(&["worktree", "add", &wt_str, "-b", "feature"])
+            .unwrap();
+
+        // Delete the worktree
+        std::fs::remove_dir_all(&wt_path).unwrap();
+
+        // Recovery should find the repo
+        assert!(recover_from_path(&wt_path).is_some());
+    }
+
+    #[test]
+    fn test_recover_from_path_deep_pwd() {
+        let tmp = tempfile::tempdir().unwrap();
+        let base = dunce::canonicalize(tmp.path()).unwrap();
+        let test = TestRepo::at(&base.join("repo"));
+        test.commit("init");
+
+        let wt_path = base.join("feature-wt");
+        let wt_str = wt_path.to_string_lossy();
+        test.repo
+            .run_command(&["worktree", "add", &wt_str, "-b", "feature"])
+            .unwrap();
+
+        // Delete the worktree
+        std::fs::remove_dir_all(&wt_path).unwrap();
+
+        // Recover from a path deeper than the worktree root
+        // (simulates $PWD being in a subdirectory when the worktree was removed)
+        let deep_path = wt_path.join("src").join("lib.rs");
+        assert!(recover_from_path(&deep_path).is_some());
+    }
+
+    /// Regression test for #2462: deleted-CWD recovery must handle a
+    /// subdirectory path whose parents include a symlink. The shell may have
+    /// been entered through a symlinked parent (e.g. `~/link/repo.feature`)
+    /// and may have descended into a subdirectory before the worktree was
+    /// removed, so $PWD is `~/link/repo.feature/src` while the worktree git
+    /// recorded is `<canonical>/repo.feature`.
+    #[cfg(unix)]
+    #[test]
+    fn test_recover_from_path_symlinked_subdir() {
+        let tmp = tempfile::tempdir().unwrap();
+        let base = dunce::canonicalize(tmp.path()).unwrap();
+        let test = TestRepo::at(&base.join("repo"));
+        test.commit("init");
+
+        let wt_path = base.join("feature-wt");
+        let wt_str = wt_path.to_string_lossy();
+        test.repo
+            .run_command(&["worktree", "add", &wt_str, "-b", "feature"])
+            .unwrap();
+
+        // Symlink that points at `base`, so paths like `<base>/link/feature-wt`
+        // resolve to `<base>/feature-wt` but spell differently.
+        let link = base.join("link");
+        std::os::unix::fs::symlink(&base, &link).unwrap();
+
+        // Delete the worktree (simulating wt remove from another terminal)
+        std::fs::remove_dir_all(&wt_path).unwrap();
+
+        // The shell's $PWD goes through the symlink and descends into the
+        // worktree. Recovery must still find the parent repo.
+        let deep_path = link.join("feature-wt").join("src").join("lib.rs");
+        assert!(
+            recover_from_path(&deep_path).is_some(),
+            "recovery should succeed for symlinked subdirectory of a removed worktree"
+        );
+    }
+
+    #[test]
+    fn test_hint_for_repo_suggests_switch() {
+        // A normal repo with a main worktree should suggest `wt switch ^`.
+        let test = TestRepo::with_initial_commit();
+        let hint = hint_for_repo(&test.repo);
+        insta::assert_snapshot!(hint.ansi_strip(), @"Current directory was removed. Try: wt switch ^");
+    }
+
+    #[test]
+    fn test_hint_for_repo_fallback_to_list() {
+        // A bare repo with no worktrees has no default branch worktree,
+        // so it should suggest `wt list` instead of `wt switch ^`.
+        let test = TestRepo::bare();
+        let hint = hint_for_repo(&test.repo);
+        insta::assert_snapshot!(hint.ansi_strip(), @"Current directory was removed. Run wt list to see worktrees");
+    }
+}

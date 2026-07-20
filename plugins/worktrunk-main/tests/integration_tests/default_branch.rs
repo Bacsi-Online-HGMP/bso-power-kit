@@ -1,0 +1,718 @@
+use crate::common::{BareRepoTest, TestRepo, TestRepoBase, repo, repo_with_remote};
+use rstest::rstest;
+use std::fs;
+use worktrunk::git::{GitRemoteUrl, Repository};
+
+#[rstest]
+fn test_get_default_branch_with_origin_head(#[from(repo_with_remote)] repo: TestRepo) {
+    // origin/HEAD should be set automatically by setup_remote
+    assert!(repo.has_origin_head());
+
+    // Test that we can get the default branch
+    let branch = Repository::at(repo.root_path())
+        .unwrap()
+        .default_branch()
+        .unwrap();
+    assert_eq!(branch, "main");
+}
+
+#[rstest]
+fn test_get_default_branch_without_origin_head(#[from(repo_with_remote)] repo: TestRepo) {
+    // Clear origin/HEAD to force remote query
+    repo.clear_origin_head();
+    assert!(!repo.has_origin_head());
+
+    // Should still work by querying remote
+    let branch = Repository::at(repo.root_path())
+        .unwrap()
+        .default_branch()
+        .unwrap();
+    assert_eq!(branch, "main");
+
+    // Verify that worktrunk's cache is now set
+    let cached = repo
+        .git_command()
+        .args(["config", "--get", "worktrunk.default-branch"])
+        .run()
+        .unwrap();
+    assert_eq!(String::from_utf8_lossy(&cached.stdout).trim(), "main");
+}
+
+#[rstest]
+fn test_get_default_branch_caches_result(#[from(repo_with_remote)] repo: TestRepo) {
+    // Clear both caches to force remote query
+    repo.clear_origin_head();
+    let _ = repo
+        .git_command()
+        .args(["config", "--unset", "worktrunk.default-branch"])
+        .run();
+
+    // First call queries remote and caches to worktrunk config
+    Repository::at(repo.root_path())
+        .unwrap()
+        .default_branch()
+        .unwrap();
+    let cached = repo
+        .git_command()
+        .args(["config", "--get", "worktrunk.default-branch"])
+        .run()
+        .unwrap();
+    assert!(cached.status.success());
+
+    // Second call uses cache (fast path)
+    let branch = Repository::at(repo.root_path())
+        .unwrap()
+        .default_branch()
+        .unwrap();
+    assert_eq!(branch, "main");
+}
+
+#[rstest]
+fn test_get_default_branch_no_remote(repo: TestRepo) {
+    // Remove origin (fixture has it) for this no-remote test
+    repo.run_git(&["remote", "remove", "origin"]);
+
+    // No remote configured, should infer from local branches
+    // Since there's only one local branch, it should return that
+    let result = Repository::at(repo.root_path()).unwrap().default_branch();
+    assert!(result.is_some());
+
+    // The inferred branch should match the current branch
+    let inferred_branch = result.unwrap();
+    let repo_instance = Repository::at(repo.root_path()).unwrap();
+    let current_branch = repo_instance
+        .worktree_at(repo.root_path())
+        .branch()
+        .unwrap()
+        .unwrap();
+    assert_eq!(inferred_branch, current_branch);
+}
+
+#[rstest]
+fn test_get_default_branch_with_custom_remote(mut repo: TestRepo) {
+    repo.setup_custom_remote("upstream", "main");
+
+    // Test that we can get the default branch from a custom remote
+    let branch = Repository::at(repo.root_path())
+        .unwrap()
+        .default_branch()
+        .unwrap();
+    assert_eq!(branch, "main");
+}
+
+#[rstest]
+fn test_primary_remote_detects_custom_remote(mut repo: TestRepo) {
+    // Remove origin (fixture has it) so upstream becomes the primary
+    repo.run_git(&["remote", "remove", "origin"]);
+
+    // Use "main" since that's the local branch - the test only cares about remote name detection
+    repo.setup_custom_remote("upstream", "main");
+
+    // Test that primary_remote detects the custom remote name
+    let git_repo = Repository::at(repo.root_path()).unwrap();
+    let remote = git_repo.primary_remote().unwrap();
+    assert_eq!(remote, "upstream");
+}
+
+#[rstest]
+fn test_primary_remote_skips_includeif_lines(repo: TestRepo) {
+    // `git config --get-regexp remote\..+\.url` uses an unanchored regex, so it matches
+    // any config key containing "remote.<something>.url" — not just actual remote entries.
+    // For example, `includeIf.hasconfig:remote.*.url:...` keys match and can appear before
+    // the first real remote URL. primary_remote() must skip these non-remote lines.
+    //
+    // We prepend an includeIf section to the local .git/config so it appears before the
+    // [remote "origin"] section in git's output (git emits config entries in file order
+    // within each scope, and global config entries appear before local ones).
+    let git_config = repo.root_path().join(".git/config");
+    let original = fs::read_to_string(&git_config).unwrap();
+    let patched = format!(
+        "[includeIf \"hasconfig:remote.*.url:https://github.com/example/other.git\"]\n\
+         \tpath = /dev/null\n{}",
+        original
+    );
+    fs::write(&git_config, patched).unwrap();
+
+    let git_repo = Repository::at(repo.root_path()).unwrap();
+    let remote = git_repo.primary_remote().unwrap();
+    assert_eq!(remote, "origin");
+}
+
+#[rstest]
+fn test_branch_exists_with_custom_remote(mut repo: TestRepo) {
+    repo.setup_custom_remote("upstream", "main");
+
+    let git_repo = Repository::at(repo.root_path()).unwrap();
+
+    // Should find the branch on the custom remote
+    assert!(git_repo.branch("main").exists().unwrap());
+
+    // Should not find non-existent branch
+    assert!(!git_repo.branch("nonexistent").exists().unwrap());
+}
+
+#[rstest]
+fn test_get_default_branch_no_remote_common_names_fallback(repo: TestRepo) {
+    // Remove origin (fixture has it) for this no-remote test
+    repo.run_git(&["remote", "remove", "origin"]);
+
+    // Create additional branches (no remote configured)
+    repo.git_command()
+        .args(["branch", "feature"])
+        .run()
+        .unwrap();
+    repo.git_command().args(["branch", "bugfix"]).run().unwrap();
+
+    // Now we have multiple branches: main, feature, bugfix
+    // Should detect "main" from the common names list
+    let branch = Repository::at(repo.root_path())
+        .unwrap()
+        .default_branch()
+        .unwrap();
+    assert_eq!(branch, "main");
+}
+
+#[rstest]
+fn test_get_default_branch_no_remote_master_fallback(repo: TestRepo) {
+    // Remove origin (fixture has it) for this no-remote test
+    repo.run_git(&["remote", "remove", "origin"]);
+
+    // Rename main to master, then create other branches
+    repo.git_command()
+        .args(["branch", "-m", "main", "master"])
+        .run()
+        .unwrap();
+    repo.git_command()
+        .args(["branch", "feature"])
+        .run()
+        .unwrap();
+    repo.git_command().args(["branch", "bugfix"]).run().unwrap();
+
+    // Now we have: master, feature, bugfix (no "main")
+    // Should detect "master" from the common names list
+    let branch = Repository::at(repo.root_path())
+        .unwrap()
+        .default_branch()
+        .unwrap();
+    assert_eq!(branch, "master");
+}
+
+#[rstest]
+fn test_default_branch_no_remote_uses_init_config(repo: TestRepo) {
+    // Remove origin (fixture has it) for this no-remote test
+    repo.run_git(&["remote", "remove", "origin"]);
+
+    // Rename main to something non-standard, create the configured default
+    repo.git_command()
+        .args(["branch", "-m", "main", "primary"])
+        .run()
+        .unwrap();
+    repo.git_command()
+        .args(["branch", "feature"])
+        .run()
+        .unwrap();
+
+    // Set init.defaultBranch - this should be checked before common names
+    repo.git_command()
+        .args(["config", "init.defaultBranch", "primary"])
+        .run()
+        .unwrap();
+
+    // Now we have: primary, feature (no common names like main/master)
+    // Should detect "primary" via init.defaultBranch config
+    let branch = Repository::at(repo.root_path())
+        .unwrap()
+        .default_branch()
+        .unwrap();
+    assert_eq!(branch, "primary");
+}
+
+#[rstest]
+fn test_configured_default_branch_is_trusted_without_validation(repo: TestRepo) {
+    // Configure a non-existent branch — `default_branch()` no longer
+    // validates that the branch resolves locally on the fast path. The
+    // persisted value is returned as-is; a stale cache surfaces as a
+    // `StaleDefaultBranch` error downstream (e.g., from `wt merge`) with
+    // cache-reset hints.
+    repo.git_command()
+        .args(["config", "worktrunk.default-branch", "nonexistent-branch"])
+        .run()
+        .unwrap();
+
+    let result = Repository::at(repo.root_path()).unwrap().default_branch();
+    assert_eq!(result, Some("nonexistent-branch".to_string()));
+}
+
+/// In-process `set` followed by `get` sees the new value even when the
+/// config key has a mixed-case variable name. Regression: previously
+/// `set_config_value` inserted the literal key (`…pushRemote`) while
+/// `config_last` looked up the canonical key (`…pushremote`) — the map
+/// ended up with two entries, and reads missed the write.
+#[rstest]
+fn test_set_config_then_get_mixed_case_variable(repo: TestRepo) {
+    let r = Repository::at(repo.root_path()).unwrap();
+    // Trigger bulk config population before the write.
+    let _ = r.is_bare();
+    r.set_config("branch.main.pushRemote", "origin").unwrap();
+    assert_eq!(
+        r.config_value("branch.main.pushRemote").unwrap(),
+        Some("origin".to_string())
+    );
+}
+
+#[rstest]
+fn test_get_default_branch_no_remote_fails_when_no_match(repo: TestRepo) {
+    // Remove origin (fixture has it) for this no-remote test
+    repo.run_git(&["remote", "remove", "origin"]);
+
+    // Rename main to something non-standard
+    repo.git_command()
+        .args(["branch", "-m", "main", "xyz"])
+        .run()
+        .unwrap();
+    repo.git_command().args(["branch", "abc"]).run().unwrap();
+    repo.git_command().args(["branch", "def"]).run().unwrap();
+
+    // Now we have: xyz, abc, def - no common names, no init.defaultBranch
+    // In normal repos (not bare), symbolic-ref HEAD isn't used because HEAD
+    // points to the current branch, not the default branch.
+    // Should return None when default branch cannot be determined
+    let result = Repository::at(repo.root_path()).unwrap().default_branch();
+    assert!(
+        result.is_none(),
+        "Expected None when default branch cannot be determined, got: {:?}",
+        result
+    );
+}
+
+#[rstest]
+fn test_resolve_caret_fails_when_default_branch_unavailable(repo: TestRepo) {
+    // Remove origin (fixture has it) for this no-remote test
+    repo.run_git(&["remote", "remove", "origin"]);
+
+    // Rename main to something non-standard so default branch can't be determined
+    repo.git_command()
+        .args(["branch", "-m", "main", "xyz"])
+        .run()
+        .unwrap();
+    repo.git_command().args(["branch", "abc"]).run().unwrap();
+    repo.git_command().args(["branch", "def"]).run().unwrap();
+
+    // Now resolving "^" should fail with an error
+    let git_repo = Repository::at(repo.root_path()).unwrap();
+    let result = git_repo.resolve_worktree_name("^");
+    assert!(
+        result.is_err(),
+        "Expected error when resolving ^ without default branch"
+    );
+    let err_msg = result.unwrap_err().to_string();
+    assert!(
+        err_msg.contains("Cannot determine default branch"),
+        "Error should mention cannot determine default branch, got: {}",
+        err_msg
+    );
+}
+
+// --- Forge URL resolution helpers ---
+
+/// Configure a remote with a custom hostname and an insteadOf rewrite to a real forge.
+///
+/// Simulates the multi-key SSH pattern: custom host in .git/config, real forge via insteadOf.
+fn setup_insteadof(repo: &TestRepo, remote: &str, custom_url: &str, real_prefix: &str) {
+    // Extract the org prefix from the custom URL for the insteadOf mapping
+    let custom_prefix = custom_url
+        .rsplit_once('/')
+        .map(|(p, _)| p)
+        .unwrap_or(custom_url);
+    repo.run_git(&["config", &format!("remote.{remote}.url"), custom_url]);
+    repo.run_git(&[
+        "config",
+        &format!("url.{real_prefix}.insteadOf"),
+        custom_prefix,
+    ]);
+}
+
+/// Set up push tracking so `branch.push_remote()` and `github_push_url()` work.
+fn setup_push_tracking(repo: &TestRepo, branch: &str, remote: &str) {
+    repo.run_git(&["config", &format!("branch.{branch}.remote"), remote]);
+    repo.run_git(&[
+        "config",
+        &format!("branch.{branch}.merge"),
+        &format!("refs/heads/{branch}"),
+    ]);
+    repo.run_git(&[
+        "update-ref",
+        &format!("refs/remotes/{remote}/{branch}"),
+        branch,
+    ]);
+}
+
+/// Test effective_remote_url: insteadOf resolves custom hostname to real forge.
+#[rstest]
+fn test_effective_remote_url_insteadof(repo: TestRepo) {
+    setup_insteadof(
+        &repo,
+        "origin",
+        "git@work-ssh:org/repo.git",
+        "git@github.com:org",
+    );
+
+    let git_repo = Repository::at(repo.root_path()).unwrap();
+
+    // Raw URL has the custom hostname
+    assert_eq!(
+        git_repo.remote_url("origin").unwrap(),
+        "git@work-ssh:org/repo.git"
+    );
+    // Effective URL has the real forge hostname
+    let effective = git_repo.effective_remote_url("origin").unwrap();
+    assert_eq!(effective, "git@github.com:org/repo.git");
+
+    let parsed = GitRemoteUrl::parse(&effective).unwrap();
+    assert!(parsed.is_github());
+    assert_eq!(parsed.host(), "github.com");
+    assert_eq!(parsed.owner(), "org");
+    assert_eq!(parsed.repo(), "repo");
+}
+
+/// Test effective_remote_url: matches raw URL when no insteadOf is configured.
+#[rstest]
+fn test_effective_remote_url_without_insteadof(repo: TestRepo) {
+    let git_repo = Repository::at(repo.root_path()).unwrap();
+    assert_eq!(
+        git_repo.remote_url("origin").unwrap(),
+        git_repo.effective_remote_url("origin").unwrap()
+    );
+}
+
+/// Test effective_remote_url: returns None for nonexistent remote.
+#[rstest]
+fn test_effective_remote_url_nonexistent_remote(repo: TestRepo) {
+    let git_repo = Repository::at(repo.root_path()).unwrap();
+    assert!(git_repo.effective_remote_url("nonexistent").is_none());
+}
+
+/// Test effective_remote_url: result is cached (same value on repeated calls).
+#[rstest]
+fn test_effective_remote_url_is_cached(repo: TestRepo) {
+    let git_repo = Repository::at(repo.root_path()).unwrap();
+    let first = git_repo.effective_remote_url("origin");
+    let second = git_repo.effective_remote_url("origin");
+    assert_eq!(first, second);
+}
+
+/// Test find_remote_for_repo: resolves through insteadOf to match owner/repo.
+#[rstest]
+fn test_find_remote_for_repo_insteadof(repo: TestRepo) {
+    setup_insteadof(
+        &repo,
+        "origin",
+        "git@work-ssh:org/repo.git",
+        "git@github.com:org",
+    );
+
+    let git_repo = Repository::at(repo.root_path()).unwrap();
+
+    // Raw URL has custom hostname — find_remote_for_repo should match via the
+    // effective URL (github.com), which reveals the real forge after insteadOf
+    let found = git_repo.find_remote_for_repo(Some("github.com"), "org", "repo");
+    assert_eq!(found.as_deref(), Some("origin"));
+}
+
+/// Test find_remote_for_repo: case-insensitive matching works with insteadOf.
+#[rstest]
+fn test_find_remote_for_repo_insteadof_case_insensitive(repo: TestRepo) {
+    setup_insteadof(
+        &repo,
+        "origin",
+        "git@work-ssh:MyOrg/MyRepo.git",
+        "git@github.com:MyOrg",
+    );
+
+    let git_repo = Repository::at(repo.root_path()).unwrap();
+    let found = git_repo.find_remote_for_repo(Some("github.com"), "myorg", "myrepo");
+    assert_eq!(found.as_deref(), Some("origin"));
+}
+
+/// Test find_remote_for_repo: matches without host constraint via insteadOf.
+#[rstest]
+fn test_find_remote_for_repo_insteadof_no_host(repo: TestRepo) {
+    setup_insteadof(
+        &repo,
+        "origin",
+        "git@work-ssh:org/repo.git",
+        "git@github.com:org",
+    );
+
+    let git_repo = Repository::at(repo.root_path()).unwrap();
+    // host=None should match any forge host
+    let found = git_repo.find_remote_for_repo(None, "org", "repo");
+    assert_eq!(found.as_deref(), Some("origin"));
+}
+
+/// Test find_remote_for_repo: picks the correct remote among multiple with insteadOf.
+#[rstest]
+fn test_find_remote_for_repo_insteadof_multiple_remotes(repo: TestRepo) {
+    // origin → github.com:org/repo via insteadOf
+    setup_insteadof(
+        &repo,
+        "origin",
+        "git@work-ssh:org/repo.git",
+        "git@github.com:org",
+    );
+    // upstream → github.com:upstream-org/repo via insteadOf
+    repo.run_git(&[
+        "config",
+        "remote.upstream.url",
+        "git@work-ssh-2:upstream-org/repo.git",
+    ]);
+    repo.run_git(&[
+        "config",
+        "url.git@github.com:upstream-org.insteadOf",
+        "git@work-ssh-2:upstream-org",
+    ]);
+
+    let git_repo = Repository::at(repo.root_path()).unwrap();
+    assert_eq!(
+        git_repo
+            .find_remote_for_repo(Some("github.com"), "upstream-org", "repo")
+            .as_deref(),
+        Some("upstream")
+    );
+    assert_eq!(
+        git_repo
+            .find_remote_for_repo(Some("github.com"), "org", "repo")
+            .as_deref(),
+        Some("origin")
+    );
+}
+
+/// find_remote_by_url matches a remote regardless of which transport
+/// protocol (ssh vs https) the lookup URL uses, because both URLs are parsed
+/// into (host, owner, repo) before matching. This is what lets `wt switch`
+/// resolve a GitLab fork target whether the user's remote is configured with
+/// SSH and glab returns HTTPS, or vice versa.
+#[rstest]
+fn test_find_remote_by_url_cross_protocol(repo: TestRepo) {
+    // Remote configured with HTTPS
+    repo.run_git(&["remote", "remove", "origin"]);
+    repo.run_git(&[
+        "remote",
+        "add",
+        "origin",
+        "https://gitlab.com/group/subgroup/proj.git",
+    ]);
+
+    let git_repo = Repository::at(repo.root_path()).unwrap();
+
+    // Lookup with SSH form should still find it
+    let found = git_repo.find_remote_by_url("git@gitlab.com:group/subgroup/proj.git");
+    assert_eq!(found.as_deref(), Some("origin"));
+
+    // And vice versa: re-configure with SSH, look up with HTTPS
+    repo.run_git(&["remote", "remove", "origin"]);
+    repo.run_git(&[
+        "remote",
+        "add",
+        "origin",
+        "git@gitlab.com:group/subgroup/proj.git",
+    ]);
+    let git_repo = Repository::at(repo.root_path()).unwrap();
+    let found = git_repo.find_remote_by_url("https://gitlab.com/group/subgroup/proj.git");
+    assert_eq!(found.as_deref(), Some("origin"));
+}
+
+/// Test find_remote_by_url: resolves through insteadOf.
+#[rstest]
+fn test_find_remote_by_url_insteadof(repo: TestRepo) {
+    setup_insteadof(
+        &repo,
+        "origin",
+        "git@work-ssh:org/repo.git",
+        "git@github.com:org",
+    );
+
+    let git_repo = Repository::at(repo.root_path()).unwrap();
+
+    // target_url uses the real forge hostname (as API responses would)
+    let found = git_repo.find_remote_by_url("git@github.com:org/repo.git");
+    assert_eq!(found.as_deref(), Some("origin"));
+
+    // HTTPS variant should also match
+    let found = git_repo.find_remote_by_url("https://github.com/org/repo.git");
+    assert_eq!(found.as_deref(), Some("origin"));
+}
+
+/// `push_remote_url`: resolves through `insteadOf` on the push remote.
+///
+/// CI-status detection composes this with a per-platform host check (e.g.
+/// `is_github`) — here we assert the URL resolves and points at GitHub.
+#[rstest]
+fn test_push_remote_url_insteadof_fallback(repo: TestRepo) {
+    setup_insteadof(
+        &repo,
+        "origin",
+        "git@work-ssh:org/repo.git",
+        "git@github.com:org",
+    );
+    setup_push_tracking(&repo, "main", "origin");
+
+    let git_repo = Repository::at(repo.root_path()).unwrap();
+    let url = git_repo
+        .branch("main")
+        .push_remote_url()
+        .expect("push_remote_url should resolve via insteadOf");
+    let parsed = GitRemoteUrl::parse(&url).unwrap();
+    assert!(parsed.is_github());
+    assert_eq!(parsed.host(), "github.com");
+}
+
+/// `push_remote_url`: returns a non-GitHub URL untouched. CI-status callers
+/// filter via `GitRemoteUrl::is_github` etc. — the primitive itself is
+/// platform-agnostic.
+#[rstest]
+fn test_push_remote_url_returns_non_github_url(repo: TestRepo) {
+    repo.run_git(&["config", "remote.origin.url", "git@gitlab.com:org/repo.git"]);
+    setup_push_tracking(&repo, "main", "origin");
+
+    let git_repo = Repository::at(repo.root_path()).unwrap();
+    let url = git_repo
+        .branch("main")
+        .push_remote_url()
+        .expect("push_remote_url resolves the configured remote regardless of host");
+    let parsed = GitRemoteUrl::parse(&url).unwrap();
+    assert!(!parsed.is_github());
+    assert!(parsed.is_gitlab());
+}
+
+/// `push_remote_url`: result is cached on the Repository.
+///
+/// `wt list`'s CI-status detection calls `push_remote_url` from both the
+/// PR-based path and the branch fallback — without caching the underlying
+/// `for-each-ref %(push:remotename)` runs twice for the same branch on the
+/// no-PR path (worktrunk#2672). Mutating the branch's push tracking after
+/// the first call must not change the cached value.
+#[rstest]
+fn test_push_remote_url_is_cached(repo: TestRepo) {
+    repo.run_git(&["config", "remote.origin.url", "git@github.com:org/repo.git"]);
+    setup_push_tracking(&repo, "main", "origin");
+
+    let git_repo = Repository::at(repo.root_path()).unwrap();
+    let first = git_repo
+        .branch("main")
+        .push_remote_url()
+        .expect("first call resolves to a URL");
+
+    // Remove the push tracking config. A fresh `for-each-ref
+    // %(push:remotename)` would now return empty, so a non-cached
+    // implementation would yield None on the second call.
+    repo.run_git(&["config", "--unset", "branch.main.remote"]);
+    repo.run_git(&["config", "--unset", "branch.main.merge"]);
+
+    let second = git_repo
+        .branch("main")
+        .push_remote_url()
+        .expect("second call returns the cached URL");
+    assert_eq!(first, second);
+}
+
+/// `push_remote_url`: when `insteadOf` resolves to a GitLab URL, returns
+/// that GitLab URL. The primitive isn't host-filtered — callers do that.
+#[rstest]
+fn test_push_remote_url_insteadof_resolves_to_non_github(repo: TestRepo) {
+    setup_insteadof(
+        &repo,
+        "origin",
+        "git@work-ssh:org/repo.git",
+        "git@gitlab.com:org",
+    );
+    setup_push_tracking(&repo, "main", "origin");
+
+    let git_repo = Repository::at(repo.root_path()).unwrap();
+    let url = git_repo
+        .branch("main")
+        .push_remote_url()
+        .expect("push_remote_url resolves through insteadOf regardless of host");
+    let parsed = GitRemoteUrl::parse(&url).unwrap();
+    assert!(parsed.is_gitlab());
+    assert!(!parsed.is_github());
+}
+
+// --- `-C` and discovery-path independence ---
+//
+// `infer_default_branch_locally` previously called `current_worktree().is_linked()`,
+// which probes `base_path()` (the process CWD or `-C` target). When tests
+// constructed `Repository::at(test_path)` from a process CWD that wasn't
+// inside any git repo, `is_linked()` errored on the missing `.git` and
+// propagated, making `default_branch()` return `None` (#2624). Anchoring
+// the probe to `self.discovery_path()` makes the answer depend on the
+// repo we're asking about, not on whatever the process CWD happens to be.
+//
+// `-C` itself doesn't trigger the original bug — it sets `base_path()` to
+// the same path `Repository::current()` adopts as `discovery_path()`, so
+// both probes hit the same directory. These tests still exercise it
+// end-to-end so the binary's behavior under `-C` is locked in alongside
+// the unit-level fix.
+
+/// `wt -C <repo>` from a non-repo CWD resolves the default branch via
+/// local inference (no remote, empty cache).
+#[rstest]
+fn test_default_branch_via_c_flag_from_non_repo_cwd(repo: TestRepo) {
+    // Force the local-inference path. The standard fixture has an origin
+    // remote with origin/HEAD set, so `default_branch()` would short-circuit
+    // through `detect_from_remote` before ever reaching the formerly-buggy
+    // local probe.
+    repo.run_git(&["remote", "remove", "origin"]);
+
+    let non_repo_cwd = tempfile::tempdir().unwrap();
+    let mut cmd = repo.wt_command();
+    cmd.current_dir(non_repo_cwd.path()).args([
+        "-C",
+        repo.root_path().to_str().unwrap(),
+        "config",
+        "state",
+        "default-branch",
+    ]);
+
+    let output = cmd.output().unwrap();
+    assert!(
+        output.status.success(),
+        "wt -C <repo> config state default-branch from non-repo CWD failed:\nstdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr),
+    );
+    assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "main");
+}
+
+/// `wt -C <linked-worktree-of-bare>` from a non-repo CWD resolves the
+/// default branch correctly. The maintainer's specific concern in #2625
+/// review was: "Presumably if we were in a bare worktree with `-C` in a
+/// linked worktree, the existing code would be wrong?" — this test pins
+/// down the answer (it isn't), so the combination stays covered.
+#[test]
+fn test_default_branch_via_c_flag_to_linked_worktree_of_bare_repo() {
+    let test = BareRepoTest::new();
+    let main_worktree = test.create_worktree("main", "main");
+
+    // Make sure there's a commit so refs resolve cleanly.
+    test.commit_in(&main_worktree, "init");
+
+    let non_repo_cwd = tempfile::tempdir().unwrap();
+    let mut cmd = test.wt_command();
+    cmd.current_dir(non_repo_cwd.path()).args([
+        "-C",
+        main_worktree.to_str().unwrap(),
+        "config",
+        "state",
+        "default-branch",
+    ]);
+
+    let output = cmd.output().unwrap();
+    assert!(
+        output.status.success(),
+        "wt -C <linked-wt-of-bare> config state default-branch from non-repo CWD failed:\nstdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr),
+    );
+    assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "main");
+}

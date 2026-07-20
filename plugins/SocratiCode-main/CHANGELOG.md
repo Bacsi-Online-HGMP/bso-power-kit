@@ -1,0 +1,394 @@
+# Changelog
+
+All notable changes to SocratiCode are documented here.
+This project uses [Conventional Commits](https://www.conventionalcommits.org/) and [Semantic Versioning](https://semver.org/).
+
+
+## [1.8.18](https://github.com/giancarloerra/socraticode/compare/v1.8.17...v1.8.18) (2026-06-28)
+
+### Features
+
+* **indexing:** map custom extensions to languages via EXTENSION_LANGUAGE_MAP ([#77](https://github.com/giancarloerra/socraticode/issues/77)) ([1c5ddf5](https://github.com/giancarloerra/socraticode/commit/1c5ddf52be635eefe95a8a228f8b6db9ecc87a04))
+
+### Bug Fixes
+
+* **indexing:** normalize extension casing and tighten docs/test ([#77](https://github.com/giancarloerra/socraticode/issues/77)) ([c2c616f](https://github.com/giancarloerra/socraticode/commit/c2c616f4a33b8d5ed48ad32cb1988bde2f244ec0))
+
+### Documentation
+
+* **embeddings:** clarify the LiteLLM provider is a proxy-server client ([#76](https://github.com/giancarloerra/socraticode/issues/76)) ([0dc244e](https://github.com/giancarloerra/socraticode/commit/0dc244e89ad50c10a01c15183cf0c6ea2fc87fa9))
+
+## [1.8.17](https://github.com/giancarloerra/socraticode/compare/v1.8.16...v1.8.17) (2026-06-18)
+
+### Bug Fixes
+
+* **graph:** extract Dart abstract members and operators ([#74](https://github.com/giancarloerra/socraticode/issues/74)) ([0ab502b](https://github.com/giancarloerra/socraticode/commit/0ab502b99b25162b41657844168d1078685e5190))
+
+## [1.8.16](https://github.com/giancarloerra/socraticode/compare/v1.8.15...v1.8.16) (2026-06-11)
+
+### Features
+
+* **graph:** full Dart support via tree-sitter AST ([#71](https://github.com/giancarloerra/socraticode/issues/71)) ([7bd9eb5](https://github.com/giancarloerra/socraticode/commit/7bd9eb5308eb6201515ff03f8007c512812824aa))
+
+### Tests
+
+* **graph:** pin graceful degradation for Dart extension types ([c5a706c](https://github.com/giancarloerra/socraticode/commit/c5a706cc718a3b0743a5451e7c735df9c6cfbfea))
+
+## [1.8.15](https://github.com/giancarloerra/socraticode/compare/v1.8.14...v1.8.15) (2026-06-11)
+
+### Features
+
+* **startup:** opt-in auto-resume of all indexed projects ([#70](https://github.com/giancarloerra/socraticode/issues/70)) ([f3362bb](https://github.com/giancarloerra/socraticode/commit/f3362bbe7d36067ba5bbdb45d99f6c4d2f051f3b))
+
+### Bug Fixes
+
+* **startup:** keep incremental catch-up alive when watcher startup throws ([fa4dd92](https://github.com/giancarloerra/socraticode/commit/fa4dd92196dd847bfb68460df0d278f0a9b5ff8f))
+
+## [1.8.14](https://github.com/giancarloerra/socraticode/compare/v1.8.13...v1.8.14) (2026-06-10)
+
+### Features
+
+* **graph:** Lua symbol/call extraction + fix discovery for whitelist .gitignore ([d4bbb6c](https://github.com/giancarloerra/socraticode/commit/d4bbb6ca1c16d0fb0f2c025303d6cdcd436682f3))
+
+### Tests
+
+* **graph:** add Lua extractor + whitelist-discovery tests ([8be929a](https://github.com/giancarloerra/socraticode/commit/8be929a1c2b22dd6730c71f33a499c1b78003a49))
+
+## [1.8.13](https://github.com/giancarloerra/socraticode/compare/v1.8.12...v1.8.13) (2026-05-27)
+
+### Documentation
+
+* update expired Discord invite link ([71e1e0b](https://github.com/giancarloerra/socraticode/commit/71e1e0bc039119da9939ace272916814f1c222cf))
+
+## [1.8.12](https://github.com/giancarloerra/socraticode/compare/v1.8.11...v1.8.12) (2026-05-22)
+
+### Bug Fixes
+
+* **graph:** normalize stored node keys during lookup for legacy cache compat ([4526ea5](https://github.com/giancarloerra/socraticode/commit/4526ea58ae332b3839019eb3f46a0eff08801bd6))
+* **graph:** normalize Windows backslash paths to forward slashes ([e9ee3ea](https://github.com/giancarloerra/socraticode/commit/e9ee3ea116639fc20e19952d9f8871dafdf87599)), closes [#60](https://github.com/giancarloerra/socraticode/issues/60)
+
+## [1.8.11](https://github.com/giancarloerra/socraticode/compare/v1.8.10...v1.8.11) (2026-05-12)
+
+### Bug Fixes
+
+* **index:** flush stderr before exit on Node 26+ guard ([5cd9db0](https://github.com/giancarloerra/socraticode/commit/5cd9db07e6c993c8f2fafa756415153afb26da05))
+* **index:** use fs.writeSync for synchronous flush + sync exit ([69a6b74](https://github.com/giancarloerra/socraticode/commit/69a6b74b8aff6297fd297fb8f995682e72de1053))
+* refuse to start on Node 26+ until qdrant-js gains undici 7 compat ([c23120e](https://github.com/giancarloerra/socraticode/commit/c23120e6c097a6036c17d7ecdf10a40061f3da36)), closes [qdrant/qdrant-js#123](https://github.com/qdrant/qdrant-js/issues/123) [qdrant/qdrant-js#128](https://github.com/qdrant/qdrant-js/issues/128) [qdrant/qdrant-js#134](https://github.com/qdrant/qdrant-js/issues/134)
+
+## [1.8.10](https://github.com/giancarloerra/socraticode/compare/v1.8.9...v1.8.10) (2026-05-08)
+
+### Features
+
+* **embeddings:** add LiteLLM as a first-class embedding provider ([1708510](https://github.com/giancarloerra/socraticode/commit/1708510c16707c3d03268e77ca0bd9ef8372f9ff)), closes [#42](https://github.com/giancarloerra/socraticode/issues/42)
+
+### Bug Fixes
+
+* **litellm:** iterate paginated /v1/models in readiness checks ([6c67965](https://github.com/giancarloerra/socraticode/commit/6c679656285420347a08a8b1adc52aea7123e76a))
+
+## [1.8.9](https://github.com/giancarloerra/socraticode/compare/v1.8.8...v1.8.9) (2026-05-07)
+
+### Bug Fixes
+
+* **qdrant:** wrap propagated client errors with operation context ([#55](https://github.com/giancarloerra/socraticode/issues/55)) ([f22b4d1](https://github.com/giancarloerra/socraticode/commit/f22b4d128fa058877dae6efce212a47ef37057b2))
+
+## [1.8.8](https://github.com/giancarloerra/socraticode/compare/v1.8.7...v1.8.8) (2026-05-06)
+
+### Features
+
+* **config:** support projectId in .socraticode.json for team-shared indexes ([#53](https://github.com/giancarloerra/socraticode/issues/53)) ([2c4d55c](https://github.com/giancarloerra/socraticode/commit/2c4d55ca50ae4eb60bb365dbcbff7923db4966e3))
+
+## [1.8.7](https://github.com/giancarloerra/socraticode/compare/v1.8.6...v1.8.7) (2026-05-06)
+
+### Bug Fixes
+
+* **context:** checkpoint artifact metadata after each successful index ([#52](https://github.com/giancarloerra/socraticode/issues/52)) ([2007a18](https://github.com/giancarloerra/socraticode/commit/2007a18865d31cad3be6f5e2e88f834156c5df37))
+
+## [1.8.6](https://github.com/giancarloerra/socraticode/compare/v1.8.5...v1.8.6) (2026-05-05)
+
+### Features
+
+* **qdrant:** add QDRANT_COLLECTION_PREFIX env var for shared instances ([70db002](https://github.com/giancarloerra/socraticode/commit/70db002796a76596badfed86c25d5af6c0331e69))
+
+## [1.8.5](https://github.com/giancarloerra/socraticode/compare/v1.8.4...v1.8.5) (2026-05-05)
+
+### Bug Fixes
+
+* **graph:** allow Go resolution for projects with golang.org/* module paths ([8c26ed8](https://github.com/giancarloerra/socraticode/commit/8c26ed8b49f8aae030d519aca3a0ab84ad07d90d))
+* **graph:** resolve Go imports via go.mod module path ([c156da1](https://github.com/giancarloerra/socraticode/commit/c156da1688e4e2b8b9c1dfb042094b018131d8f7))
+* **graph:** resolve Python sibling-flat imports in service-style monorepos ([8921690](https://github.com/giancarloerra/socraticode/commit/8921690d7286ba858337d2df478ef01772d6d055))
+
+### Documentation
+
+* add note about MCP governance and JanuScope ([bf36c0c](https://github.com/giancarloerra/socraticode/commit/bf36c0c1b7d3ceb73161afe20628cc994dca404c))
+
+## [1.8.4](https://github.com/giancarloerra/socraticode/compare/v1.8.3...v1.8.4) (2026-05-04)
+
+### Bug Fixes
+
+* **graph:** pre-validate ast-grep grammar libraryPath to survive missing prebuilds ([#44](https://github.com/giancarloerra/socraticode/issues/44)) ([e6ce327](https://github.com/giancarloerra/socraticode/commit/e6ce32710acccd6cb4a241c39a3561803e0e7dbd))
+
+## [1.8.3](https://github.com/giancarloerra/socraticode/compare/v1.8.2...v1.8.3) (2026-05-04)
+
+### Features
+
+* **embeddings:** add LM Studio as a first-class embedding provider ([#42](https://github.com/giancarloerra/socraticode/issues/42)) ([332ee80](https://github.com/giancarloerra/socraticode/commit/332ee800a85fd35ded4e37adabecbfdd6221d31b))
+
+## [1.8.2](https://github.com/giancarloerra/socraticode/compare/v1.8.1...v1.8.2) (2026-05-04)
+
+### Bug Fixes
+
+* cover JVM annotation and Scala callable edge cases ([6a76ad4](https://github.com/giancarloerra/socraticode/commit/6a76ad478275d6e65d58d00684414f4936ef4f83))
+* extract JVM symbol names from declarations ([019eba0](https://github.com/giancarloerra/socraticode/commit/019eba058356539d23d4212a9387c5821d4a3f47))
+
+### Tests
+
+* cover JVM annotations with parameters ([1dbc1eb](https://github.com/giancarloerra/socraticode/commit/1dbc1eb398014d418f97879a875d003c28f8b608))
+
+## [1.8.1](https://github.com/giancarloerra/socraticode/compare/v1.8.0...v1.8.1) (2026-05-04)
+
+### Bug Fixes
+
+* **docs:** replace broken Marketplace badges and surface listings in main README ([8d6cb86](https://github.com/giancarloerra/socraticode/commit/8d6cb86b274132c0f65e46b3396e36a0b8e1f3cd))
+
+## [1.8.0](https://github.com/giancarloerra/socraticode/compare/v1.7.2...v1.8.0) (2026-05-03)
+
+### Features
+
+* **extension:** add VS Code and Open VSX extension ([bbc6819](https://github.com/giancarloerra/socraticode/commit/bbc68199c3577c463c049199b64f36ad5ddebb66))
+
+### Bug Fixes
+
+* **extension:** harden review-flagged paths ([562a946](https://github.com/giancarloerra/socraticode/commit/562a946053e79e3236950bb715a30762c2853869))
+* **extension:** tighten graphPanel path and line-number bounds ([c2d012f](https://github.com/giancarloerra/socraticode/commit/c2d012fe4c72704dd431b34124b3b6f3c06b485a))
+
+### Documentation
+
+* **extension:** add Discord badge and hosted-edition pointer ([9a197b3](https://github.com/giancarloerra/socraticode/commit/9a197b3421d30f101d832ce0de0659405c5a0df7))
+* **extension:** editor-neutral marketplace README with hero, badges and benchmarks ([345c728](https://github.com/giancarloerra/socraticode/commit/345c7281d0c8df7b370f2d38d38012fdd09e2701))
+* surface VS Code / Open VSX extension and Cursor Marketplace ([d9459f8](https://github.com/giancarloerra/socraticode/commit/d9459f8591fb4085f49d358b2787be91058ac79a))
+
+## [1.7.2](https://github.com/giancarloerra/socraticode/compare/v1.7.1...v1.7.2) (2026-04-28)
+
+### Bug Fixes
+
+* **docker:** include api-key header in external Qdrant readiness probe ([812fcd8](https://github.com/giancarloerra/socraticode/commit/812fcd89051d284875e029396ec8e457226c0193))
+* **docker:** require HTTPS for QDRANT_API_KEY; deflake no-key test ([7cdf21a](https://github.com/giancarloerra/socraticode/commit/7cdf21a96189ace11ecedcdab2d6e15a1e7fccb0))
+
+## [1.7.1](https://github.com/giancarloerra/socraticode/compare/v1.7.0...v1.7.1) (2026-04-27)
+
+### Bug Fixes
+
+* **graph:** make C# namespace resolution deterministic ([fc249fd](https://github.com/giancarloerra/socraticode/commit/fc249fdfcf0afb2225fc4df711552bfa745ade86))
+* **graph:** resolve C# using directives via namespace scan (closes [#33](https://github.com/giancarloerra/socraticode/issues/33)) ([0aaf3f1](https://github.com/giancarloerra/socraticode/commit/0aaf3f1d7521ccbee01142c71433d78a7442fc46))
+* **graph:** tighten C# namespace regex; capture nested declarations ([ea69a72](https://github.com/giancarloerra/socraticode/commit/ea69a721459039b9995e93c3d6a094327ffcb7a4)), closes [#34](https://github.com/giancarloerra/socraticode/issues/34)
+
+## [1.7.0](https://github.com/giancarloerra/socraticode/compare/v1.6.1...v1.7.0) (2026-04-27)
+
+### Features
+
+* **impact:** add symbol-level call graph and Impact Analysis tools ([c356c42](https://github.com/giancarloerra/socraticode/commit/c356c42f4fa6dbcee51eb3e0cd4afb1ac04dd6f9))
+* **impact:** close gaps from review — Phase F API, scale + integration tests, language coverage ([2d686a2](https://github.com/giancarloerra/socraticode/commit/2d686a2688946f6a6d2f6cb562ebfe0aae0b7569))
+* **impact:** wire Phase F into watcher; fix prototype-key crash; add real scale test ([4e41b46](https://github.com/giancarloerra/socraticode/commit/4e41b4604ebf2c1a8a23638e8f401e91719d6b8e))
+* **visualize:** add interactive HTML graph explorer; British-English doc sweep ([50d8853](https://github.com/giancarloerra/socraticode/commit/50d8853ea6ee91bf8832d3c10e8da7d8d4bac98e))
+* **visualize:** symbol view as focus graph; UX polish & stats consistency ([e4da769](https://github.com/giancarloerra/socraticode/commit/e4da76979e32f1430767ef3e3069d38a8686e738))
+
+### Bug Fixes
+
+* **visualize:** use function replacers so vendored assets containing $& survive intact ([081606f](https://github.com/giancarloerra/socraticode/commit/081606f9e2133a273ae0ea9c1a758bb2d3a3be93))
+
+### Documentation
+
+* add workflow examples to Context Artifacts section ([2ad7b3d](https://github.com/giancarloerra/socraticode/commit/2ad7b3db5dbe902247daf0231952142fad24fa6b))
+* **readme:** surface impact analysis & portability; fix Claude Code install ([9d11397](https://github.com/giancarloerra/socraticode/commit/9d113975dcdfdd000ba5c17478f02aa2b29d932e))
+
+## Unreleased
+
+### Features
+
+* **Impact Analysis & symbol-level call graph.** Four new MCP tools that go one level deeper than the file-import graph by tracking which functions call which:
+  * `codebase_impact` — return the **blast radius** for a file or symbol (every file that transitively calls into it). Use BEFORE refactoring, renaming, or deleting code.
+  * `codebase_flow` — trace forward execution flow from an entry point. With no args, returns auto-detected entry points (orphan files, conventional names like `main()`, framework routes like `app.get(...)`, tests).
+  * `codebase_symbol` — 360° view of one symbol: definition, callers, callees with confidence levels.
+  * `codebase_symbols` — list symbols in a file or search by name across the project.
+* **Sharded Qdrant storage** for the symbol graph: 27 name shards keyed by first lowercased character, 256 reverse-call file shards keyed by SHA1 first byte. Designed to scale to 100k+ files / 1M+ symbols with bounded memory via an LRU per-file payload cache.
+* **18-language symbol & call extraction**: TypeScript / JavaScript / TSX, Python, Go, Rust, Java, Kotlin, Scala, C#, C, C++, Ruby, PHP, Swift, Bash + a regex fallback for Dart/Lua/Svelte/Vue.
+* **Symbol graph builds automatically** alongside the file-import graph during `codebase_index` and `codebase_graph_build`. `codebase_graph_status` now reports symbol graph stats (files / symbols / edges / unresolved%).
+* **Symbol graph removed** automatically when `codebase_graph_remove` is called.
+
+### Bug Fixes
+
+* **Java/Kotlin/Swift/Scala symbol extraction silently failed.** ast-grep throws "Invalid Kind" for grammars where a queried node kind doesn't exist (e.g. `object_declaration` is Kotlin-only, not Java). The outer try/catch in `extractSymbolsAndCalls` swallowed the error and returned only the `<module>` symbol, so 17 of 20 supported languages could regress without any test failure. Fixed via a `safeFindAll(node, kind)` wrapper applied to all 36 call sites in `services/graph-symbols.ts`. Added 14 per-language regression tests covering Rust, Java/Kotlin/Scala, C#, C/C++, Ruby, PHP, Swift, Bash, and the regex fallback path.
+* **Symbol graph crashed on prototype-key collisions** (e.g. a method named `constructor`, `toString`, or `hasOwnProperty`). The shard maps used `shard[name]` bracket access on a plain `{}`, which returned `Object.prototype.constructor` (a function) and threw `existing.push is not a function` during persistence. Fixed by guarding all shard reads with `Object.hasOwn` in `services/code-graph.ts` and `services/symbol-graph-incremental.ts`. Added a regression test in `tests/integration/symbol-graph-incremental.test.ts`.
+* **`tests/unit/logger.test.ts` was order-dependent on the shell environment.** `currentLevel` was frozen at module load, so `SOCRATICODE_LOG_LEVEL=debug` in the developer shell broke the "does not emit debug at info level" assertion. `services/logger.ts` now exposes `setLogLevel` / `getLogLevel`, and the test pins the level in `beforeEach` / restores in `afterEach`.
+
+### Interactive Graph Explorer
+
+* **Interactive HTML graph viewer** — `codebase_graph_visualize` now accepts a `mode` parameter. Default `"mermaid"` keeps the existing text-diagram behaviour; new `"interactive"` mode generates a self-contained HTML page (vendored Cytoscape.js + Dagre — no CDN, works offline) and opens it in the user's default browser via the `open` npm package. The page includes:
+  * **File view** (every source file as a node, imports as edges, language colour-coded, circular deps highlighted in red)
+  * **Symbol view** toggle (functions / classes / methods as nodes, call edges between them — available when the symbol graph fits under the embed caps of 20k symbols / 60k call edges; above that the file view remains and a banner directs users to `codebase_impact` for symbol-level queries)
+  * **Sidebar** with imports / dependents / per-file symbols (first 30 shown, link to `codebase_symbols` for the rest) + action buttons for blast radius and call flow
+  * **Right-click** a node → highlight its blast radius (reverse-transitive closure)
+  * Live search, six Cytoscape layouts (Dagre / force / concentric / breadth-first / grid / circle), PNG export, hover tooltips
+  * `open: false` parameter skips auto-launch — just returns the file path (useful in headless environments)
+* **`open` added as a runtime dependency** for cross-platform browser launching (macOS, Linux, Windows).
+* **Vendored Cytoscape.js 3.30.2 + Dagre 0.8.5 + cytoscape-dagre 2.5.0** under `src/assets/` (copied to `dist/assets/` on build). Total ≈ 650 KB; inlined into the HTML at generation time — zero network dependency at view time.
+
+### Performance
+
+* **Per-file incremental symbol-graph updates wired into the watcher / `codebase_update`** (Phase F). When a `SymbolGraphMeta` already exists for the project AND ≤ 50 files changed, `services/indexer.ts` now calls `rebuildGraph(path, { skipSymbolGraph: true })` plus `updateChangedFilesSymbolGraph(...)`, which patches only the affected name shards (≤ 27) and reverse-call shards (≤ 256). Above the threshold or on first index it falls back to a full rebuild. End-to-end measurement on a 1000-file synthetic repo: full rebuild **6.55 s**, single-file Phase F update **197 ms** (≈33×). See `DEVELOPER.md` § "Real-world benchmark numbers" and `tests/integration/symbol-graph-scale.test.ts`.
+
+
+## [1.6.1](https://github.com/giancarloerra/socraticode/compare/v1.6.0...v1.6.1) (2026-04-17)
+
+### Documentation
+
+* add Zed support, per-IDE instruction paths, and strengthen graph triggers ([270d402](https://github.com/giancarloerra/socraticode/commit/270d402f48f6a87e966120ce264bbacd0a19c9a7))
+
+## [1.6.0](https://github.com/giancarloerra/socraticode/compare/v1.5.0...v1.6.0) (2026-04-16)
+
+### Features
+
+* support global config fallback and configurable batch size ([9d04c44](https://github.com/giancarloerra/socraticode/commit/9d04c4443a7b0892548868fe04e59f9a35e43dcf))
+
+### Bug Fixes
+
+* resolve relative paths for global config fallback and strict batch size validation ([49b5b35](https://github.com/giancarloerra/socraticode/commit/49b5b35bff2809c17f1096cb62db7670503594aa))
+
+### Documentation
+
+* add CodeRabbit review expectations to PR template and contributing guide ([afd2da2](https://github.com/giancarloerra/socraticode/commit/afd2da2771e5ebe9cd81e391179adb769463ddb8))
+* add Discord community, Cloud section, and tool portability to README ([a8b069a](https://github.com/giancarloerra/socraticode/commit/a8b069a900d5a4a20023b995ea0ecfe6b237cb7b))
+
+## [1.5.0](https://github.com/giancarloerra/socraticode/compare/v1.4.1...v1.5.0) (2026-04-13)
+
+### Features
+
+* multi-platform plugin support (Cursor, Codex, Gemini CLI, VS Code) ([529d1b2](https://github.com/giancarloerra/socraticode/commit/529d1b2a642d9681ffce437cb2f902efa5aa7e6f))
+
+### Bug Fixes
+
+* correct spelling of "visualize" in GEMINI.md and update Codex installation instructions in README.md ([b2333b5](https://github.com/giancarloerra/socraticode/commit/b2333b574c3a978c6f3f5d6645e578b5d5bf03dc))
+
+### Documentation
+
+* consolidate README ([61060d5](https://github.com/giancarloerra/socraticode/commit/61060d51538a6f9fee550b7cda7f62ac47f07518))
+* consolidate README — add feature comparison table and streamline sections ([efec8dd](https://github.com/giancarloerra/socraticode/commit/efec8dd29adb9da2c3308f1e3c470663c36773db))
+
+## [1.4.1](https://github.com/giancarloerra/socraticode/compare/v1.4.0...v1.4.1) (2026-04-12)
+
+### Bug Fixes
+
+* address CodeRabbit PR review feedback ([00f7be1](https://github.com/giancarloerra/socraticode/commit/00f7be169c94661a098fff5e9354746823db1630))
+* address CodeRabbit review findings ([bb5e6c3](https://github.com/giancarloerra/socraticode/commit/bb5e6c3e198effb1809d0a6c5286a34f8da0df68))
+
+## [1.4.0](https://github.com/giancarloerra/socraticode/compare/v1.3.2...v1.4.0) (2026-04-12)
+
+### Features
+
+* branch-aware collection naming via SOCRATICODE_BRANCH_AWARE ([3a4139d](https://github.com/giancarloerra/socraticode/commit/3a4139d71426e7097a0b897db47dce99c5fac5b4)), closes [#19](https://github.com/giancarloerra/socraticode/issues/19)
+* linked projects support via .socraticode.json and SOCRATICODE_LINKED_PROJECTS ([61e868c](https://github.com/giancarloerra/socraticode/commit/61e868cf9ef484cc83777d302094b10dd48ec5e3)), closes [#20](https://github.com/giancarloerra/socraticode/issues/20)
+* multi-collection search with client-side RRF fusion and deduplication ([ad8db7f](https://github.com/giancarloerra/socraticode/commit/ad8db7f0db53bc0425e26282313706a8099fb792)), closes [#20](https://github.com/giancarloerra/socraticode/issues/20) [#19](https://github.com/giancarloerra/socraticode/issues/19) [#19](https://github.com/giancarloerra/socraticode/issues/19) [#20](https://github.com/giancarloerra/socraticode/issues/20)
+
+### Bug Fixes
+
+* address CodeRabbit review feedback on tests ([f09f417](https://github.com/giancarloerra/socraticode/commit/f09f417c6ec5446482b3fd7dc069b31435e7b81d))
+* address remaining CodeRabbit production code issues ([f745d59](https://github.com/giancarloerra/socraticode/commit/f745d59ddd5baa722c49f2183bc2b922b630711d))
+* linked projects use base hash without branch suffix ([fc3c298](https://github.com/giancarloerra/socraticode/commit/fc3c2988fa44c4441f2bddd209c4a55d1e4d8a1b))
+* provide git identity for temp repo commits in CI ([ad2e3b9](https://github.com/giancarloerra/socraticode/commit/ad2e3b9ea16f24a39c7f0122c2388eaa4ca442a9))
+* resolve JVM imports in multi-module Maven/Gradle projects ([5a734eb](https://github.com/giancarloerra/socraticode/commit/5a734eb301e9f9f53724be0da6818afa6927758f))
+* update path handling and type imports in indexer and query tools ([096f59d](https://github.com/giancarloerra/socraticode/commit/096f59da130b155b435b291be85b212c78ae25fa))
+* use self-contained temp git repos in branch-aware tests ([ffa8e95](https://github.com/giancarloerra/socraticode/commit/ffa8e95bdf00f2a245bbd181dec0ea5fbbec6804))
+
+### Documentation
+
+* add cross-project and branch-aware highlights to intro and Why SocratiCode ([24faa10](https://github.com/giancarloerra/socraticode/commit/24faa1075b77f88e63c785afb42c5bcd9538767d))
+* add cross-project search and branch-aware indexing documentation ([76e3ff5](https://github.com/giancarloerra/socraticode/commit/76e3ff5f59720402bbbe07819ed69e6c93976f43))
+* add OpenCode setup instructions to README ([0896164](https://github.com/giancarloerra/socraticode/commit/0896164442e340c234f37437cae11ebc65b139f5)), closes [#18](https://github.com/giancarloerra/socraticode/issues/18)
+
+### Tests
+
+* add includeLinked and searchMultipleCollections tests ([bf93e4a](https://github.com/giancarloerra/socraticode/commit/bf93e4a992ae39d2030a1452c60b8613e72b4d2e))
+
+## [1.3.2](https://github.com/giancarloerra/socraticode/compare/v1.3.1...v1.3.2) (2026-03-26)
+
+### Bug Fixes
+
+* change SessionStart hook type from prompt to command ([72e4a5f](https://github.com/giancarloerra/socraticode/commit/72e4a5f9983b0169044af6bac411e909398559aa)), closes [#16](https://github.com/giancarloerra/socraticode/issues/16)
+
+## [1.3.1](https://github.com/giancarloerra/socraticode/compare/v1.3.0...v1.3.1) (2026-03-24)
+
+### Bug Fixes
+
+* add prepublishOnly script to ensure dist/ is rebuilt before publish ([2f5b410](https://github.com/giancarloerra/socraticode/commit/2f5b410a04eb8be6e76a18e19dcfa0c169fdd144))
+
+## [1.3.0](https://github.com/giancarloerra/socraticode/compare/v1.2.0...v1.3.0) (2026-03-19)
+
+### Features
+
+* add CSS [@import](https://github.com/import) tracking and path alias resolution to dependency graph ([c7e160c](https://github.com/giancarloerra/socraticode/commit/c7e160cb5ca0c5bd6e0ba9e2a258587c106fbab5))
+
+### Bug Fixes
+
+* add stylus to CSS resolution cases and getAstGrepLang mapping ([f80eec4](https://github.com/giancarloerra/socraticode/commit/f80eec476afc3c3979214ca2a331f08eb0cee0c8))
+
+### Documentation
+
+* update language support and graph docs for CSS [@import](https://github.com/import) and path aliases ([f4c5518](https://github.com/giancarloerra/socraticode/commit/f4c5518453afd3752ea4777419b5b04036ffd07d))
+
+## [1.2.0](https://github.com/giancarloerra/socraticode/compare/v1.1.3...v1.2.0) (2026-03-18)
+
+### Features
+
+* add env support for controlling indexing of dotfiles ([7265247](https://github.com/giancarloerra/socraticode/commit/7265247d838b1792242a7ad082e6a35ec0759ce2))
+* add Svelte and Vue import parsing to dependency graph ([4c2bd0c](https://github.com/giancarloerra/socraticode/commit/4c2bd0cc539e1fc170d019e073517b638ebbb294))
+* auto-infer port from QDRANT_URL for reverse proxy support ([507d823](https://github.com/giancarloerra/socraticode/commit/507d823336a5340ea1c0bbba3b39acef9a1a35e0))
+
+### Bug Fixes
+
+* only call ensureOllamaReady when using Ollama provider ([#8](https://github.com/giancarloerra/socraticode/issues/8)) ([4d255f5](https://github.com/giancarloerra/socraticode/commit/4d255f50ee46e75aa2e1b23ef48e9809dc6b80d7)), closes [#7](https://github.com/giancarloerra/socraticode/issues/7)
+
+### Documentation
+
+* add npx cache update instructions for MCP-only install ([4cd113b](https://github.com/giancarloerra/socraticode/commit/4cd113b1e9e3776d127cd16545b9c048f353daf8))
+* add Svelte/Vue to code graph language list ([7b72cf0](https://github.com/giancarloerra/socraticode/commit/7b72cf0363797ec7996e4b417abbfb538c6a1b78))
+
+## [1.1.3](https://github.com/giancarloerra/socraticode/compare/v1.1.2...v1.1.3) (2026-03-16)
+
+### Bug Fixes
+
+* use relative paths for index keys to support shared worktree indexes ([505fbd7](https://github.com/giancarloerra/socraticode/commit/505fbd722bdb5cc310f7406df88a436e682a3b8b))
+
+### Documentation
+
+* add auto-update instructions for Claude Code plugin ([b26038a](https://github.com/giancarloerra/socraticode/commit/b26038a8b184fc63e7315d8d4a5cf0af3e37ae31))
+
+## [1.1.2](https://github.com/giancarloerra/socraticode/compare/v1.1.1...v1.1.2) (2026-03-16)
+
+### Bug Fixes
+
+* correct hooks.json format, remove explicit hooks path, and improve install docs ([db69a2d](https://github.com/giancarloerra/socraticode/commit/db69a2d9b4e63324746741cf8b29931e81d652da))
+
+## [1.1.1](https://github.com/giancarloerra/socraticode/compare/v1.1.0...v1.1.1) (2026-03-16)
+
+### Bug Fixes
+
+* correct Claude Code plugin install commands and add marketplace.json ([157b353](https://github.com/giancarloerra/socraticode/commit/157b353bc47e519a35561488967f01107de5b380))
+
+## [1.1.0](https://github.com/giancarloerra/socraticode/compare/v1.0.1...v1.1.0) (2026-03-15)
+
+### Features
+
+* add Claude Code plugin with skills, agent, and MCP bundling ([31e5d74](https://github.com/giancarloerra/socraticode/commit/31e5d748bc65681686642e19252282a440785520))
+* add SOCRATICODE_PROJECT_ID env var for shared indexes across directories ([fadfd8a](https://github.com/giancarloerra/socraticode/commit/fadfd8a80e6d33925fd071272a01d5132d7148cd))
+
+### Documentation
+
+* add Claude Code worktree auto-detection to git worktrees section ([d7c32d1](https://github.com/giancarloerra/socraticode/commit/d7c32d1435021172762531860350f38f83173edf))
+* add git worktrees section to README ([3cad30a](https://github.com/giancarloerra/socraticode/commit/3cad30a6509837af2346fe6e83c7ec3aadc04900))
+* add multi-agent collaboration as a featured capability ([72c7ce0](https://github.com/giancarloerra/socraticode/commit/72c7ce05f840b2870e83182ad83e4b0ee1938bef))
+
+## [1.0.1](https://github.com/giancarloerra/socraticode/compare/v1.0.0...v1.0.1) (2026-03-04)
+
+### Bug Fixes
+
+* add mcpName and read version dynamically from package.json ([88c0e8f](https://github.com/giancarloerra/socraticode/commit/88c0e8fee39c7fb733bdec4657d2eaf2c355292e))

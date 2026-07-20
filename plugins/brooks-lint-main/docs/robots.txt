@@ -1,0 +1,4 @@
+User-agent: *
+Allow: /
+
+Sitemap: https://hyhmrright.github.io/brooks-lint/sitemap.xml

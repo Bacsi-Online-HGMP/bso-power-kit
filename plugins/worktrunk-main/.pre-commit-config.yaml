@@ -1,0 +1,89 @@
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      - id: end-of-file-fixer
+        exclude: '.*\.snap$|^vendor/'
+      - id: check-yaml
+      - id: mixed-line-ending
+        exclude: '^vendor/'
+      - id: trailing-whitespace
+        # rustfmt handles rust files, and in snapshots we expect trailing spaces.
+        exclude: '.*\.(rs|snap)$|^vendor/'
+  # pre-commit autoupdate reverts to mutable v1 tag; update manually
+  - repo: https://github.com/crate-ci/typos
+    rev: v1
+    hooks:
+      - id: typos
+        # https://github.com/crate-ci/typos/issues/347
+        pass_filenames: false
+  - repo: https://github.com/r0x0d/pre-commit-rust
+    rev: v1.0.1
+    hooks:
+      - id: fmt
+        exclude: '^vendor/'
+  - repo: https://github.com/r0x0d/pre-commit-rust
+    rev: v1.0.1
+    hooks:
+      - id: clippy
+        args: ["--all-targets", "--all-features", "--", "-D", "warnings"]
+  # pre-commit autoupdate reverts to mutable nightly tag; update manually
+  - repo: https://github.com/lycheeverse/lychee
+    rev: nightly
+    hooks:
+      # Check links using .config/lychee.toml exclusions
+      # Uses lychee-system (requires `cargo install lychee`) to avoid /bin/bash dependency on Windows
+      - id: lychee-system
+        files: '\.(md|txt)$'
+        args:
+          - --config=.config/lychee.toml
+  - repo: local
+    hooks:
+      - id: cargo-lock
+        name: cargo-lock
+        description: Ensure Cargo.lock is in sync with Cargo.toml
+        language: system
+        entry: cargo check --locked
+        pass_filenames: false
+        files: (Cargo\.toml|Cargo\.lock)$
+      - id: no-dbg
+        name: no-dbg
+        description: We shouldn't merge code with `dbg!` in
+        language: pygrep
+        types: ["rust"]
+        entry: "dbg!"
+      - id: no-manual-ansi
+        name: no-manual-ansi
+        description: Use anstyle/osc8/strip-ansi-escapes instead of manual ANSI codes
+        language: pygrep
+        types: ["rust"]
+        entry: '\\x1b\['
+        # format.rs strips ANSI codes injected by wrap_ansi crate
+        # picker tests verify ANSI dimming behavior
+        # src/testing: validate_ansi_codes tests raw escape sequences
+        exclude: '^(tests/|.*_test\.rs$|src/styling/(mod|format)\.rs$|src/commands/picker/|src/testing/|vendor/)'
+      - id: no-std-canonicalize-in-tests
+        name: no-std-canonicalize-in-tests
+        description: Use dunce::canonicalize in tests to avoid Windows \\?\ prefix issues
+        language: pygrep
+        entry: '\.canonicalize\(\)'
+        files: '^tests/'
+      - id: no-direct-cmd-output
+        name: no-direct-cmd-output
+        description: Use shell_exec::Cmd instead of cmd.output() for consistent logging
+        language: pygrep
+        types: ["rust"]
+        entry: '\.output\(\)'
+        # shell_exec.rs: defines Cmd which legitimately calls .output()
+        # picker: skim API's selected.output() is not Command::output()
+        # tests/benches: test utilities run commands directly
+        # src/config/{test,expansion,mod}.rs: TestRepo test fixtures use git init directly
+        # src/config/user/tests.rs: TestRepo test fixtures use git init directly
+        # src/styling/mod.rs: terminal width detection probes should be silent/quick
+        exclude: '^(src/shell_exec\.rs|src/commands/picker/|src/config/(test|expansion|mod)\.rs|src/config/user/tests\.rs|src/styling/mod\.rs|src/testing/|tests/|benches/)'
+
+ci:
+  # pre-commit.ci doesn't have Rust toolchain, so skip Rust-specific hooks.
+  # Network access also isn't supported, so skip lychee-system.
+  skip: [fmt, clippy, lychee-system, cargo-lock]
+  autoupdate_commit_msg: "chore: pre-commit autoupdate"

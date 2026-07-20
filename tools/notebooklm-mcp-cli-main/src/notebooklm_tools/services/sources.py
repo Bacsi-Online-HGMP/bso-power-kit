@@ -1,0 +1,667 @@
+"""Sources service — shared validation and logic for source management."""
+
+import urllib.parse
+from concurrent.futures import ThreadPoolExecutor
+from typing import Any
+
+from ..core.client import NotebookLMClient
+from ._compat import TypedDict
+from .errors import ServiceError, ValidationError
+
+_FRESHNESS_MAX_WORKERS = 8
+
+VALID_SOURCE_TYPES = ("url", "text", "drive", "file")
+VALID_DRIVE_DOC_TYPES = ("doc", "slides", "sheets", "pdf")
+
+# Only allow safe, public URL schemes for URL sources
+ALLOWED_URL_SCHEMES = frozenset({"http", "https"})
+
+# MIME type mapping for Drive doc types
+DRIVE_MIME_TYPES = {
+    "doc": "application/vnd.google-apps.document",
+    "slides": "application/vnd.google-apps.presentation",
+    "sheets": "application/vnd.google-apps.spreadsheet",
+    "pdf": "application/pdf",
+}
+
+
+class AddSourceResult(TypedDict):
+    """Result of adding a source."""
+
+    source_type: str
+    source_id: str
+    title: str
+
+
+class DriveSourceInfo(TypedDict, total=False):
+    """Info about a Drive source including freshness."""
+
+    id: str
+    title: str
+    type: str
+    stale: bool | None
+    drive_doc_id: str | None
+
+
+class SyncResult(TypedDict):
+    """Result of syncing Drive sources."""
+
+    source_id: str
+    synced: bool
+    error: str | None
+
+
+class SourceContentResult(TypedDict):
+    """Result of getting source content."""
+
+    content: str
+    title: str
+    source_type: str
+    char_count: int
+
+
+class RenameResult(TypedDict):
+    """Result of renaming a source."""
+
+    source_id: str
+    title: str
+
+
+class DescribeResult(TypedDict):
+    """Result of describing a source."""
+
+    summary: str
+    keywords: list[str]
+
+
+class DriveListResult(TypedDict):
+    """Result of listing Drive sources."""
+
+    drive_sources: list[DriveSourceInfo]
+    other_sources: list[dict[str, object | None]]
+    drive_count: int
+    stale_count: int
+
+
+class BulkAddResult(TypedDict):
+    """Result of bulk adding sources."""
+
+    results: list[AddSourceResult]
+    added_count: int
+
+
+def validate_source_type(source_type: str) -> None:
+    """Validate source type. Raises ValidationError if invalid."""
+    if source_type not in VALID_SOURCE_TYPES:
+        raise ValidationError(
+            f"Unknown source type '{source_type}'. Valid types: {', '.join(VALID_SOURCE_TYPES)}",
+        )
+
+
+def resolve_drive_mime_type(doc_type: str) -> str:
+    """Convert doc_type shorthand to MIME type.
+
+    Returns the MIME type string, falling back to Google Doc MIME type.
+    """
+    return DRIVE_MIME_TYPES.get(doc_type, DRIVE_MIME_TYPES["doc"])
+
+
+def add_source(
+    client: NotebookLMClient,
+    notebook_id: str,
+    source_type: str,
+    *,
+    url: str | None = None,
+    text: str | None = None,
+    title: str | None = None,
+    file_path: str | None = None,
+    document_id: str | None = None,
+    doc_type: str = "doc",
+    wait: bool = False,
+    wait_timeout: float = 120.0,
+) -> AddSourceResult:
+    """Add a source to a notebook.
+
+    Centralizes validation and routing for all source types.
+
+    Args:
+        client: Authenticated NotebookLM client
+        notebook_id: Notebook UUID
+        source_type: Type of source (url, text, drive, file)
+        url: URL to add (required for source_type=url)
+        text: Text content (required for source_type=text)
+        title: Display title (optional)
+        file_path: Local file path (required for source_type=file)
+        document_id: Drive document ID (required for source_type=drive)
+        doc_type: Drive doc type: doc|slides|sheets|pdf
+        wait: Wait for source processing
+        wait_timeout: Max seconds to wait
+
+    Returns:
+        AddSourceResult with source_type, source_id, title
+
+    Raises:
+        ValidationError: If source_type or required params are invalid
+        ServiceError: If the add operation fails
+    """
+    validate_source_type(source_type)
+
+    try:
+        if source_type == "url":
+            if not url:
+                raise ValidationError("url is required for source_type='url'")
+            parsed = urllib.parse.urlparse(url)
+            if not parsed.scheme or parsed.scheme.lower() not in ALLOWED_URL_SCHEMES:
+                raise ValidationError(
+                    f"URL scheme '{parsed.scheme}' is not allowed. "
+                    f"Only http:// and https:// URLs are supported."
+                )
+            result = client.add_url_source(notebook_id, url, wait=wait, wait_timeout=wait_timeout)
+            return _extract_result(result, "url", url)
+
+        elif source_type == "text":
+            if not text:
+                raise ValidationError("text is required for source_type='text'")
+            effective_title = title or "Pasted Text"
+            result = client.add_text_source(
+                notebook_id,
+                text,
+                effective_title,
+                wait=wait,
+                wait_timeout=wait_timeout,
+            )
+            return _extract_result(result, "text", effective_title)
+
+        elif source_type == "drive":
+            if not document_id:
+                raise ValidationError("document_id is required for source_type='drive'")
+            effective_title = title or "Drive Document"
+            mime_type = resolve_drive_mime_type(doc_type)
+            result = client.add_drive_source(
+                notebook_id,
+                document_id,
+                effective_title,
+                mime_type,
+                wait=wait,
+                wait_timeout=wait_timeout,
+            )
+            return _extract_result(result, "drive", effective_title)
+
+        elif source_type == "file":
+            if not file_path:
+                raise ValidationError("file_path is required for source_type='file'")
+            # If a custom title was supplied we must wait for the source to be
+            # registered server-side before renaming — the NotebookLM rename
+            # RPC accepts the call and returns success data for a source that
+            # isn't yet fully registered, but the change silently never
+            # propagates. Force wait=True in that case so the source is ready
+            # when rename fires.
+            effective_wait = wait or bool(title)
+            result = client.add_file(
+                notebook_id, file_path, wait=effective_wait, wait_timeout=wait_timeout
+            )
+            fallback_title = str(file_path).split("/")[-1]
+            # `client.add_file` doesn't accept a title parameter (the NotebookLM
+            # upload RPC uses the filename), so we apply the caller's title via
+            # a follow-up rename_source call. Without this, --title was silently
+            # dropped for file uploads.
+            if title and result:
+                source_id = result.get("id") or result.get("source_id")
+                if source_id:
+                    try:
+                        renamed = client.rename_source(notebook_id, source_id, title)
+                        if renamed:
+                            result = {**result, "title": renamed.get("title", title)}
+                    except Exception:
+                        # Rename is best-effort: if it fails the source still
+                        # exists with the filename title. Don't mask the upload
+                        # success by raising here.
+                        pass
+            return _extract_result(result, "file", title or fallback_title)
+
+    except (ValidationError, ServiceError):
+        raise
+    except Exception as e:
+        if source_type == "file" and file_path:
+            user_message = f"Could not add file source: {e}"
+            hint = (
+                "File paths must be accessible on the machine running nlm or the MCP server. "
+                f"Received path: {file_path}"
+            )
+        else:
+            user_message = f"Could not add {source_type} source."
+            hint = (
+                "Check the URL is accessible. For YouTube, ensure the video is public."
+                if source_type == "url"
+                else None
+            )
+        raise ServiceError(
+            f"Failed to add {source_type} source: {e}",
+            user_message=user_message,
+            hint=hint,
+        ) from e
+
+    # Should never reach here due to validate_source_type above
+    raise ServiceError(f"Unexpected source type: {source_type}")
+
+
+def _extract_result(
+    result: dict[str, Any] | None,
+    source_type: str,
+    fallback_title: str,
+) -> AddSourceResult:
+    """Extract AddSourceResult from client response."""
+    if not result or not result.get("id"):
+        raise ServiceError(
+            f"Failed to add {source_type} source — no ID returned",
+            user_message=f"Failed to add {source_type} source.",
+        )
+    return {
+        "source_type": source_type,
+        "source_id": result["id"],
+        "title": result.get("title", fallback_title),
+    }
+
+
+def add_sources(
+    client: NotebookLMClient,
+    notebook_id: str,
+    sources: list[dict[str, Any]],
+    *,
+    wait: bool = False,
+    wait_timeout: float = 120.0,
+) -> BulkAddResult:
+    """Add multiple sources to a notebook.
+
+    URL sources are batched into a single API call for efficiency.
+    Non-URL sources (text, drive, file) fall back to individual calls.
+
+    Args:
+        client: Authenticated NotebookLM client
+        notebook_id: Notebook UUID
+        sources: List of source descriptors, each a dict with:
+            - source_type: str (url, text, drive, file)
+            - url: str (for url type)
+            - text: str (for text type)
+            - title: str (optional)
+            - document_id: str (for drive type)
+            - doc_type: str (for drive type, default "doc")
+            - file_path: str (for file type)
+        wait: Wait for source processing
+        wait_timeout: Max seconds to wait per source
+
+    Returns:
+        BulkAddResult with results list and added_count
+
+    Raises:
+        ValidationError: If sources list is empty or has invalid entries
+        ServiceError: If the add operation fails
+    """
+    if not sources:
+        raise ValidationError("No sources provided for bulk add.")
+
+    # Validate all source types upfront
+    for src in sources:
+        st = src.get("source_type", "")
+        validate_source_type(st)
+
+    # Separate URL sources for batching vs others for individual adds
+    url_sources = [s for s in sources if s.get("source_type") == "url"]
+    other_sources = [s for s in sources if s.get("source_type") != "url"]
+
+    results: list[AddSourceResult] = []
+
+    # Batch URL sources in a single API call
+    if url_sources:
+        urls = []
+        for src in url_sources:
+            url = src.get("url")
+            if not url:
+                raise ValidationError("url is required for source_type='url'")
+            urls.append(url)
+
+        try:
+            raw_results = client.add_url_sources(
+                notebook_id,
+                urls,
+                wait=wait,
+                wait_timeout=wait_timeout,
+            )
+            for i, raw in enumerate(raw_results):
+                if raw and raw.get("id"):
+                    results.append(
+                        {
+                            "source_type": "url",
+                            "source_id": raw["id"],
+                            "title": raw.get("title", urls[i]),
+                        }
+                    )
+                else:
+                    raise ServiceError(
+                        f"Failed to add URL source '{urls[i]}' — no ID returned",
+                        user_message=f"Failed to add URL source: {urls[i]}",
+                    )
+        except (ValidationError, ServiceError):
+            raise
+        except Exception as e:
+            raise ServiceError(
+                f"Failed to batch-add URL sources: {e}",
+                user_message="Could not add URL sources.",
+                hint="Check the URLs are accessible. For YouTube, ensure the videos are public.",
+            ) from e
+
+    # Add non-URL sources individually
+    for src in other_sources:
+        result = add_source(
+            client,
+            notebook_id,
+            src["source_type"],
+            text=src.get("text"),
+            title=src.get("title"),
+            file_path=src.get("file_path"),
+            document_id=src.get("document_id"),
+            doc_type=src.get("doc_type", "doc"),
+            wait=wait,
+            wait_timeout=wait_timeout,
+        )
+        results.append(result)
+
+    return {
+        "results": results,
+        "added_count": len(results),
+    }
+
+
+def list_drive_sources(
+    client: NotebookLMClient,
+    notebook_id: str,
+    skip_freshness: bool = False,
+) -> DriveListResult:
+    """List sources with Drive freshness status.
+
+    Args:
+        client: Authenticated NotebookLM client
+        notebook_id: Notebook UUID
+        skip_freshness: If True, do not make per-source freshness checks
+
+    Returns:
+        DriveListResult with drive/other sources and counts
+
+    Raises:
+        ServiceError: If listing fails
+    """
+    try:
+        sources = client.get_notebook_sources_with_types(notebook_id)
+    except Exception as e:
+        raise ServiceError(
+            f"Failed to list sources: {e}",
+            user_message="Could not list notebook sources.",
+        ) from e
+
+    drive_sources: list[DriveSourceInfo] = []
+    other_sources: list[dict[str, object | None]] = []
+
+    syncable_ids = [s["id"] for s in sources if s.get("can_sync") and isinstance(s.get("id"), str)]
+    freshness_map: dict[str, bool | None] = {}
+    if syncable_ids and not skip_freshness:
+        with ThreadPoolExecutor(max_workers=_FRESHNESS_MAX_WORKERS) as ex:
+            for source_id, is_fresh in ex.map(
+                lambda sid: (sid, _safe_check_freshness(client, sid)),
+                syncable_ids,
+            ):
+                freshness_map[source_id] = is_fresh
+
+    for source in sources:
+        source_info: dict[str, object | None] = {
+            "id": source.get("id"),
+            "title": source.get("title"),
+            "type": source.get("source_type_name"),
+        }
+
+        if source.get("can_sync"):
+            is_fresh = (
+                freshness_map.get(source["id"]) if isinstance(source.get("id"), str) else None
+            )
+            source_id = source.get("id")
+            source_title = source.get("title")
+            source_type_name = source.get("source_type_name")
+            drive_info: DriveSourceInfo = {
+                "id": source_id if isinstance(source_id, str) else "",
+                "title": source_title if isinstance(source_title, str) else "",
+                "type": source_type_name if isinstance(source_type_name, str) else "unknown",
+                "stale": (not is_fresh) if is_fresh is not None else None,
+                "drive_doc_id": source.get("drive_doc_id"),
+            }
+            drive_sources.append(drive_info)
+        else:
+            other_sources.append(source_info)
+
+    return {
+        "drive_sources": drive_sources,
+        "other_sources": other_sources,
+        "drive_count": len(drive_sources),
+        "stale_count": sum(1 for s in drive_sources if s.get("stale")),
+    }
+
+
+def _safe_check_freshness(client: NotebookLMClient, source_id: str) -> bool | None:
+    """Return freshness, or None on any error.
+
+    Used by the parallel freshness fan-out in list_drive_sources: one source
+    failing its freshness check must not sink the whole call.
+    """
+    try:
+        return client.check_source_freshness(source_id)
+    except Exception:
+        return None
+
+
+def sync_drive_sources(
+    client: NotebookLMClient,
+    source_ids: list[str],
+) -> list[SyncResult]:
+    """Sync Drive sources with latest content.
+
+    Args:
+        client: Authenticated NotebookLM client
+        source_ids: Source UUIDs to sync
+
+    Returns:
+        List of SyncResult per source
+
+    Raises:
+        ServiceError: If the sync operation fails entirely
+    """
+    if not source_ids:
+        raise ValidationError("No source IDs provided for sync.")
+
+    results: list[SyncResult] = []
+    for source_id in source_ids:
+        try:
+            result = client.sync_drive_source(source_id)
+            results.append({"source_id": source_id, "synced": bool(result), "error": None})
+        except Exception as e:
+            results.append({"source_id": source_id, "synced": False, "error": str(e)})
+
+    return results
+
+
+def rename_source(
+    client: NotebookLMClient,
+    notebook_id: str,
+    source_id: str,
+    new_title: str,
+) -> RenameResult:
+    """Rename a source in a notebook.
+
+    Args:
+        client: Authenticated NotebookLM client
+        notebook_id: Notebook UUID containing the source
+        source_id: Source UUID to rename
+        new_title: New display title
+
+    Returns:
+        RenameResult with source_id and new title
+
+    Raises:
+        ValidationError: If new_title is empty
+        ServiceError: If rename fails
+    """
+    if not new_title or not new_title.strip():
+        raise ValidationError("new_title cannot be empty.")
+
+    try:
+        result = client.rename_source(notebook_id, source_id, new_title.strip())
+        if not result:
+            raise ServiceError(
+                f"Rename returned no data for source {source_id}",
+                user_message="Failed to rename source.",
+            )
+        return {
+            "source_id": result["id"],
+            "title": result["title"],
+        }
+    except (ValidationError, ServiceError):
+        raise
+    except Exception as e:
+        raise ServiceError(
+            f"Failed to rename source {source_id}: {e}",
+            user_message="Failed to rename source.",
+        ) from e
+
+
+def delete_source(
+    client: NotebookLMClient,
+    source_id: str,
+) -> None:
+    """Delete a source permanently.
+
+    Args:
+        client: Authenticated NotebookLM client
+        source_id: Source UUID
+
+    Raises:
+        ServiceError: If deletion fails
+    """
+    try:
+        result = client.delete_source(source_id)
+        if not result:
+            raise ServiceError(
+                f"Delete returned falsy for source {source_id}",
+                user_message="Failed to delete source.",
+            )
+    except ServiceError:
+        raise
+    except Exception as e:
+        raise ServiceError(
+            f"Failed to delete source {source_id}: {e}",
+            user_message="Failed to delete source.",
+        ) from e
+
+
+def delete_sources(
+    client: NotebookLMClient,
+    source_ids: list[str],
+) -> None:
+    """Delete multiple sources permanently in a single request.
+
+    Args:
+        client: Authenticated NotebookLM client
+        source_ids: List of source UUIDs to delete
+
+    Raises:
+        ValidationError: If source_ids is empty
+        ServiceError: If deletion fails
+    """
+    if not source_ids:
+        raise ValidationError("No source IDs provided for bulk delete.")
+
+    try:
+        result = client.delete_sources(source_ids)
+        if not result:
+            raise ServiceError(
+                f"Bulk delete returned falsy for {len(source_ids)} sources",
+                user_message="Failed to delete sources.",
+            )
+    except (ValidationError, ServiceError):
+        raise
+    except Exception as e:
+        raise ServiceError(
+            f"Failed to delete {len(source_ids)} sources: {e}",
+            user_message="Failed to delete sources.",
+        ) from e
+
+
+def describe_source(
+    client: NotebookLMClient,
+    source_id: str,
+) -> DescribeResult:
+    """Get AI-generated source summary with keywords.
+
+    Args:
+        client: Authenticated NotebookLM client
+        source_id: Source UUID
+
+    Returns:
+        DescribeResult with summary and keywords
+
+    Raises:
+        ServiceError: If describe fails
+    """
+    try:
+        result = client.get_source_guide(source_id)
+        if not result:
+            raise ServiceError(
+                f"No description returned for source {source_id}",
+                user_message="Failed to get source summary.",
+            )
+        return {
+            "summary": result.get("summary", ""),
+            "keywords": result.get("keywords", []),
+        }
+    except ServiceError:
+        raise
+    except Exception as e:
+        raise ServiceError(
+            f"Failed to describe source {source_id}: {e}",
+            user_message="Failed to get source summary.",
+        ) from e
+
+
+def get_source_content(
+    client: NotebookLMClient,
+    source_id: str,
+) -> SourceContentResult:
+    """Get raw text content of a source (no AI processing).
+
+    Args:
+        client: Authenticated NotebookLM client
+        source_id: Source UUID
+
+    Returns:
+        SourceContentResult with content, title, type, and char_count
+
+    Raises:
+        ServiceError: If content retrieval fails
+    """
+    try:
+        result = client.get_source_fulltext(source_id)
+        if not result:
+            raise ServiceError(
+                f"No content returned for source {source_id}",
+                user_message="Failed to get source content.",
+            )
+        content = result.get("content", "")
+        return {
+            "content": content,
+            "title": result.get("title", ""),
+            "source_type": result.get("type", "unknown"),
+            "char_count": len(content),
+        }
+    except ServiceError:
+        raise
+    except Exception as e:
+        raise ServiceError(
+            f"Failed to get content for source {source_id}: {e}",
+            user_message="Failed to get source content.",
+        ) from e

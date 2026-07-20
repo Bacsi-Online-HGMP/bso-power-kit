@@ -1,0 +1,85 @@
+//! Statistics types for worktree and branch data.
+//!
+//! These types hold computed statistics like ahead/behind counts,
+//! line diff totals, and upstream tracking information.
+
+use worktrunk::git::LineDiff;
+
+/// Commit metadata for a branch or worktree HEAD.
+///
+/// The abbreviated SHA lives on `ListItem::short_sha` so it stays available even
+/// when this struct isn't populated (prunable worktrees, items missing from the
+/// pre-skeleton batch); the fields here are the per-commit data fetched
+/// alongside it in the same `git log` batch.
+#[derive(Clone, Default, Debug)]
+pub struct CommitDetails {
+    pub timestamp: i64,
+    pub commit_message: String,
+}
+
+/// Ahead/behind counts relative to a base branch.
+#[derive(Default, Copy, Clone, Debug)]
+pub struct AheadBehind {
+    pub ahead: usize,
+    pub behind: usize,
+}
+
+/// Line diff totals for a branch compared to the integration target.
+#[derive(Default, Copy, Clone, Debug)]
+pub struct BranchDiffTotals {
+    pub diff: LineDiff,
+}
+
+/// Upstream tracking information for a branch.
+#[derive(Default, Clone, Debug)]
+pub struct UpstreamStatus {
+    pub(crate) remote: Option<String>,
+    pub(crate) ahead: usize,
+    pub(crate) behind: usize,
+}
+
+/// Active upstream tracking information (when a remote is configured).
+pub struct ActiveUpstream<'a> {
+    pub remote: &'a str,
+    pub ahead: usize,
+    pub behind: usize,
+}
+
+impl UpstreamStatus {
+    /// Returns active upstream info if a remote tracking branch is configured.
+    pub fn active(&self) -> Option<ActiveUpstream<'_>> {
+        self.remote.as_deref().map(|remote| ActiveUpstream {
+            remote,
+            ahead: self.ahead,
+            behind: self.behind,
+        })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_upstream_status_active_with_remote() {
+        let status = UpstreamStatus {
+            remote: Some("origin".to_string()),
+            ahead: 3,
+            behind: 2,
+        };
+        let active = status.active().unwrap();
+        assert_eq!(active.remote, "origin");
+        assert_eq!(active.ahead, 3);
+        assert_eq!(active.behind, 2);
+    }
+
+    #[test]
+    fn test_upstream_status_active_no_remote() {
+        let status = UpstreamStatus {
+            remote: None,
+            ahead: 0,
+            behind: 0,
+        };
+        assert!(status.active().is_none());
+    }
+}

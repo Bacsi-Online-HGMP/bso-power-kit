@@ -1,0 +1,9 @@
+---
+source: tests/integration_tests/switch_picker.rs
+expression: list
+---
+>
+    Branch       Status        HEAD±    main↕     main…±  R
+> @ main             ^
+  + feature-one      _
+  + feature-two      _

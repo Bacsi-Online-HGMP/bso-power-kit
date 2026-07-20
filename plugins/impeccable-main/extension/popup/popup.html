@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <header>
+    <span class="logo" aria-hidden="true">
+      <svg viewBox="0 0 24 24" fill="currentColor">
+        <path d="M5 2.5 L13.5 2.5 L5.5 21.5 L5 21.5 Q2.5 21.5 2.5 19 L2.5 5 Q2.5 2.5 5 2.5 Z"/>
+        <path d="M16.5 2.5 L19 2.5 Q21.5 2.5 21.5 5 L21.5 19 Q21.5 21.5 19 21.5 L8.5 21.5 Z"/>
+      </svg>
+    </span>
+    <h1>Impeccable</h1>
+  </header>
+
+  <div class="count-display" id="count-display">
+    <span class="count-number" id="count-number">0</span>
+    <span class="count-label" id="count-label">anti-patterns</span>
+  </div>
+
+  <div class="actions">
+    <button class="btn btn-primary" id="btn-scan">Scan page</button>
+    <button class="btn btn-secondary" id="btn-toggle">Hide overlays</button>
+  </div>
+
+  <p class="scan-error" id="scan-error" hidden></p>
+
+  <footer>
+    <a href="https://impeccable.style" id="link-site">impeccable.style</a>
+  </footer>
+
+  <script src="popup.js"></script>
+</body>
+</html>

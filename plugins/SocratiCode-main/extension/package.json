@@ -1,0 +1,221 @@
+{
+  "name": "socraticode",
+  "displayName": "SocratiCode",
+  "description": "Codebase context engine for AI assistants. Hybrid search, dependency and call graphs, symbol-level impact analysis (blast radius), interactive graph explorer, and searchable architecture artefacts. Works with Copilot agent mode, Cline, Continue, Roo Code, and any MCP-compatible host.",
+  "version": "1.8.18",
+  "publisher": "giancarloerra",
+  "license": "AGPL-3.0-only",
+  "icon": "images/icon.png",
+  "galleryBanner": {
+    "color": "#3a3d8c",
+    "theme": "dark"
+  },
+  "engines": {
+    "vscode": "^1.99.0",
+    "node": ">=18.0.0"
+  },
+  "categories": [
+    "AI",
+    "Programming Languages",
+    "Visualization",
+    "Other"
+  ],
+  "keywords": [
+    "ai",
+    "mcp",
+    "codebase",
+    "context",
+    "search",
+    "semantic search",
+    "dependency graph",
+    "call graph",
+    "impact analysis",
+    "blast radius",
+    "qdrant",
+    "ollama",
+    "copilot"
+  ],
+  "homepage": "https://github.com/giancarloerra/socraticode",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/giancarloerra/socraticode.git",
+    "directory": "extension"
+  },
+  "bugs": {
+    "url": "https://github.com/giancarloerra/socraticode/issues"
+  },
+  "qna": "https://github.com/giancarloerra/socraticode/discussions",
+  "sponsor": {
+    "url": "https://altaire.com"
+  },
+  "main": "./dist/extension.js",
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "contributes": {
+    "mcpServerDefinitionProviders": [
+      {
+        "id": "socraticode.mcp",
+        "label": "SocratiCode"
+      }
+    ],
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "socraticode",
+          "title": "SocratiCode",
+          "icon": "images/icon.png"
+        }
+      ]
+    },
+    "views": {
+      "socraticode": [
+        {
+          "id": "socraticode.projects",
+          "name": "Indexed projects",
+          "icon": "images/icon.png",
+          "contextualTitle": "SocratiCode"
+        }
+      ]
+    },
+    "viewsWelcome": [
+      {
+        "view": "socraticode.projects",
+        "contents": "SocratiCode indexes your codebase so AI assistants can search, trace dependencies and run impact analysis on it.\n\n[Index this workspace](command:socraticode.indexCurrentWorkspace)\n\nAsk your AI assistant (Copilot agent mode, Cline, Continue, Roo Code) to call any SocratiCode tool. The MCP server registers automatically on activation.\n\n[Open the getting-started walkthrough](command:socraticode.openWalkthrough)\n\n[Read the docs](https://github.com/giancarloerra/socraticode#readme)"
+      }
+    ],
+    "commands": [
+      {
+        "command": "socraticode.indexCurrentWorkspace",
+        "title": "SocratiCode: Index current workspace",
+        "category": "SocratiCode"
+      },
+      {
+        "command": "socraticode.openInteractiveGraph",
+        "title": "SocratiCode: Open interactive graph",
+        "category": "SocratiCode"
+      },
+      {
+        "command": "socraticode.refreshProjects",
+        "title": "SocratiCode: Refresh indexed projects",
+        "category": "SocratiCode",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "socraticode.openWalkthrough",
+        "title": "SocratiCode: Open getting-started walkthrough",
+        "category": "SocratiCode"
+      },
+      {
+        "command": "socraticode.openOutput",
+        "title": "SocratiCode: Show output / logs",
+        "category": "SocratiCode"
+      }
+    ],
+    "menus": {
+      "view/title": [
+        {
+          "command": "socraticode.refreshProjects",
+          "when": "view == socraticode.projects",
+          "group": "navigation"
+        }
+      ],
+      "commandPalette": [
+        {
+          "command": "socraticode.refreshProjects"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "SocratiCode",
+      "properties": {
+        "socraticode.command": {
+          "type": "string",
+          "default": "npx",
+          "description": "Command used to launch the engine. Defaults to `npx -y socraticode`. Override only if you have a custom install.",
+          "scope": "window"
+        },
+        "socraticode.args": {
+          "type": "array",
+          "default": [
+            "-y",
+            "socraticode"
+          ],
+          "items": {
+            "type": "string"
+          },
+          "description": "Arguments passed to `socraticode.command`.",
+          "scope": "window"
+        },
+        "socraticode.env": {
+          "type": "object",
+          "default": {},
+          "additionalProperties": {
+            "type": "string"
+          },
+          "description": "Non-secret environment variables forwarded to the engine. Use this for non-sensitive engine config like external Qdrant URL (`QDRANT_MODE=external`, `QDRANT_URL`), embedding provider selection (`EMBEDDING_PROVIDER`), project IDs, branch-aware indexing, and so on. AVOID storing API keys or tokens here: workspace settings can be synced via VS Code Settings Sync and may end up in committed `.vscode/settings.json` files. For secrets, prefer OS environment variables, a local `.env` file outside settings, or a system keychain.",
+          "scope": "window"
+        },
+        "socraticode.statusBar": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show the SocratiCode status bar item.",
+          "scope": "window"
+        }
+      }
+    },
+    "walkthroughs": [
+      {
+        "id": "socraticode.gettingStarted",
+        "title": "Get started with SocratiCode",
+        "description": "Index your first project and try the interactive graph.",
+        "steps": [
+          {
+            "id": "index-project",
+            "title": "Index your first project",
+            "description": "Run a one-time index of your current workspace. Subsequent updates are incremental.",
+            "media": {
+              "markdown": "walkthroughs/first-index.md"
+            },
+            "completionEvents": [
+              "onCommand:socraticode.indexCurrentWorkspace"
+            ]
+          },
+          {
+            "id": "try-search",
+            "title": "Search and explore the graph",
+            "description": "Open the interactive graph or ask your AI assistant a search question grounded in the codebase.",
+            "media": {
+              "markdown": "walkthroughs/first-search.md"
+            },
+            "completionEvents": [
+              "onCommand:socraticode.openInteractiveGraph"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "scripts": {
+    "compile": "node esbuild.config.mjs",
+    "watch": "node esbuild.config.mjs --watch",
+    "typecheck": "tsc --noEmit",
+    "lint": "biome check src",
+    "test": "node --test --import tsx src/__tests__/*.test.ts",
+    "package": "vsce package --no-dependencies",
+    "publish:vsce": "vsce publish --no-dependencies",
+    "publish:ovsx": "ovsx publish --no-dependencies",
+    "publish:all": "npm run publish:vsce && npm run publish:ovsx",
+    "vscode:prepublish": "npm run compile"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^2.0.0",
+    "@types/node": "^20.0.0",
+    "@types/vscode": "^1.99.0",
+    "@vscode/vsce": "^3.2.0",
+    "esbuild": "^0.24.0",
+    "ovsx": "^0.10.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.6.0"
+  }
+}

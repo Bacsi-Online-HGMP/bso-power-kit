@@ -1,0 +1,102 @@
+---
+source: tests/integration_tests/help.rs
+info:
+  program: wt
+  args:
+    - config
+    - state
+    - "--help"
+  env:
+    CLICOLOR_FORCE: "1"
+    COLUMNS: "500"
+    LANG: C
+    LC_ALL: C
+    LLVM_PROFILE_FILE: "[LLVM_PROFILE_FILE]"
+    TERM: alacritty
+    WORKTRUNK_APPROVALS_PATH: "[TEST_APPROVALS]"
+    WORKTRUNK_CONFIG_PATH: "[TEST_CONFIG]"
+    WORKTRUNK_SYSTEM_CONFIG_PATH: "[TEST_SYSTEM_CONFIG]"
+    WORKTRUNK_TEST_BASH_INSTALLED: "0"
+    WORKTRUNK_TEST_CLAUDE_INSTALLED: "0"
+    WORKTRUNK_TEST_CODEX_INSTALLED: "0"
+    WORKTRUNK_TEST_DELAYED_STREAM_MS: "-1"
+    WORKTRUNK_TEST_EPOCH: "1735776000"
+    WORKTRUNK_TEST_FISH_INSTALLED: "0"
+    WORKTRUNK_TEST_GEMINI_INSTALLED: "0"
+    WORKTRUNK_TEST_NUSHELL_ENV: "0"
+    WORKTRUNK_TEST_OPENCODE_INSTALLED: "0"
+    WORKTRUNK_TEST_POWERSHELL_ENV: "0"
+    WORKTRUNK_TEST_POWERSHELL_INSTALLED: "0"
+    WORKTRUNK_TEST_SKIP_URL_HEALTH_CHECK: "1"
+    WORKTRUNK_TEST_ZSH_INSTALLED: "0"
+---
+success: true
+exit_code: 0
+----- stdout -----
+wt config state - Manage internal data and cache
+
+Usage: [1m[36mwt config state[0m [36m[OPTIONS][0m [36m<COMMAND>[0m
+
+[1m[32mCommands:[0m
+  [1m[36mget[0m             Get all stored state
+  [1m[36mclear[0m           Clear all stored state
+  [1m[36mcache[0m           Regenerable caches
+  [1m[36mdefault-branch[0m  Default branch detection and override
+  [1m[36mlogs[0m            Operation and debug logs
+  [1m[36mmarker[0m          Branch markers
+  [1m[36mvars[0m            [experimental] Custom variables per branch
+
+[1m[32mOptions:[0m
+  [1m[36m-h[0m, [1m[36m--help[0m
+          Print help (see a summary with '-h')
+
+[1m[32mGlobal Options:[0m
+  [1m[36m-C[0m[36m [0m[36m<path>[0m
+          Working directory for this command
+
+      [1m[36m--config[0m[36m [0m[36m<path>[0m
+          User config file path
+
+      [1m[36m--config-set[0m[36m [0m[36m<toml>[0m
+          Override config with inline TOML, e.g. --config-set list.full=true (repeatable)
+
+  [1m[36m-v[0m, [1m[36m--verbose[0m[36m...[0m
+          Verbose output (-v: info logs + hook/alias template variables on stderr; -vv: also debug logs and raw subprocess output written to .git/wt/logs/). Set WORKTRUNK_VERBOSE=0|1|2 to apply the same level everywhere — including shell completion, which no flag can reach
+
+  [1m[36m-y[0m, [1m[36m--yes[0m
+          Skip approval prompts
+
+State is stored in [2m.git/[0m (config entries and log files), separate from configuration files.
+
+[1m[32mKeys[0m
+
+- [1mcache[0m: Regenerable caches — CI status, summaries, git commands, hints, and the [2mwt switch -[0m target
+- [1mdefault-branch[0m: The repository's default branch ([2mmain[0m, [2mmaster[0m, etc.)
+- [1mmarker[0m: Custom status marker for a branch (shown in [2mwt list[0m)
+- [1mvars[0m: [experimental] Custom variables per branch
+- [1mlogs[0m: Operation and debug logs
+
+[1m[32mExamples[0m
+
+Get the default branch:
+[107m [0m [2m[0m[2m[34mwt[0m[2m config state default-branch[0m
+
+Set the default branch manually:
+[107m [0m [2m[0m[2m[34mwt[0m[2m config state default-branch set main[0m
+
+Set a marker for current branch:
+[107m [0m [2m[0m[2m[34mwt[0m[2m config state marker set 🚧[0m
+
+Store arbitrary data:
+[107m [0m [2m[0m[2m[34mwt[0m[2m config state vars set env=staging[0m
+
+Drop the regenerable caches:
+[107m [0m [2m[0m[2m[34mwt[0m[2m config state cache clear[0m
+
+Show all stored state:
+[107m [0m [2m[0m[2m[34mwt[0m[2m config state get[0m
+
+Clear all stored state:
+[107m [0m [2m[0m[2m[34mwt[0m[2m config state clear[0m
+
+----- stderr -----

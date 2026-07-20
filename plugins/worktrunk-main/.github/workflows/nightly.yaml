@@ -1,0 +1,413 @@
+name: nightly
+# Slower checks that aren't worth running on every PR but should run before a
+# release. Jobs:
+#   - feature-powerset: feature-flag unification, check + test suite (motivated by #2442)
+#   - full-tests: full nextest suite on the linux/macos/windows matrix — the
+#     cargo-affected safety net (see the job comment and ci.yaml's affected block)
+#   - release-target: PTY+shell suite on the release triples ci.yaml doesn't cover
+#   - check-unused-dependencies: cargo-udeps on nightly toolchain
+#   - minimal-versions: cargo check against minimum-version dep resolution
+#   - nix-flake: nix flake check (packaging-environment bugs, motivated by #2624)
+#   - crate-build: build the crates.io archive with no `.git` (faithful #3123 repro)
+#
+# Runs daily on cron, on demand via workflow_dispatch, on pushes to main that
+# touch dependency or toolchain files, and on PRs that either (a) touch the
+# same dependency/toolchain files or (b) carry the `nightly` label. The
+# label is the iteration knob for fixes targeting nightly-only failures
+# (e.g. nix-flake's sandbox suite); without it, contributors had to wait for
+# the cron run or `gh workflow run` manually. The cron still catches drift
+# that's not commit-correlated (registry updates, transitive resolution).
+#
+# Runner versions pinned; see ci.yaml header comment for rationale.
+
+on:
+  schedule:
+    # Run at 5:37 UTC every day. Off-peak minute (avoid :00 to be a good
+    # citizen w.r.t. GitHub's cron scheduler).
+    - cron: '37 5 * * *'
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - '**/Cargo.toml'
+      - 'Cargo.lock'
+      - 'rust-toolchain.toml'
+      - '.github/workflows/nightly.yaml'
+  pull_request:
+    branches: [main]
+    # `labeled` fires when a label is added (so the `nightly` label can
+    # trigger a run mid-PR); `synchronize` re-runs on subsequent pushes.
+    # The `gate` job below decides whether to actually run, ORing the
+    # label against a Cargo-paths diff check.
+    types: [opened, synchronize, reopened, labeled]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+  RUSTFLAGS: -C debuginfo=0
+
+jobs:
+  gate:
+    # Decides whether to run on PR events. Non-PR events (cron,
+    # workflow_dispatch, push) pass through unconditionally. PR events
+    # run when either the `nightly` label is attached OR the diff touches
+    # one of the dependency/toolchain files. The decision is exposed via
+    # `outputs.run`; downstream jobs gate on it.
+    #
+    # `dorny/paths-filter` works against the GitHub API for PR events, so
+    # no checkout step is needed.
+    runs-on: ubuntu-24.04
+    permissions:
+      pull-requests: read
+    outputs:
+      run: ${{ steps.decide.outputs.run }}
+    steps:
+      - uses: dorny/paths-filter@v4
+        if: github.event_name == 'pull_request'
+        id: changes
+        with:
+          filters: |
+            nightly:
+              - '**/Cargo.toml'
+              - 'Cargo.lock'
+              - 'rust-toolchain.toml'
+              - '.github/workflows/nightly.yaml'
+      - id: decide
+        run: |
+          echo "run=${{ github.event_name != 'pull_request' ||
+            contains(github.event.pull_request.labels.*.name, 'nightly') ||
+            steps.changes.outputs.nightly == 'true' }}" >> "$GITHUB_OUTPUT"
+
+  feature-powerset:
+    # Every combination of cli/syntax-highlighting/shell-integration-tests/
+    # git-wt should compile. Catches regressions in feature gating — including
+    # the v0.45.0 case where lib code used a `cli`-gated dependency
+    # unconditionally.
+    #
+    # Workspace members must use `default-features = false` when depending on
+    # worktrunk, or feature unification will mask gating bugs by silently
+    # enabling `cli` in the lib build (see tests/helpers/wt-perf/Cargo.toml).
+    #
+    # The test step runs the test suite per combination — the check step
+    # strips dev-deps, so `#[cfg(test)]` code is invisible to it, and a test
+    # importing a feature-gated symbol without its own gate, or a snapshot
+    # baking feature-dependent output, only surfaces when tests are built and
+    # run per combo. The integration suite declares
+    # `required-features = ["cli", "syntax-highlighting"]` (Cargo.toml) because
+    # it execs the `wt` binary and snapshots its highlighted output, so cargo
+    # runs it only on combinations that satisfy both and runs lib + doc tests
+    # everywhere. No target filter, so default-members builds the mock-stub
+    # helper bin the lib suite shells out to.
+    needs: gate
+    if: needs.gate.outputs.run == 'true'
+    runs-on: ubuntu-24.04
+    steps:
+    - name: 📂 Checkout code
+      uses: actions/checkout@v7
+
+    - name: 💰 Cache
+      uses: Swatinem/rust-cache@v2
+      with:
+        # Restore the shared `test` cache (registry + deps), never save.
+        # Nightly-only jobs riding main's cache aren't worth their own entry
+        # against the 10 GB repo cap.
+        prefix-key: v1-rust
+        shared-key: shared
+        cache-bin: "false"
+        save-if: false
+
+    - name: Install cargo-hack
+      uses: taiki-e/install-action@v2.82.7
+      with:
+        tool: cargo-hack
+
+    # The `shell-integration-tests` combinations run PTY tests that spawn real
+    # zsh/fish and probe nushell; match the test matrix's shell setup
+    # (.github/actions/test-setup) so those combinations run, not just compile.
+    - name: Install shells (zsh, fish)
+      run: sudo apt-get update && sudo apt-get install -y zsh fish
+
+    - name: Install nushell
+      uses: hustcer/setup-nu@v3
+      with:
+        version: '0.113.1'
+
+    - run: cargo hack check --feature-powerset --no-dev-deps
+
+    - run: cargo hack test --feature-powerset
+
+  full-tests:
+    # The full nextest suite on the standard linux/macos/windows matrix —
+    # mirrors ci.yaml's PR `test` job. This is the safety net for the gaps
+    # cargo-affected can't cover: tests it under-selects, plus the non-Rust /
+    # build inputs it can't trace (`include_str!`, templates, build.rs,
+    # rust-toolchain.toml, proc-macros). It also hosts the Linux
+    # `--unreferenced reject` orphan check, which is intrinsically full-suite.
+    # It lives in `nightly`, NOT on push-to-main, on purpose: a failure here
+    # means affected missed something, and that must not redden main — nightly
+    # failures are non-blocking and Tend-fixable. Complements feature-powerset
+    # (Linux, feature combos) and release-target (cross triples) by covering
+    # the standard 3-OS matrix that neither runs. At the affected-only flip,
+    # ci.yaml's `test` job is deleted and this becomes the sole full run.
+    needs: gate
+    if: needs.gate.outputs.run == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-24.04
+            name: linux
+          - os: macos-15
+            name: macos
+          - os: windows-2022
+            name: windows
+    runs-on: ${{ matrix.os }}
+    steps:
+    - name: 📂 Checkout code
+      uses: actions/checkout@v7
+
+    - uses: ./.github/actions/test-setup
+
+    - name: Install wt
+      uses: baptiste0928/cargo-install@v3
+      with:
+        crate: worktrunk
+        version: "=0.62.0"
+
+    - name: "Use fast D: drive for temp files (Windows)"
+      if: runner.os == 'Windows'
+      shell: pwsh
+      run: |
+        New-Item -ItemType Directory -Force -Path "D:\tmp" | Out-Null
+        echo "TEMP=D:\tmp" >> $env:GITHUB_ENV
+        echo "TMP=D:\tmp" >> $env:GITHUB_ENV
+
+    - name: 🧪 Full test suite
+      run: wt hook pre-merge --yes insta
+
+    - name: 🧹 Verify clean working tree
+      shell: bash
+      run: |
+        if [ -n "$(git status --porcelain)" ]; then
+          echo "::error::tests left files behind in the working tree:"
+          git status --porcelain
+          exit 1
+        fi
+
+  release-target:
+    # Build and run the test suite on the release triples that ci.yaml's
+    # `test` matrix doesn't cover — `dist-workspace.toml` ships musl Linux
+    # (x86_64 + arm64) and Intel macOS, but the test matrix is glibc Linux,
+    # arm64 macOS, and Windows. Without this, a regression on those targets
+    # first surfaces at release-tag time, which blocks the release.
+    #
+    # Runs the integration suite (default features, no
+    # `shell-integration-tests`) — covers file IO, command spawning, and
+    # output rendering on the cross-target triple, which is where
+    # musl-vs-glibc and intel-vs-arm divergence shows up. Shell-integration
+    # PTY tests are intentionally off because they read $SHELL from the
+    # runner env, which resolves differently on `ubuntu-24.04-arm` and
+    # masks musl/arm signal with environment noise.
+    needs: gate
+    if: needs.gate.outputs.run == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-musl
+            runner: ubuntu-24.04
+            install: musl-tools
+          - target: aarch64-unknown-linux-musl
+            runner: ubuntu-24.04-arm
+            install: musl-tools
+          - target: x86_64-apple-darwin
+            runner: macos-15-intel
+    name: release-target (${{ matrix.target }})
+    runs-on: ${{ matrix.runner }}
+    steps:
+    - name: 📂 Checkout code
+      uses: actions/checkout@v7
+
+    - name: Install musl-tools
+      if: matrix.install == 'musl-tools'
+      run: sudo apt-get update && sudo apt-get install -y musl-tools
+
+    - uses: ./.github/actions/test-setup
+      with:
+        # Cross-compiles musl/Intel targets the shared cache never builds, so
+        # it restore-misses anyway — and we don't want these one-off release
+        # triples writing their own caches against the 10 GB cap.
+        save-cache: "false"
+
+    - name: Add target
+      run: rustup target add ${{ matrix.target }}
+
+    - name: 🧪 Tests
+      env:
+        NEXTEST_NO_INPUT_HANDLER: 1
+      run: cargo nextest run --target ${{ matrix.target }}
+
+  check-unused-dependencies:
+    # Moved from ci.yaml — `cargo udeps` requires nightly toolchain anyway,
+    # so it's already in the "nightly concern" bucket; rarely flips between
+    # PRs touching deps.
+    needs: gate
+    if: needs.gate.outputs.run == 'true'
+    runs-on: ubuntu-24.04
+    steps:
+    - name: 📂 Checkout code
+      uses: actions/checkout@v7
+
+    # cargo-udeps requires nightly; update date periodically
+    - run: rustup override set nightly-2026-03-01
+
+    - name: 💰 Cache
+      uses: Swatinem/rust-cache@v2
+      with:
+        # Never save. Runs on the nightly toolchain, whose rustc hash can't
+        # match the shared (stable) cache, so a per-job cache would only ever
+        # serve the next nightly — near-zero hit under the 10 GB cap. Cold
+        # builds here are absorbed by the nightly cadence.
+        cache-bin: "false"
+        save-if: false
+
+    - uses: baptiste0928/cargo-install@v3
+      with:
+        crate: cargo-udeps
+        version: "=0.1.61"
+
+    - uses: clechasseur/rs-cargo@v5.0.6
+      with:
+        command: udeps
+        args: --all-targets
+
+  minimal-versions:
+    # Verify `Cargo.toml` constraints aren't under-specified — library
+    # consumers (the lib/CLI cleave is real; `feature-check` in ci.yaml
+    # exists for the same downstream-protection reason) can resolve to a
+    # lower compatible version that doesn't actually compile if our manifest
+    # under-specifies.
+    needs: gate
+    if: needs.gate.outputs.run == 'true'
+    runs-on: ubuntu-24.04
+    steps:
+    - name: 📂 Checkout code
+      uses: actions/checkout@v7
+
+    - run: rustup override set nightly-2026-03-01
+
+    - name: 💰 Cache
+      uses: Swatinem/rust-cache@v2
+      with:
+        # Never save — nightly toolchain (can't match the shared stable cache)
+        # plus a minimized lockfile that's unique to this run, so a saved cache
+        # would never be reused.
+        cache-bin: "false"
+        save-if: false
+
+    - name: Resolve to minimum versions
+      # `direct`, not full `-Z minimal-versions`: minimize only worktrunk's own
+      # direct deps and let transitive crates resolve normally. Full minimization
+      # also walks skim 4.8's TUI/image stack (ansi-to-tui, ratatui's
+      # `instability` macro, color-eyre, ratatui-image -> image/avif -> num-* and
+      # bitvec), whose crates under-declare their floors and don't compile at the
+      # picked versions — upstream brokenness, not ours, that we'd have to pin
+      # around. Direct minimization confines the check to floors we actually own;
+      # they're raised in the manifests to the minimums the tree builds against.
+      run: cargo update -Z direct-minimal-versions
+
+    - name: cargo check
+      run: cargo check --workspace --all-targets
+
+  crate-build:
+    # Faithful end-to-end guard for #3123: build the crates.io *source archive*
+    # in a directory with no ancestor `.git` and confirm `wt` both compiles and
+    # reports the cargo version (the `option_env!("VERGEN_GIT_DESCRIBE")`
+    # fallback). ci.yaml's fast `vergen_env_vars_are_read_optionally` guard
+    # catches the mechanism (`env!` vs `option_env!`) on every PR by scanning
+    # source; this reproduces the actual `cargo install` condition — a full
+    # from-scratch build (~minutes), which is why it's `#[ignore]`d and run here
+    # via `--ignored`. A regression that an in-tree build can't see (git
+    # describe ascends to the outer repo) surfaces only on this no-git build.
+    needs: gate
+    if: needs.gate.outputs.run == 'true'
+    runs-on: ubuntu-24.04
+    steps:
+    - name: 📂 Checkout code
+      uses: actions/checkout@v7
+
+    - name: 💰 Cache
+      uses: Swatinem/rust-cache@v2
+      with:
+        # Restore the shared `test` cache (registry + deps), never save.
+        prefix-key: v1-rust
+        shared-key: shared
+        cache-bin: "false"
+        save-if: false
+
+    - name: 🧪 Build crates.io archive without .git
+      run: cargo test --test integration crate_io_archive_builds_and_versions_without_git -- --ignored
+
+  nix-flake:
+    # Build and test under the nix sandbox so packaging-environment bugs
+    # surface before a release / nixpkgs maintainer hits them. See #2624 for
+    # the canonical example: a unit test that depends on the process CWD
+    # being inside a git repo, which fails in the sandbox where source is
+    # extracted from a tarball without `.git`.
+    #
+    # Runs `nix flake check`, which exercises every check defined in
+    # flake.nix — in particular `worktrunk-tests`, which runs `cargo test`
+    # with default features (lib + bins + integration + doctests; the
+    # `shell-integration-tests` feature is intentionally off). Cold builds
+    # take ~10-15 min without a binary cache; nightly cadence absorbs it.
+    needs: gate
+    if: needs.gate.outputs.run == 'true'
+    runs-on: ubuntu-24.04
+    steps:
+    - name: 📂 Checkout code
+      uses: actions/checkout@v7
+
+    - name: Install Nix
+      uses: cachix/install-nix-action@v31
+      with:
+        extra_nix_config: |
+          experimental-features = nix-command flakes
+          access-tokens = github.com=${{ secrets.GITHUB_TOKEN }}
+
+    - name: nix flake check
+      run: nix flake check --print-build-logs --keep-going
+
+  create-issue-on-nightly-failure:
+    needs:
+      - feature-powerset
+      - full-tests
+      - release-target
+      - check-unused-dependencies
+      - minimal-versions
+      - nix-flake
+      - crate-build
+    if: always() && contains(needs.*.result, 'failure') && github.repository_owner == 'max-sixty' && github.event_name == 'schedule'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      issues: write
+    steps:
+    - name: 📂 Checkout code
+      uses: actions/checkout@v7
+
+    - uses: JasonEtco/create-an-issue@v2
+      env:
+        # Use TEND_BOT_TOKEN for a consistent bot identity (per
+        # .github/CLAUDE.md) and so any future issue-triage automation can
+        # cascade off issue creation — events from the default GITHUB_TOKEN
+        # don't trigger other workflows.
+        GITHUB_TOKEN: ${{ secrets.TEND_BOT_TOKEN }}
+        LINK: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+      with:
+        filename: .github/nightly-failure.md
+        update_existing: true
+        search_existing: open

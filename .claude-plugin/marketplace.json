@@ -1,0 +1,107 @@
+{
+  "name": "claude-power-kit",
+  "metadata": {
+    "description": "Curated community skills, plugins & MCPs for Claude Cowork and Code (excludes official Anthropic). Standalone: run build-standalone.sh once to populate ./plugins, then add this folder as a marketplace.",
+    "version": "0.1.0"
+  },
+  "owner": {
+    "name": "Harold"
+  },
+  "plugins": [
+    {
+      "name": "ai-research-skills",
+      "source": "./plugins/AI-Research-SKILLs-main",
+      "description": "A \u00b7 Research \u2014 idea to paper research skill suite."
+    },
+    {
+      "name": "academic-research-skills",
+      "source": "./plugins/academic-research-skills-main",
+      "description": "A \u00b7 Research \u2014 deep research + writing pipeline."
+    },
+    {
+      "name": "huggingface-skills",
+      "source": "./plugins/huggingface-skills-main",
+      "description": "A \u00b7 Research \u2014 dataset/model/eval tasks for AI/ML work."
+    },
+    {
+      "name": "understand-anything",
+      "source": "./plugins/Understand-Anything-main",
+      "description": "B \u00b7 Comprehension \u2014 turn any codebase/docs into an explorable knowledge graph."
+    },
+    {
+      "name": "socraticode",
+      "source": "./plugins/SocratiCode-main",
+      "description": "B \u00b7 Comprehension \u2014 semantic code search + dependency graph + context."
+    },
+    {
+      "name": "agentmemory",
+      "source": "./plugins/agentmemory-main/plugin",
+      "description": "B \u00b7 Memory \u2014 persistent cross-session memory (Pensyve overlaps; pick one)."
+    },
+    {
+      "name": "superpowers",
+      "source": "./plugins/superpowers-main",
+      "description": "C \u00b7 Discipline \u2014 dev methodology that auto-fires the right skill."
+    },
+    {
+      "name": "brooks-lint",
+      "source": "./plugins/brooks-lint-main",
+      "description": "C \u00b7 Discipline \u2014 code review grounded in 12 engineering classics."
+    },
+    {
+      "name": "andrej-karpathy-skills",
+      "source": "./plugins/andrej-karpathy-skills-main",
+      "description": "C \u00b7 Discipline \u2014 house rules against common LLM-coding pitfalls."
+    },
+    {
+      "name": "ponytail",
+      "source": "./plugins/ponytail-main",
+      "description": "C \u00b7 Discipline \u2014 terse 'one line, it works' coding style."
+    },
+    {
+      "name": "mattpocock-skills",
+      "source": "./plugins/mattpocock-skills-main",
+      "description": "C \u00b7 Discipline \u2014 TypeScript engineering skills."
+    },
+    {
+      "name": "caveman",
+      "source": "./plugins/caveman-main",
+      "description": "C \u00b7 Discipline (Code) \u2014 ~65% fewer output tokens, same answers."
+    },
+    {
+      "name": "ecc",
+      "source": "./plugins/ECC-main",
+      "description": "D \u00b7 Framework \u2014 the big agent-harness OS; mesh-hub for the other frameworks."
+    },
+    {
+      "name": "impeccable",
+      "source": "./plugins/impeccable-main",
+      "description": "E \u00b7 Visual \u2014 design guidance + anti-slop detectors + live browser iteration."
+    },
+    {
+      "name": "modern-web-guidance",
+      "source": "./plugins/modern-web-guidance-main",
+      "description": "E \u00b7 Visual \u2014 modern web best-practices + compatibility (Google Chrome team)."
+    },
+    {
+      "name": "chrome-devtools-mcp",
+      "source": "./plugins/chrome-devtools-mcp-main",
+      "description": "F \u00b7 Browser \u2014 control & inspect a live Chrome."
+    },
+    {
+      "name": "last30days-skill",
+      "source": "./plugins/last30days-skill-main",
+      "description": "G \u00b7 Content \u2014 last-30-days trends across Reddit/HN/X/YouTube/Polymarket."
+    },
+    {
+      "name": "worktrunk",
+      "source": "./plugins/worktrunk-main/plugins/worktrunk",
+      "description": "H \u00b7 Utilities (Code) \u2014 parallel git worktrees for side-by-side agents."
+    },
+    {
+      "name": "apify-agent-skills",
+      "source": "./plugins/agent-skills-main",
+      "description": "G \u00b7 Content (Code, optional) \u2014 hosted web scraping via Apify Actors (needs Apify token)."
+    }
+  ]
+}

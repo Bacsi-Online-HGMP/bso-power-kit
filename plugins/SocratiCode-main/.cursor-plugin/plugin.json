@@ -1,0 +1,22 @@
+{
+  "name": "socraticode",
+  "version": "1.8.18",
+  "description": "Codebase intelligence: semantic search workflows, dependency graph analysis, and context artifact exploration for SocratiCode",
+  "author": {
+    "name": "Giancarlo Erra",
+    "email": "giancarlo@altaire.com"
+  },
+  "homepage": "https://github.com/giancarloerra/socraticode",
+  "repository": "https://github.com/giancarloerra/socraticode",
+  "license": "AGPL-3.0-only",
+  "keywords": [
+    "codebase",
+    "search",
+    "indexing",
+    "dependency-graph",
+    "semantic-search",
+    "mcp"
+  ],
+  "skills": "./skills/",
+  "mcpServers": "./.mcp.json"
+}

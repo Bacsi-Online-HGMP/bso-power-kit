@@ -1,0 +1,888 @@
+"""Studio service — artifact creation, status, rename, delete.
+
+Centralizes:
+- Artifact type validation
+- Constants code resolution (audio/video/slide/infographic/flashcard formats)
+- Source ID resolution (fetch all when none provided)
+- Mind map two-step pattern (generate → save)
+- Result validation (artifact_id exists)
+"""
+
+from __future__ import annotations
+
+import json
+import logging
+from collections.abc import Mapping, Sequence
+from typing import TYPE_CHECKING, Any
+
+from notebooklm_tools.core import constants
+from notebooklm_tools.core.errors import ResourceExhaustedError, RPCDriftError, RPCError
+
+from ._compat import TypedDict
+from .errors import ServiceError, ValidationError
+
+if TYPE_CHECKING:
+    from notebooklm_tools.core.client import NotebookLMClient
+
+logger = logging.getLogger(__name__)
+
+# ---------- Constants ----------
+
+VALID_ARTIFACT_TYPES = frozenset(
+    [
+        "audio",
+        "video",
+        "infographic",
+        "slide_deck",
+        "report",
+        "flashcards",
+        "quiz",
+        "data_table",
+        "mind_map",
+    ]
+)
+
+_CINEMATIC_FOCUS_HINT = (
+    "Use --focus to pass creative direction (visual style, narrative, audience)."
+)
+
+# Video formats with no visual style picker — full creative direction goes through --focus
+_STYLELESS_VIDEO_FORMATS = frozenset({"cinematic", "short"})
+
+
+# ---------- TypedDicts ----------
+
+
+class CreateResult(TypedDict):
+    """Result of creating a studio artifact."""
+
+    artifact_type: str
+    artifact_id: str
+    status: str
+    message: str
+
+
+class MindMapResult(TypedDict):
+    """Result of creating a mind map."""
+
+    artifact_type: str
+    artifact_id: str
+    title: str
+    root_name: str
+    children_count: int
+    mind_map_json: str
+    message: str
+
+
+class ArtifactInfo(TypedDict, total=False):
+    """Studio artifact info."""
+
+    artifact_id: str
+    type: str
+    title: str
+    status: str
+    error_reason: str | None
+    created_at: str | None
+    url: str | None
+    custom_instructions: str | None
+    visual_style_prompt: str | None
+    source_ids: list[str]
+    audio_url: str | None
+    video_url: str | None
+    infographic_url: str | None
+    slide_deck_url: str | None
+    report_content: str | None
+    flashcard_count: int | None
+    duration_seconds: int | None
+
+
+class StatusResult(TypedDict):
+    """Result of polling studio status."""
+
+    artifacts: list[ArtifactInfo]
+    total: int
+    completed: int
+    in_progress: int
+
+
+class RenameResult(TypedDict):
+    """Result of renaming an artifact."""
+
+    artifact_id: str
+    new_title: str
+
+
+class ReviseResult(TypedDict):
+    """Result of revising a slide deck."""
+
+    artifact_type: str  # "slide_deck"
+    artifact_id: str  # new artifact UUID
+    original_artifact_id: str  # original artifact UUID
+    status: str  # "in_progress"
+    message: str
+
+
+class SlideInstruction(TypedDict):
+    """Instruction for revising a single slide."""
+
+    slide: int
+    instruction: str
+
+
+# ---------- Validation ----------
+
+
+def validate_artifact_type(artifact_type: str) -> None:
+    """Validate that artifact_type is one of the supported types.
+
+    Raises:
+        ValidationError: If artifact_type is invalid
+    """
+    if artifact_type not in VALID_ARTIFACT_TYPES:
+        raise ValidationError(
+            f"Unknown artifact type '{artifact_type}'. "
+            f"Valid types: {', '.join(sorted(VALID_ARTIFACT_TYPES))}",
+        )
+
+
+def resolve_code(mapper: constants.CodeMapper, name: str, label: str) -> int:
+    """Resolve a human-readable name to an integer code via constants.CodeMapper.
+
+    Args:
+        mapper: The CodeMapper instance (e.g. constants.AUDIO_FORMATS)
+        name: The name to resolve (e.g. "deep_dive")
+        label: Human-readable label for error messages (e.g. "audio format")
+
+    Returns:
+        The integer code
+
+    Raises:
+        ValidationError: If name is unknown
+    """
+    try:
+        return mapper.get_code(name)
+    except ValueError:
+        raise ValidationError(
+            f"Unknown {label} '{name}'. Valid options: {', '.join(mapper.names)}",
+        ) from None
+
+
+def _resolve_source_ids(
+    client: NotebookLMClient,
+    notebook_id: str,
+    source_ids: list[str] | None,
+) -> list[str]:
+    """Resolve source IDs: use provided list or fetch all from notebook.
+
+    Raises:
+        ServiceError: If no sources found in notebook
+    """
+    if source_ids:
+        return source_ids
+
+    try:
+        sources = client.get_notebook_sources_with_types(notebook_id)
+        ids = [s["id"] for s in sources if s.get("id")]
+    except Exception as e:
+        raise ServiceError(
+            f"Failed to fetch sources: {e}",
+            user_message="Could not retrieve notebook sources.",
+        ) from e
+
+    if not ids:
+        raise ValidationError(
+            "No sources found in notebook. Add sources before creating artifacts.",
+        )
+    return ids
+
+
+def _validate_result(result: Mapping[str, object] | None, artifact_type: str) -> str:
+    """Validate creation result has an artifact_id.
+
+    Returns:
+        The artifact_id
+
+    Raises:
+        ServiceError: If result is missing or has no artifact_id
+    """
+    artifact_id = result.get("artifact_id") if result else None
+    if not isinstance(artifact_id, str) or not artifact_id:
+        raise ServiceError(
+            f"NotebookLM rejected {artifact_type.replace('_', ' ')} creation — no artifact returned.",
+            user_message=(
+                f"NotebookLM rejected {artifact_type.replace('_', ' ')} creation. "
+                f"Try again later or create from NotebookLM UI for diagnosis."
+            ),
+        )
+    return artifact_id
+
+
+def _normalize_video_style(
+    *,
+    video_format: str,
+    visual_style: str,
+    video_style_prompt: str,
+) -> tuple[str, str]:
+    """Validate and normalize video style options before code resolution."""
+    prompt = video_style_prompt.strip()
+    style = visual_style
+
+    if video_format in _STYLELESS_VIDEO_FORMATS:
+        if style != "auto_select":
+            raise ValidationError(
+                f"video format '{video_format}' does not support --style. {_CINEMATIC_FOCUS_HINT}"
+            )
+        if prompt:
+            raise ValidationError(
+                f"video format '{video_format}' does not support --style-prompt. {_CINEMATIC_FOCUS_HINT}"
+            )
+        return style, ""
+
+    if prompt:
+        if style == "auto_select":
+            style = "custom"
+        elif style != "custom":
+            raise ValidationError(
+                "--style-prompt can only be used with --style custom "
+                "(or omit --style to auto-select custom)",
+            )
+    elif style == "custom":
+        raise ValidationError("--style custom requires --style-prompt")
+
+    return style, prompt
+
+
+# ---------- Creation ----------
+
+
+def create_artifact(
+    client: NotebookLMClient,
+    notebook_id: str,
+    artifact_type: str,
+    *,
+    source_ids: list[str] | None = None,
+    # Audio
+    audio_format: str = "deep_dive",
+    audio_length: str = "default",
+    # Video
+    video_format: str = "explainer",
+    visual_style: str = "auto_select",
+    video_style_prompt: str = "",
+    # Infographic
+    orientation: str = "landscape",
+    detail_level: str = "standard",
+    infographic_style: str = "auto_select",
+    # Slide deck
+    slide_format: str = "detailed_deck",
+    slide_length: str = "default",
+    # Report
+    report_format: str = "Briefing Doc",
+    custom_prompt: str = "",
+    # Quiz
+    question_count: int = 2,
+    # Shared
+    difficulty: str = "medium",
+    language: str = "en",
+    focus_prompt: str = "",
+    # Mind map
+    title: str = "Mind Map",
+    # Data table
+    description: str = "",
+) -> CreateResult | MindMapResult:
+    """Create a studio artifact. Unified function for all 9 artifact types.
+
+    Handles type validation, code resolution, source ID resolution,
+    and result validation. Mind maps use the two-step generate→save pattern.
+
+    Returns:
+        CreateResult for standard artifacts, MindMapResult for mind maps
+
+    Raises:
+        ValidationError: Invalid artifact type, format, or missing required fields
+        ServiceError: API call failures
+    """
+    validate_artifact_type(artifact_type)
+
+    if artifact_type == "video":
+        # Cinematic/Short formats: --style-prompt maps to custom_instructions (same as
+        # --focus), not visual_style_prompt. Remap before validation so the user can use either flag.
+        if video_format in _STYLELESS_VIDEO_FORMATS and video_style_prompt.strip():
+            if focus_prompt:
+                focus_prompt = f"{focus_prompt}\n\n{video_style_prompt}"
+            else:
+                focus_prompt = video_style_prompt
+            video_style_prompt = ""
+
+        _normalize_video_style(
+            video_format=video_format,
+            visual_style=visual_style,
+            video_style_prompt=video_style_prompt,
+        )
+
+    resolved_ids = _resolve_source_ids(client, notebook_id, source_ids)
+
+    try:
+        if artifact_type == "mind_map":
+            return _create_mind_map(client, notebook_id, resolved_ids, title)
+
+        result = _dispatch_create(
+            client,
+            notebook_id,
+            artifact_type,
+            resolved_ids,
+            audio_format=audio_format,
+            audio_length=audio_length,
+            video_format=video_format,
+            visual_style=visual_style,
+            video_style_prompt=video_style_prompt,
+            orientation=orientation,
+            detail_level=detail_level,
+            infographic_style=infographic_style,
+            slide_format=slide_format,
+            slide_length=slide_length,
+            report_format=report_format,
+            custom_prompt=custom_prompt,
+            question_count=question_count,
+            difficulty=difficulty,
+            language=language,
+            focus_prompt=focus_prompt,
+            description=description,
+        )
+
+        artifact_id = _validate_result(result, artifact_type)
+        assert result is not None
+        return CreateResult(
+            artifact_type=artifact_type,
+            artifact_id=artifact_id,
+            status=result.get("status", "in_progress"),
+            message=f"{artifact_type.replace('_', ' ').title()} generation started.",
+        )
+
+    except (ValidationError, ServiceError):
+        raise
+    except ResourceExhaustedError as e:
+        raise ServiceError(
+            f"Failed to create {artifact_type}: {e}",
+            user_message=(
+                f"Rate limited — {e}. "
+                f"Wait a few minutes before retrying {artifact_type.replace('_', ' ')} creation."
+            ),
+            hint="NotebookLM limits how frequently artifacts can be created. "
+            "Wait 1-2 minutes and try again.",
+        ) from e
+    except RPCError as e:
+        short_detail = e.detail_type.rsplit(".", 1)[-1] if e.detail_type else ""
+        formatted_error = (
+            f"Google API error code {e.error_code} ({short_detail})" if short_detail else str(e)
+        )
+        raise ServiceError(
+            f"Failed to create {artifact_type}: {formatted_error}",
+            user_message=f"Could not create {artifact_type.replace('_', ' ')} — {formatted_error}.",
+        ) from e
+    except RPCDriftError as e:
+        # Let the actionable NOTEBOOKLM_RPC_OVERRIDES guidance reach the user verbatim.
+        raise ServiceError(message=str(e), user_message=str(e)) from e
+    except Exception as e:
+        logger.error("Studio create failed: %s: %s", type(e).__name__, e, exc_info=True)
+        raise ServiceError(
+            f"Failed to create {artifact_type}: {e}",
+            user_message=f"Could not create {artifact_type.replace('_', ' ')}.",
+        ) from e
+
+
+def _dispatch_create(
+    client: NotebookLMClient,
+    notebook_id: str,
+    artifact_type: str,
+    source_ids: list[str],
+    **kwargs: Any,
+) -> dict[str, Any] | None:
+    """Dispatch to the appropriate client method based on artifact_type."""
+
+    if artifact_type == "audio":
+        format_code = resolve_code(constants.AUDIO_FORMATS, kwargs["audio_format"], "audio format")
+        length_code = resolve_code(constants.AUDIO_LENGTHS, kwargs["audio_length"], "audio length")
+        return client.create_audio_overview(
+            notebook_id,
+            source_ids=source_ids,
+            format_code=format_code,
+            length_code=length_code,
+            language=kwargs["language"],
+            focus_prompt=kwargs["focus_prompt"],
+        )
+
+    elif artifact_type == "video":
+        visual_style, style_prompt = _normalize_video_style(
+            video_format=kwargs["video_format"],
+            visual_style=kwargs["visual_style"],
+            video_style_prompt=kwargs.get("video_style_prompt", ""),
+        )
+        format_code = resolve_code(constants.VIDEO_FORMATS, kwargs["video_format"], "video format")
+        style_code = (
+            resolve_code(constants.VIDEO_STYLES, visual_style, "visual style")
+            if visual_style != "custom"
+            else None
+        )
+        return client.create_video_overview(
+            notebook_id,
+            source_ids=source_ids,
+            format_code=format_code,
+            visual_style_code=style_code,
+            visual_style_prompt=style_prompt,
+            language=kwargs["language"],
+            focus_prompt=kwargs["focus_prompt"],
+        )
+
+    elif artifact_type == "infographic":
+        orientation_code = resolve_code(
+            constants.INFOGRAPHIC_ORIENTATIONS, kwargs["orientation"], "orientation"
+        )
+        detail_code = resolve_code(
+            constants.INFOGRAPHIC_DETAILS, kwargs["detail_level"], "detail level"
+        )
+        style_code = resolve_code(
+            constants.INFOGRAPHIC_STYLES,
+            kwargs.get("infographic_style", "auto_select"),
+            "visual style",
+        )
+        return client.create_infographic(
+            notebook_id,
+            source_ids=source_ids,
+            orientation_code=orientation_code,
+            detail_level_code=detail_code,
+            visual_style_code=style_code,
+            language=kwargs["language"],
+            focus_prompt=kwargs["focus_prompt"],
+        )
+
+    elif artifact_type == "slide_deck":
+        format_code = resolve_code(
+            constants.SLIDE_DECK_FORMATS, kwargs["slide_format"], "slide format"
+        )
+        length_code = resolve_code(
+            constants.SLIDE_DECK_LENGTHS, kwargs["slide_length"], "slide length"
+        )
+        return client.create_slide_deck(
+            notebook_id,
+            source_ids=source_ids,
+            format_code=format_code,
+            length_code=length_code,
+            language=kwargs["language"],
+            focus_prompt=kwargs["focus_prompt"],
+        )
+
+    elif artifact_type == "report":
+        return client.create_report(
+            notebook_id,
+            source_ids=source_ids,
+            report_format=kwargs["report_format"],
+            custom_prompt=kwargs["custom_prompt"],
+            language=kwargs["language"],
+        )
+
+    elif artifact_type == "flashcards":
+        difficulty_code = resolve_code(
+            constants.FLASHCARD_DIFFICULTIES, kwargs["difficulty"], "difficulty"
+        )
+        return client.create_flashcards(
+            notebook_id,
+            source_ids=source_ids,
+            difficulty_code=difficulty_code,
+            focus_prompt=kwargs["focus_prompt"],
+        )
+
+    elif artifact_type == "quiz":
+        difficulty_code = resolve_code(
+            constants.FLASHCARD_DIFFICULTIES, kwargs["difficulty"], "difficulty"
+        )
+        return client.create_quiz(
+            notebook_id,
+            source_ids=source_ids,
+            question_count=kwargs["question_count"],
+            difficulty=difficulty_code,
+            focus_prompt=kwargs["focus_prompt"],
+        )
+
+    elif artifact_type == "data_table":
+        if not kwargs["description"]:
+            raise ValidationError("description is required for data_table")
+        return client.create_data_table(
+            notebook_id,
+            source_ids=source_ids,
+            description=kwargs["description"],
+            language=kwargs["language"],
+        )
+
+    # validate_artifact_type() above raises ValidationError for unknown types,
+    # so execution never reaches this point. Make the exhaustiveness explicit.
+    raise ValidationError(f"Unhandled artifact type: {artifact_type}")
+
+
+def _create_mind_map(
+    client: NotebookLMClient,
+    notebook_id: str,
+    source_ids: list[str],
+    title: str,
+) -> MindMapResult:
+    """Two-step mind map creation: generate → save.
+
+    Raises:
+        ServiceError: If generation or save fails
+    """
+    gen_result = client.generate_mind_map(
+        notebook_id=notebook_id,
+        source_ids=source_ids,
+    )
+    if not gen_result or not gen_result.get("mind_map_json"):
+        raise ServiceError(
+            "Failed to generate mind map — no JSON returned",
+            user_message="Mind map generation failed.",
+        )
+
+    save_result = client.save_mind_map(
+        notebook_id,
+        gen_result["mind_map_json"],
+        source_ids=source_ids,
+        title=title,
+    )
+    if not save_result:
+        raise ServiceError(
+            "Failed to save mind map",
+            user_message="Mind map could not be saved.",
+        )
+
+    # Parse mind map JSON for metadata
+    try:
+        mind_map_data = json.loads(save_result.get("mind_map_json", "{}"))
+        root_name = mind_map_data.get("name", "Unknown")
+        children_count = len(mind_map_data.get("children", []))
+    except json.JSONDecodeError:
+        root_name = "Unknown"
+        children_count = 0
+
+    return MindMapResult(
+        artifact_type="mind_map",
+        artifact_id=save_result["mind_map_id"],
+        title=save_result.get("title", title),
+        root_name=root_name,
+        children_count=children_count,
+        mind_map_json=save_result.get("mind_map_json", "{}"),
+        message="Mind map created successfully.",
+    )
+
+
+# ---------- Status ----------
+
+
+def _derive_error_reason(raw_artifact: dict[str, Any]) -> str | None:
+    """Best-effort failure reason for a studio artifact.
+
+    The raw NotebookLM gRPC payload does not include an error string, so:
+    1. Prefer a real key if a future API version provides one.
+    2. Otherwise, synthesize a reason for genuinely failed artifacts so callers
+       get a non-null signal instead of silence (the bug: failed artifacts
+       returned every field null, leaving agents to poll forever).
+    Non-failed artifacts return None.
+    """
+    for key in ("error_reason", "failure_reason", "failure_code", "error"):
+        value = raw_artifact.get(key)
+        if isinstance(value, str) and value:
+            return value
+
+    if raw_artifact.get("status") == "failed":
+        return (
+            "generation_failed: NotebookLM rejected or aborted this artifact "
+            "(no media produced). Common causes: expired auth, capacity/"
+            "rate-limit, or an unsupported prompt. Re-check auth (nlm login) "
+            "and retry."
+        )
+    return None
+
+
+def get_studio_status(
+    client: NotebookLMClient,
+    notebook_id: str,
+) -> StatusResult:
+    """Get status of all studio artifacts including mind maps.
+
+    Returns:
+        StatusResult with artifact list and summary counts
+
+    Raises:
+        ServiceError: If polling fails
+    """
+    try:
+        raw_artifacts = client.poll_studio_status(notebook_id)
+    except Exception as e:
+        raise ServiceError(
+            f"Failed to poll studio status: {e}",
+            user_message="Could not retrieve studio status.",
+        ) from e
+
+    artifacts: list[ArtifactInfo] = []
+    for raw_artifact in raw_artifacts:
+        artifact: ArtifactInfo = {
+            "type": raw_artifact.get("type")
+            if isinstance(raw_artifact.get("type"), str)
+            else "unknown",
+            "title": raw_artifact.get("title")
+            if isinstance(raw_artifact.get("title"), str)
+            else "",
+            "status": raw_artifact.get("status")
+            if isinstance(raw_artifact.get("status"), str)
+            else "unknown",
+            # Surface a failure signal so callers stop polling and act. The raw
+            # gRPC payload carries no error string, so prefer any real key if a
+            # future API exposes one, else synthesize a reason for failed
+            # artifacts (status 4 with no media URL = backend rejected the job).
+            "error_reason": _derive_error_reason(raw_artifact),
+            "created_at": raw_artifact.get("created_at")
+            if isinstance(raw_artifact.get("created_at"), str)
+            or raw_artifact.get("created_at") is None
+            else str(raw_artifact.get("created_at")),
+            "custom_instructions": raw_artifact.get("custom_instructions")
+            if isinstance(raw_artifact.get("custom_instructions"), str)
+            or raw_artifact.get("custom_instructions") is None
+            else str(raw_artifact.get("custom_instructions")),
+            "visual_style_prompt": raw_artifact.get("visual_style_prompt")
+            if isinstance(raw_artifact.get("visual_style_prompt"), str)
+            or raw_artifact.get("visual_style_prompt") is None
+            else str(raw_artifact.get("visual_style_prompt")),
+            "audio_url": raw_artifact.get("audio_url")
+            if isinstance(raw_artifact.get("audio_url"), str)
+            or raw_artifact.get("audio_url") is None
+            else None,
+            "video_url": raw_artifact.get("video_url")
+            if isinstance(raw_artifact.get("video_url"), str)
+            or raw_artifact.get("video_url") is None
+            else None,
+            "infographic_url": raw_artifact.get("infographic_url")
+            if isinstance(raw_artifact.get("infographic_url"), str)
+            or raw_artifact.get("infographic_url") is None
+            else None,
+            "slide_deck_url": raw_artifact.get("slide_deck_url")
+            if isinstance(raw_artifact.get("slide_deck_url"), str)
+            or raw_artifact.get("slide_deck_url") is None
+            else None,
+            "report_content": raw_artifact.get("report_content")
+            if isinstance(raw_artifact.get("report_content"), str)
+            or raw_artifact.get("report_content") is None
+            else None,
+            "flashcard_count": raw_artifact.get("flashcard_count")
+            if isinstance(raw_artifact.get("flashcard_count"), int)
+            or raw_artifact.get("flashcard_count") is None
+            else None,
+            "duration_seconds": raw_artifact.get("duration_seconds")
+            if isinstance(raw_artifact.get("duration_seconds"), int)
+            or raw_artifact.get("duration_seconds") is None
+            else None,
+            "source_ids": [
+                sid for sid in (raw_artifact.get("source_ids") or []) if isinstance(sid, str)
+            ],
+        }
+        artifact_id = raw_artifact.get("artifact_id")
+        if isinstance(artifact_id, str):
+            artifact["artifact_id"] = artifact_id
+        artifacts.append(artifact)
+
+    # Also fetch mind maps
+    try:
+        mind_maps = client.list_mind_maps(notebook_id)
+        for mm in mind_maps:
+            mind_map_id = mm.get("mind_map_id")
+            if not isinstance(mind_map_id, str):
+                continue
+            mind_map_title = mm.get("title")
+            mind_map_created_at = mm.get("created_at")
+            artifacts.append(
+                {
+                    "artifact_id": mind_map_id,
+                    "type": "mind_map",
+                    "title": mind_map_title if isinstance(mind_map_title, str) else "Mind Map",
+                    "status": "completed",
+                    "created_at": mind_map_created_at
+                    if isinstance(mind_map_created_at, str) or mind_map_created_at is None
+                    else str(mind_map_created_at),
+                }
+            )
+    except Exception:
+        pass  # Mind maps are optional
+
+    completed = [a for a in artifacts if a.get("status") == "completed"]
+    in_progress = [a for a in artifacts if a.get("status") == "in_progress"]
+
+    return StatusResult(
+        artifacts=artifacts,
+        total=len(artifacts),
+        completed=len(completed),
+        in_progress=len(in_progress),
+    )
+
+
+# ---------- Rename ----------
+
+
+def rename_artifact(
+    client: NotebookLMClient,
+    artifact_id: str,
+    new_title: str,
+) -> RenameResult:
+    """Rename a studio artifact.
+
+    Returns:
+        RenameResult with artifact_id and new_title
+
+    Raises:
+        ValidationError: If parameters are missing
+        ServiceError: If rename fails
+    """
+    if not artifact_id:
+        raise ValidationError("artifact_id is required for rename")
+    if not new_title:
+        raise ValidationError("new_title is required for rename")
+
+    try:
+        success = client.rename_studio_artifact(artifact_id, new_title)
+        if not success:
+            raise ServiceError(
+                f"Rename returned falsy for artifact {artifact_id}",
+                user_message="Failed to rename artifact.",
+            )
+        return RenameResult(artifact_id=artifact_id, new_title=new_title)
+    except (ValidationError, ServiceError):
+        raise
+    except Exception as e:
+        raise ServiceError(
+            f"Failed to rename artifact: {e}",
+            user_message="Could not rename artifact.",
+        ) from e
+
+
+# ---------- Delete ----------
+
+
+def delete_artifact(
+    client: NotebookLMClient,
+    artifact_id: str,
+    notebook_id: str,
+) -> None:
+    """Delete a studio artifact permanently.
+
+    Raises:
+        ServiceError: If deletion fails
+    """
+    try:
+        result = client.delete_studio_artifact(artifact_id, notebook_id=notebook_id)
+        if not result:
+            raise ServiceError(
+                f"Delete returned falsy for artifact {artifact_id}",
+                user_message="Failed to delete artifact.",
+            )
+    except ServiceError:
+        raise
+    except Exception as e:
+        raise ServiceError(
+            f"Failed to delete artifact: {e}",
+            user_message="Could not delete artifact.",
+        ) from e
+
+
+# ---------- Revise ----------
+
+
+def revise_artifact(
+    client: NotebookLMClient,
+    artifact_id: str,
+    slide_instructions: Sequence[SlideInstruction],
+) -> ReviseResult:
+    """Revise a slide deck with per-slide instructions.
+
+    Creates a NEW artifact — the original is not modified.
+
+    Args:
+        client: NotebookLM client
+        artifact_id: UUID of the existing slide deck
+        slide_instructions: List of dicts with 'slide' (1-based) and 'instruction' keys
+            e.g. [{"slide": 1, "instruction": "Make the title larger"}]
+
+    Returns:
+        ReviseResult with new artifact details
+
+    Raises:
+        ValidationError: If inputs are invalid
+        ServiceError: If API call fails
+    """
+    if not artifact_id:
+        raise ValidationError("artifact_id is required")
+    if not slide_instructions:
+        raise ValidationError("slide_instructions must not be empty")
+
+    # Validate and convert 1-based slide numbers to 0-based
+    converted: list[tuple[int, str]] = []
+    for item in slide_instructions:
+        slide_num = item.get("slide")
+        instruction = item.get("instruction", "")
+        if not isinstance(slide_num, int) or slide_num < 1:
+            raise ValidationError(
+                f"Slide numbers must be integers >= 1 (got {slide_num!r}). "
+                f"Slide numbers are 1-based (slide 1 = first slide)."
+            )
+        if not instruction:
+            raise ValidationError(f"Instruction for slide {slide_num} must not be empty.")
+        converted.append((slide_num - 1, instruction))  # 0-based for API
+
+    try:
+        result = client.revise_slide_deck(
+            artifact_id=artifact_id,
+            slide_instructions=converted,
+        )
+    except RPCError as e:
+        short_detail = e.detail_type.rsplit(".", 1)[-1] if e.detail_type else ""
+        formatted_error = (
+            f"Google API error code {e.error_code} ({short_detail})" if short_detail else str(e)
+        )
+        if e.error_code == 8:
+            hint = (
+                "NotebookLM limits how frequently artifacts can be revised. "
+                "Wait 1-2 minutes and try again."
+            )
+        elif e.error_code == 7:
+            hint = (
+                "Verify the artifact_id points to a completed slide deck in an editable "
+                "notebook you own. NotebookLM rejects revisions for view-only/shared decks."
+            )
+        else:
+            hint = (
+                "Verify the artifact_id points to a completed slide deck and retry. "
+                "If it still fails, NotebookLM is rejecting the revision request."
+            )
+        raise ServiceError(
+            f"Failed to revise slide deck: {formatted_error}",
+            user_message=f"Failed to revise slide deck — {formatted_error}.",
+            hint=hint,
+        ) from e
+    except RPCDriftError as e:
+        # Let the actionable NOTEBOOKLM_RPC_OVERRIDES guidance reach the user verbatim.
+        raise ServiceError(message=str(e), user_message=str(e)) from e
+    except Exception as e:
+        raise ServiceError(
+            f"Failed to revise slide deck: {e}",
+            user_message="Could not revise slide deck.",
+        ) from e
+
+    if not result or not result.get("artifact_id"):
+        raise ServiceError(
+            "NotebookLM rejected slide deck revision — no artifact returned.",
+            user_message=(
+                "NotebookLM rejected slide deck revision. "
+                "Verify the artifact_id is a valid slide deck and try again."
+            ),
+        )
+
+    return ReviseResult(
+        artifact_type="slide_deck",
+        artifact_id=result["artifact_id"],
+        original_artifact_id=artifact_id,
+        status=result.get("status", "in_progress"),
+        message="Slide deck revision started. A new artifact will be created.",
+    )

@@ -1,0 +1,73 @@
+name: Version Alignment Check
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'pyproject.toml'
+      - 'src/notebooklm_tools/__init__.py'
+      - 'src/notebooklm_tools/data/SKILL.md'
+      - 'src/notebooklm_tools/data/AGENTS_SECTION.md'
+      - 'desktop-extension/manifest.json'
+  pull_request:
+    branches: [main]
+  release:
+    types: [published]
+
+jobs:
+  check-versions:
+    name: Verify version alignment
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
+
+      - name: Extract and compare versions
+        run: |
+          set -euo pipefail
+
+          # Extract version from each file
+          TOML_VERSION=$(grep '^version = ' pyproject.toml | head -1 | sed 's/version = "\(.*\)"/\1/')
+          INIT_VERSION=$(grep '^__version__' src/notebooklm_tools/__init__.py | head -1 | sed 's/__version__ = "\(.*\)"/\1/')
+          SKILL_VERSION=$(grep '^version:' src/notebooklm_tools/data/SKILL.md | head -1 | sed 's/version: "\(.*\)"/\1/')
+          AGENTS_VERSION=$(grep 'nlm-version:' src/notebooklm_tools/data/AGENTS_SECTION.md | head -1 | sed 's/.*nlm-version: \(.*\) -->/\1/')
+          MANIFEST_VERSION=$(grep '"version"' desktop-extension/manifest.json | head -1 | sed 's/.*"version": "\(.*\)".*/\1/')
+
+          echo "📦 pyproject.toml:        $TOML_VERSION"
+          echo "🐍 __init__.py:           $INIT_VERSION"
+          echo "🤖 SKILL.md:              $SKILL_VERSION"
+          echo "📄 AGENTS_SECTION.md:     $AGENTS_VERSION"
+          echo "🧩 manifest.json:         $MANIFEST_VERSION"
+
+          FAILED=0
+
+          for PAIR in \
+            "__init__.py:$INIT_VERSION" \
+            "SKILL.md:$SKILL_VERSION" \
+            "AGENTS_SECTION.md:$AGENTS_VERSION" \
+            "manifest.json:$MANIFEST_VERSION"; do
+            FILE="${PAIR%%:*}"
+            VER="${PAIR#*:}"
+            if [ "$TOML_VERSION" != "$VER" ]; then
+              echo ""
+              echo "❌ MISMATCH: pyproject.toml ($TOML_VERSION) ≠ $FILE ($VER)"
+              FAILED=1
+            fi
+          done
+
+          if [ "$FAILED" -eq 1 ]; then
+            echo ""
+            echo "🛑 Version alignment check FAILED."
+            echo "   All files must declare the same version before releasing."
+            echo ""
+            echo "   Files to update:"
+            echo "     - pyproject.toml                              → version = \"X.Y.Z\""
+            echo "     - src/notebooklm_tools/__init__.py            → __version__ = \"X.Y.Z\""
+            echo "     - src/notebooklm_tools/data/SKILL.md          → version: \"X.Y.Z\""
+            echo "     - src/notebooklm_tools/data/AGENTS_SECTION.md → <!-- nlm-version: X.Y.Z -->"
+            echo "     - desktop-extension/manifest.json             → \"version\": \"X.Y.Z\""
+            exit 1
+          fi
+
+          echo ""
+          echo "✅ All 5 version files aligned at $TOML_VERSION"

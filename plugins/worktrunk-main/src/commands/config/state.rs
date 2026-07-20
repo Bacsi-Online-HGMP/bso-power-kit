@@ -1,0 +1,1817 @@
+//! State management commands.
+//!
+//! Commands for getting, setting, and clearing stored state. State lives in
+//! git config (under `worktrunk.*`) and in the `.git/wt/` directory tree.
+//!
+//! # `state get` ↔ `state clear` parity
+//!
+//! The aggregate `wt config state get` (`handle_state_show`) MUST surface every
+//! category that the aggregate `wt config state clear` (`handle_state_clear_all`)
+//! removes. A user should never be able to run `state clear` and have something
+//! disappear that `state get` never mentioned.
+//!
+//! Categories split into two buckets by whether they are regenerable:
+//!
+//! **Authoritative** (hand-authored or override state; lost permanently if
+//! cleared). `state clear` prompts before removing these unless `--yes`:
+//!
+//! - Default branch override (git config `worktrunk.default_branch.*`)
+//! - Branch markers (git config `worktrunk.state.<branch>.marker`)
+//! - Vars (git config `worktrunk.state.<branch>.vars.*`)
+//! - Logs (`.git/wt/logs/`)
+//! - Trash (`.git/wt/trash/`)
+//!
+//! **Regenerable caches** — also surfaced by `wt config state cache get`
+//! (`handle_cache_get`) and dropped by `wt config state cache clear`
+//! (`handle_cache_clear`), which needs no prompt:
+//!
+//! - Previous branch (git config `worktrunk.history`)
+//! - CI status cache (`.git/wt/cache/ci-status/`, plus the PR-number width
+//!   ratchet in `.git/wt/cache/pr-number/`)
+//! - Summary cache (`.git/wt/cache/summary/`)
+//! - Git commands cache (`.git/wt/cache/{merge-tree-conflicts,is-ancestor,picker-preview,…}/`)
+//!   — one user-facing category covering every SHA-keyed disk cache, even
+//!   when implementation lives in different modules (`sha_cache` for parsed
+//!   results, `commands::picker::preview_cache` for rendered previews)
+//! - Hints (git config `worktrunk.hints.*`)
+//!
+//! Each category has a `clear_*_reported` helper that clears it and prints its
+//! message; `handle_state_clear_all` composes all of them and
+//! `handle_cache_clear` composes the regenerable subset, so the two entry
+//! points report identically. The `ci-status`, `hints`, and `previous-branch`
+//! subcommands are `hide`-deprecated in favour of `cache` but still resolve to
+//! the same state.
+//!
+//! When adding a new category, update BOTH `handle_state_show` and
+//! `handle_state_clear_all` (and `handle_cache_*` if it is a cache), plus the
+//! `after_long_help` blocks for `state get`, `state clear`, and `state cache`
+//! in `src/cli/config.rs`, in the same change.
+//!
+//! # Reading vs resolving
+//!
+//! The aggregate `state get` is pure inspection: it reports stored values
+//! read-only and never detects, fetches, or persists (`default-branch` via
+//! `cached_default_branch()`, CI via `CachedCiStatus::list_all`). A per-key
+//! `get` for a *derived* value resolves it and caches the result
+//! (`default-branch get` -> `default_branch()`, `ci-status get` ->
+//! `PrStatus::detect`); for stored-only values (`previous-branch`, `marker`)
+//! it is a plain read. So a `clear` followed by the aggregate `get` shows the
+//! value gone, while the per-key `get` would re-resolve it.
+//!
+//! # Log layout invariant
+//!
+//! Inside `wt_logs_dir()`, top-level *files* are shared logs (`commands.jsonl*`,
+//! `internal-*.log`, `trace.log`, `trace.jsonl`, `subprocess.log`,
+//! `diagnostic.md`) and top-level *directories* are per-branch log trees
+//! (`{branch}/{source|internal}/{hook-type}/{name}.log`).
+//! Categorization
+//! relies on this file-vs-directory distinction: new top-level shared entries
+//! must remain files. If a future category needs multiple files, it should live
+//! under a single reserved subdirectory rather than adding sibling top-level dirs.
+
+use std::fmt::Write as _;
+use std::path::{Path, PathBuf};
+
+use crate::commands::picker::preview_cache;
+use anyhow::Context;
+use color_print::cformat;
+use path_slash::PathExt as _;
+use worktrunk::git::{BranchRef, Repository, sha_cache};
+use worktrunk::path::format_path_for_display;
+use worktrunk::styling::{
+    eprintln, format_heading, format_with_gutter, info_message, println, success_message,
+    warning_message,
+};
+
+use crate::cli::{OutputFormat, SwitchFormat};
+use crate::output::prompt::{PromptResponse, prompt_yes_no_preview};
+use worktrunk::utils::epoch_now;
+
+use super::super::list::ci_status::{CachedCiStatus, CiBranchName, MaxPrNumber};
+use crate::display::format_relative_time_short;
+use crate::help_pager::show_help_in_pager;
+use crate::summary::CachedSummary;
+
+// ==================== Log Management ====================
+
+/// Top-level files created by `-vv` under `wt_logs_dir()`.
+const DIAGNOSTIC_FILES: &[&str] = &[
+    "trace.log",
+    "trace.jsonl",
+    "subprocess.log",
+    "diagnostic.md",
+];
+
+/// Whether a top-level file is a diagnostic log.
+///
+/// Covers the fixed `-vv` files and repo-wide internal-operation logs
+/// (`internal-{op}.log`, e.g. `internal-trash-sweep.log`) — both are
+/// branch-agnostic shared files, distinct from the per-branch hook-output
+/// subtrees and the `commands.jsonl` audit log.
+fn is_diagnostic_file(name: &str) -> bool {
+    DIAGNOSTIC_FILES.contains(&name) || (name.starts_with("internal-") && name.ends_with(".log"))
+}
+
+/// Truncate a string for a display cell, counting by Unicode scalars.
+///
+/// Returns a shortened copy ending in `"..."` when the input exceeds
+/// `max_chars` scalars, otherwise the input verbatim. Byte-slicing
+/// (`&s[..n]`) panics on a multi-byte boundary — this helper is safe
+/// for any UTF-8 string.
+fn truncate_display(s: &str, max_chars: usize) -> String {
+    if s.chars().count() <= max_chars {
+        return s.to_string();
+    }
+    let truncated: String = s.chars().take(max_chars.saturating_sub(3)).collect();
+    format!("{truncated}...")
+}
+
+/// Check if a top-level file belongs to the command audit log
+/// (`commands.jsonl`, rotated to `commands.jsonl.old`).
+///
+/// Matched by exact name, not a `.jsonl` suffix: `trace.jsonl` is a diagnostic
+/// file (see [`DIAGNOSTIC_FILES`]), not part of the audit log.
+fn is_command_log_file(name: &str) -> bool {
+    name == "commands.jsonl" || name == "commands.jsonl.old"
+}
+
+/// A hook-output log file discovered by walking the per-branch subtree.
+struct HookOutputEntry {
+    /// Path relative to `wt_logs_dir()`, used for display and JSON output.
+    /// Always forward-slashed for cross-platform stability.
+    relative_display: String,
+    metadata: std::fs::Metadata,
+}
+
+/// Walk every per-branch log file under `log_dir`.
+///
+/// Top-level *directories* are treated as branch dirs; each is walked
+/// recursively for `.log` files. Non-directory top-level entries are ignored
+/// (those belong to command audit / diagnostic categories).
+///
+/// Returns entries sorted by modification time (newest first), with name as a
+/// tie-breaker for stable ordering.
+fn walk_hook_output_files(log_dir: &Path) -> anyhow::Result<Vec<HookOutputEntry>> {
+    let mut out = Vec::new();
+    if !log_dir.exists() {
+        return Ok(out);
+    }
+    for entry in std::fs::read_dir(log_dir)? {
+        let entry = entry?;
+        if !entry.file_type()?.is_dir() {
+            continue;
+        }
+        walk_branch_dir(log_dir, &entry.path(), &mut out)?;
+    }
+    sort_hook_entries(&mut out);
+    Ok(out)
+}
+
+/// Recursively collect `.log` files under a branch directory.
+fn walk_branch_dir(
+    log_dir: &Path,
+    current: &Path,
+    out: &mut Vec<HookOutputEntry>,
+) -> anyhow::Result<()> {
+    for entry in std::fs::read_dir(current)? {
+        let entry = entry?;
+        let file_type = entry.file_type()?;
+        let path = entry.path();
+        if file_type.is_dir() {
+            walk_branch_dir(log_dir, &path, out)?;
+        } else if file_type.is_file() && path.extension().and_then(|e| e.to_str()) == Some("log") {
+            let metadata = entry.metadata()?;
+            let relative = path.strip_prefix(log_dir).unwrap_or(&path);
+            out.push(HookOutputEntry {
+                relative_display: relative.to_slash_lossy().into_owned(),
+                metadata,
+            });
+        }
+    }
+    Ok(())
+}
+
+/// Sort hook entries by mtime (newest first), then by relative path for stability.
+fn sort_hook_entries(entries: &mut [HookOutputEntry]) {
+    entries.sort_by(|a, b| {
+        let a_time = a.metadata.modified().ok();
+        let b_time = b.metadata.modified().ok();
+        b_time
+            .cmp(&a_time)
+            .then_with(|| a.relative_display.cmp(&b.relative_display))
+    });
+}
+
+/// A top-level entry staged under `wt_trash_dir()`.
+///
+/// Worktree removal renames directories into `.git/wt/trash/<name>-<timestamp>`
+/// and a background `rm -rf` cleans them up; entries still present here are
+/// awaiting (or escaped) that sweep.
+struct TrashEntry {
+    /// Filename, e.g. `myproject.feature-1234567890`.
+    name: String,
+    /// Absolute path, forward-slashed for cross-platform display.
+    path: String,
+    metadata: std::fs::Metadata,
+}
+
+/// List top-level entries under `wt_trash_dir()`.
+///
+/// Only the first level matters — each entry is one staged worktree (a
+/// directory) or a stray file. Sorted by mtime (newest first) with name as
+/// tie-breaker. Individual dirent/metadata failures are skipped: `state get`
+/// is a read-only inspector and can race with the background `rm -rf`, so a
+/// partial listing is more useful than a hard failure.
+fn list_trash_entries(repo: &Repository) -> anyhow::Result<Vec<TrashEntry>> {
+    let trash_dir = repo.wt_trash_dir();
+    if !trash_dir.exists() {
+        return Ok(Vec::new());
+    }
+
+    let mut out: Vec<TrashEntry> = std::fs::read_dir(&trash_dir)?
+        .filter_map(|entry| entry.ok())
+        .filter_map(|entry| {
+            let metadata = entry.metadata().ok()?;
+            Some(TrashEntry {
+                name: entry.file_name().to_string_lossy().into_owned(),
+                path: entry.path().to_slash_lossy().into_owned(),
+                metadata,
+            })
+        })
+        .collect();
+    out.sort_by(|a, b| {
+        let a_time = a.metadata.modified().ok();
+        let b_time = b.metadata.modified().ok();
+        b_time.cmp(&a_time).then_with(|| a.name.cmp(&b.name))
+    });
+    Ok(out)
+}
+
+/// Clear stale entries from the wt/trash directory.
+///
+/// Worktree removal renames directories into `.git/wt/trash/` for instant UX,
+/// then deletes them in a background process. If the background `rm -rf` fails
+/// or is killed, entries accumulate. This cleans them up.
+fn clear_trash(repo: &Repository) -> anyhow::Result<usize> {
+    let trash_dir = repo.wt_trash_dir();
+
+    if !trash_dir.exists() {
+        return Ok(0);
+    }
+
+    let mut cleared = 0;
+    for entry in std::fs::read_dir(&trash_dir)? {
+        let entry = entry?;
+        let path = entry.path();
+        if path.is_dir() {
+            std::fs::remove_dir_all(&path)?;
+        } else {
+            std::fs::remove_file(&path)?;
+        }
+        cleared += 1;
+    }
+
+    // Remove the trash directory itself if empty
+    if std::fs::read_dir(&trash_dir)?.next().is_none() {
+        let _ = std::fs::remove_dir(&trash_dir);
+    }
+
+    Ok(cleared)
+}
+
+/// Count `.log` files recursively under `dir`.
+///
+/// Used by `clear_logs` to report how many logs are being swept when it
+/// removes a whole branch subtree with `remove_dir_all`.
+fn count_log_files_recursive(dir: &Path) -> anyhow::Result<usize> {
+    let mut count = 0;
+    for entry in std::fs::read_dir(dir)? {
+        let entry = entry?;
+        let file_type = entry.file_type()?;
+        let path = entry.path();
+        if file_type.is_dir() {
+            count += count_log_files_recursive(&path)?;
+        } else if file_type.is_file() && path.extension().and_then(|e| e.to_str()) == Some("log") {
+            count += 1;
+        }
+    }
+    Ok(count)
+}
+
+/// Clear all log files from the wt/logs directory.
+///
+/// Walks the two layers of log storage:
+///
+/// 1. **Top-level files**: `commands.jsonl*`, `trace.log`, `trace.jsonl`, `subprocess.log`, `diagnostic.md`.
+///    Also sweeps any legacy flat `.log` files left over from the pre-nested
+///    layout so the transition is self-healing (no explicit migrator).
+/// 2. **Top-level directories**: per-branch log trees — counted recursively
+///    and removed with `remove_dir_all`.
+fn clear_logs(repo: &Repository) -> anyhow::Result<usize> {
+    let log_dir = repo.wt_logs_dir();
+
+    if !log_dir.exists() {
+        return Ok(0);
+    }
+
+    let mut cleared = 0;
+    for entry in std::fs::read_dir(&log_dir)? {
+        let entry = entry?;
+        let path = entry.path();
+        let file_type = entry.file_type()?;
+        if file_type.is_dir() {
+            // Branch subtree — count logs within, then nuke the whole subtree.
+            cleared += count_log_files_recursive(&path)?;
+            std::fs::remove_dir_all(&path)?;
+        } else if file_type.is_file() {
+            let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
+                continue;
+            };
+            // Known shared files + legacy flat `.log` files from the old layout.
+            if is_command_log_file(name) || is_diagnostic_file(name) || name.ends_with(".log") {
+                std::fs::remove_file(&path)?;
+                cleared += 1;
+            }
+        }
+    }
+
+    // Remove the directory if empty
+    if std::fs::read_dir(&log_dir)?.next().is_none() {
+        let _ = std::fs::remove_dir(&log_dir);
+    }
+
+    Ok(cleared)
+}
+
+/// A row ready to render in the log listing table or emit as JSON.
+struct LogRow {
+    /// Path relative to `wt_logs_dir()` (forward-slashed), for compact display.
+    /// For top-level shared files this is just the filename.
+    display_name: String,
+    /// Absolute path (forward-slashed), for consumers that want to open the file directly.
+    path: String,
+    size: u64,
+    modified_at: Option<u64>,
+    /// Structured hook-output segments — present for entries under branch subtrees,
+    /// absent for shared top-level files (command log, diagnostic).
+    hook_structure: Option<HookStructure>,
+}
+
+/// Structured view of a hook-output log path. Values are the on-disk (sanitized)
+/// names, so filters like `select(.source == "user")` work without splitting
+/// the relative path on `/`.
+struct HookStructure {
+    /// First path segment — sanitized branch directory (may include a short
+    /// collision-avoidance hash).
+    branch: String,
+    /// `"user"`, `"project"`, or `"internal"`.
+    source: String,
+    /// Hook type (`post-start`, `post-switch`, …) for user/project hooks;
+    /// `None` for internal operations.
+    hook_type: Option<String>,
+    /// Sanitized hook name for user/project hooks; internal op name
+    /// (e.g., `"remove"`) for internal entries.
+    name: String,
+}
+
+impl LogRow {
+    fn to_json(&self) -> serde_json::Value {
+        let mut obj = serde_json::json!({
+            "file": self.display_name,
+            "path": self.path,
+            "size": self.size,
+            "modified_at": self.modified_at,
+        });
+        if let Some(s) = &self.hook_structure {
+            let map = obj.as_object_mut().expect("json! produced an object");
+            map.insert("branch".into(), s.branch.clone().into());
+            map.insert("source".into(), s.source.clone().into());
+            map.insert(
+                "hook_type".into(),
+                s.hook_type
+                    .clone()
+                    .map_or(serde_json::Value::Null, Into::into),
+            );
+            map.insert("name".into(), s.name.clone().into());
+        }
+        obj
+    }
+}
+
+/// Build a `LogRow` for a top-level shared file.
+fn top_level_log_row(entry: &std::fs::DirEntry) -> LogRow {
+    let name = entry.file_name().to_string_lossy().into_owned();
+    let path = entry.path().to_slash_lossy().into_owned();
+    let meta = entry.metadata().ok();
+    let size = meta.as_ref().map(|m| m.len()).unwrap_or(0);
+    let modified_at = meta
+        .and_then(|m| m.modified().ok())
+        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|d| d.as_secs());
+    LogRow {
+        display_name: name,
+        path,
+        size,
+        modified_at,
+        hook_structure: None,
+    }
+}
+
+/// Build a `LogRow` for a hook-output file (display uses relative path).
+fn hook_output_log_row(log_dir: &Path, entry: &HookOutputEntry) -> LogRow {
+    let size = entry.metadata.len();
+    let modified_at = entry
+        .metadata
+        .modified()
+        .ok()
+        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|d| d.as_secs());
+    let path = log_dir
+        .join(&entry.relative_display)
+        .to_slash_lossy()
+        .into_owned();
+    LogRow {
+        display_name: entry.relative_display.clone(),
+        path,
+        size,
+        modified_at,
+        hook_structure: parse_hook_structure(&entry.relative_display),
+    }
+}
+
+/// Parse a hook-output relative path into its structured segments.
+///
+/// Expected layouts (enforced by the writers in `commands/process.rs`):
+/// - `{branch}/{source}/{hook_type}/{name}.log` — user/project hooks
+/// - `{branch}/internal/{op}.log` — internal operations
+///
+/// Unknown layouts (legacy flat logs, future shapes) return `None` so the
+/// entry still appears in the listing, just without structured filtering.
+fn parse_hook_structure(relative: &str) -> Option<HookStructure> {
+    let parts: Vec<&str> = relative.split('/').collect();
+    match parts.as_slice() {
+        [branch, "internal", op_log] => Some(HookStructure {
+            branch: (*branch).to_string(),
+            source: "internal".to_string(),
+            hook_type: None,
+            name: op_log.strip_suffix(".log").unwrap_or(op_log).to_string(),
+        }),
+        [branch, source, hook_type, name_log] => Some(HookStructure {
+            branch: (*branch).to_string(),
+            source: (*source).to_string(),
+            hook_type: Some((*hook_type).to_string()),
+            name: name_log
+                .strip_suffix(".log")
+                .unwrap_or(name_log)
+                .to_string(),
+        }),
+        _ => None,
+    }
+}
+
+/// Read and partition log files into command log, hook output, and diagnostic categories.
+///
+/// Top-level files are classified by name; directories under `log_dir` are
+/// walked as branch subtrees to collect hook output. All three categories are
+/// sorted by modification time (newest first) with a stable tie-breaker.
+fn partition_log_files_json(
+    repo: &Repository,
+) -> anyhow::Result<(
+    Vec<serde_json::Value>,
+    Vec<serde_json::Value>,
+    Vec<serde_json::Value>,
+)> {
+    let log_dir = repo.wt_logs_dir();
+    if !log_dir.exists() {
+        return Ok((vec![], vec![], vec![]));
+    }
+
+    let mut cmd_rows = Vec::new();
+    let mut diagnostic_rows = Vec::new();
+    for entry in std::fs::read_dir(&log_dir)? {
+        let entry = entry?;
+        if !entry.file_type()?.is_file() {
+            continue;
+        }
+        let name = entry.file_name().to_string_lossy().into_owned();
+        if is_command_log_file(&name) {
+            cmd_rows.push(top_level_log_row(&entry));
+        } else if is_diagnostic_file(&name) {
+            diagnostic_rows.push(top_level_log_row(&entry));
+        }
+    }
+    sort_log_rows(&mut cmd_rows);
+    sort_log_rows(&mut diagnostic_rows);
+
+    // Hook output comes from walking the branch subtrees.
+    let hook_rows: Vec<LogRow> = walk_hook_output_files(&log_dir)?
+        .iter()
+        .map(|e| hook_output_log_row(&log_dir, e))
+        .collect();
+
+    Ok((
+        cmd_rows.iter().map(LogRow::to_json).collect(),
+        hook_rows.iter().map(LogRow::to_json).collect(),
+        diagnostic_rows.iter().map(LogRow::to_json).collect(),
+    ))
+}
+
+/// Sort log rows by mtime (newest first), stable on display name.
+fn sort_log_rows(rows: &mut [LogRow]) {
+    rows.sort_by(|a, b| {
+        b.modified_at
+            .cmp(&a.modified_at)
+            .then_with(|| a.display_name.cmp(&b.display_name))
+    });
+}
+
+/// Render a table of log rows, or "(none)" if empty.
+fn render_log_table(out: &mut String, rows: &[LogRow]) -> std::fmt::Result {
+    if rows.is_empty() {
+        writeln!(out, "{}", format_with_gutter("(none)", None))?;
+        return Ok(());
+    }
+
+    let table_rows: Vec<Vec<String>> = rows
+        .iter()
+        .map(|row| {
+            let size_str = if row.size < 1024 {
+                format!("{}B", row.size)
+            } else {
+                format!("{}K", row.size / 1024)
+            };
+            let age = row
+                .modified_at
+                .map(|secs| format_relative_time_short(secs as i64))
+                .unwrap_or_else(|| "?".to_string());
+            vec![row.display_name.clone(), size_str, age]
+        })
+        .collect();
+
+    let rendered = crate::md_help::render_data_table(&["File", "Size", "Age"], &table_rows);
+    writeln!(out, "{}", rendered.trim_end())?;
+
+    Ok(())
+}
+
+/// Render a section heading and the `(none)` placeholder if the log dir is missing.
+fn render_log_heading(out: &mut String, log_dir: &Path, heading: &str) -> std::fmt::Result {
+    let log_dir_display = format_path_for_display(log_dir);
+    writeln!(
+        out,
+        "{}",
+        format_heading(heading, Some(&format!("@ {log_dir_display}")))
+    )
+}
+
+/// Render the command-log or diagnostic section: top-level files filtered by name.
+fn render_top_level_section(
+    out: &mut String,
+    repo: &Repository,
+    heading: &str,
+    filter: impl Fn(&str) -> bool,
+) -> anyhow::Result<()> {
+    let log_dir = repo.wt_logs_dir();
+    render_log_heading(out, &log_dir, heading)?;
+    if !log_dir.exists() {
+        writeln!(out, "{}", format_with_gutter("(none)", None))?;
+        return Ok(());
+    }
+
+    let mut rows: Vec<LogRow> = std::fs::read_dir(&log_dir)?
+        .filter_map(|e| e.ok())
+        .filter(|e| e.file_type().map(|ft| ft.is_file()).unwrap_or(false))
+        .filter(|e| filter(&e.file_name().to_string_lossy()))
+        .map(|e| top_level_log_row(&e))
+        .collect();
+    sort_log_rows(&mut rows);
+    render_log_table(out, &rows)?;
+    Ok(())
+}
+
+/// Render the hook-output section: walk per-branch subtrees.
+fn render_hook_output_section(out: &mut String, repo: &Repository) -> anyhow::Result<()> {
+    let log_dir = repo.wt_logs_dir();
+    render_log_heading(out, &log_dir, "HOOK OUTPUT")?;
+    if !log_dir.exists() {
+        writeln!(out, "{}", format_with_gutter("(none)", None))?;
+        return Ok(());
+    }
+
+    let rows: Vec<LogRow> = walk_hook_output_files(&log_dir)?
+        .iter()
+        .map(|e| hook_output_log_row(&log_dir, e))
+        .collect();
+    render_log_table(out, &rows)?;
+    Ok(())
+}
+
+/// Render all three log sections (command log, hook output, diagnostic) into a buffer.
+pub(super) fn render_all_log_sections(out: &mut String, repo: &Repository) -> anyhow::Result<()> {
+    render_top_level_section(out, repo, "COMMAND LOG", is_command_log_file)?;
+    writeln!(out)?;
+    render_hook_output_section(out, repo)?;
+    writeln!(out)?;
+    render_top_level_section(out, repo, "DIAGNOSTIC", is_diagnostic_file)?;
+    Ok(())
+}
+
+// ==================== Logs List Command ====================
+
+/// List all log files — command log, hook output, and diagnostics.
+///
+/// JSON output emits three arrays keyed by category, each entry carrying
+/// `file`, `path`, `size`, and `modified_at`. Hook-output entries additionally
+/// expose `branch`, `source`, `hook_type`, and `name` so consumers can filter
+/// with `jq` rather than parsing the slash-delimited `file` path.
+pub fn handle_logs_list(format: SwitchFormat) -> anyhow::Result<()> {
+    let repo = Repository::current()?;
+
+    if format == SwitchFormat::Json {
+        let (command_log, hook_output, diagnostic) = partition_log_files_json(&repo)?;
+        let output = serde_json::json!({
+            "command_log": command_log,
+            "hook_output": hook_output,
+            "diagnostic": diagnostic,
+        });
+        println!("{}", serde_json::to_string_pretty(&output)?);
+        return Ok(());
+    }
+
+    let mut out = String::new();
+    render_all_log_sections(&mut out, &repo)?;
+
+    show_help_in_pager(&out, true);
+    Ok(())
+}
+
+/// `wt config state logs profile [FILE]` — summarize where a `-vv` run spent its
+/// time, from the records in `trace.jsonl` (or a given file / stdin).
+pub fn handle_logs_profile(file: Option<PathBuf>, format: SwitchFormat) -> anyhow::Result<()> {
+    let (input, source) = match file {
+        Some(ref p) if p.as_os_str() == "-" => {
+            let mut buf = String::new();
+            std::io::Read::read_to_string(&mut std::io::stdin(), &mut buf)
+                .context("read trace from stdin")?;
+            (buf, "stdin".to_string())
+        }
+        Some(p) => {
+            let content = std::fs::read_to_string(&p)
+                .with_context(|| format!("Failed to read trace {}", format_path_for_display(&p)))?;
+            (content, format_path_for_display(&p).to_string())
+        }
+        None => {
+            let repo = Repository::current().map_err(|_| {
+                anyhow::anyhow!(cformat!(
+                    "Not inside a git repository, so there's no default <bold>.git/wt/logs/trace.jsonl</> to read; pass a trace path or <bold>-</> for stdin"
+                ))
+            })?;
+            let path = repo.wt_logs_dir().join("trace.jsonl");
+            let content = std::fs::read_to_string(&path).map_err(|_| {
+                anyhow::anyhow!(cformat!(
+                    "No trace at <bold>{}</>; run a command with <bold>-vv</> to capture one",
+                    format_path_for_display(&path)
+                ))
+            })?;
+            (content, format_path_for_display(&path).to_string())
+        }
+    };
+
+    let entries = worktrunk::trace::parse_lines(&input);
+    if entries.is_empty() {
+        anyhow::bail!(cformat!(
+            "No trace records in {source}; run a command with <bold>-vv</> to capture a trace"
+        ));
+    }
+
+    let profile = worktrunk::trace::Profile::from_entries(&entries);
+
+    if format == SwitchFormat::Json {
+        println!("{}", serde_json::to_string_pretty(&profile)?);
+    } else {
+        show_help_in_pager(&profile.render_text(&source), true);
+    }
+    Ok(())
+}
+
+// ==================== State Get/Set/Clear Commands ====================
+
+/// Handle the state get command
+pub fn handle_state_get(
+    key: &str,
+    branch: Option<String>,
+    format: SwitchFormat,
+) -> anyhow::Result<()> {
+    use super::super::list::ci_status::PrStatus;
+
+    let repo = Repository::current()?;
+
+    match key {
+        "default-branch" => {
+            let branch_name = repo.default_branch().ok_or_else(|| {
+                anyhow::anyhow!(cformat!(
+                    "Cannot determine default branch. To configure, run <bold>wt config state default-branch set BRANCH</>"
+                ))
+            })?;
+            println!("{branch_name}");
+        }
+        "previous-branch" => match repo.switch_previous() {
+            Some(prev) => println!("{prev}"),
+            None => println!(""),
+        },
+        "marker" => {
+            let branch_name = match branch {
+                Some(b) => b,
+                None => repo.require_current_branch("get marker for current branch")?,
+            };
+            if format == SwitchFormat::Json {
+                // Read raw config to get both marker and set_at
+                let config_key = format!("worktrunk.state.{branch_name}.marker");
+                let raw = repo
+                    .config_value(&config_key)
+                    .ok()
+                    .flatten()
+                    .filter(|s| !s.is_empty());
+                let output = match raw {
+                    Some(json_str) => {
+                        let parsed: serde_json::Value =
+                            serde_json::from_str(&json_str).unwrap_or_default();
+                        serde_json::json!({
+                            "branch": branch_name,
+                            "marker": parsed.get("marker").and_then(|v| v.as_str()),
+                            "set_at": parsed.get("set_at").and_then(|v| v.as_u64()),
+                        })
+                    }
+                    None => serde_json::json!(null),
+                };
+                println!("{}", serde_json::to_string_pretty(&output)?);
+            } else {
+                match repo.branch_marker(&branch_name) {
+                    Some(marker) => println!("{marker}"),
+                    None => println!(""),
+                }
+            }
+        }
+        "ci-status" => {
+            let branch_name = match branch {
+                Some(b) => b,
+                None => repo.require_current_branch("get ci-status for current branch")?,
+            };
+
+            // Ask git for both qualified forms in one call so the remote/local
+            // determination and the HEAD SHA come from the same ref. A local
+            // branch literally named `origin/foo` can shadow a remote-tracking
+            // ref of the same name — preferring refs/heads/ matches git's
+            // default disambiguation (see `BranchRef::full_ref`).
+            let local_ref = format!("refs/heads/{branch_name}");
+            let remote_ref = format!("refs/remotes/{branch_name}");
+            let output = repo
+                .run_command(&[
+                    "for-each-ref",
+                    "--format=%(refname)%00%(objectname)",
+                    &local_ref,
+                    &remote_ref,
+                ])
+                .context("list refs for ci-status")?;
+
+            let mut local_sha: Option<&str> = None;
+            let mut remote_sha: Option<&str> = None;
+            for (ref_name, sha) in output.lines().filter_map(|l| l.split_once('\0')) {
+                if ref_name == local_ref {
+                    local_sha = Some(sha);
+                } else if ref_name == remote_ref {
+                    remote_sha = Some(sha);
+                }
+            }
+
+            let branch_ref = match (local_sha, remote_sha) {
+                (Some(sha), _) => BranchRef::local_branch(&branch_name, sha),
+                (None, Some(sha)) => BranchRef::remote_branch(&branch_name, sha),
+                (None, None) => {
+                    return Err(worktrunk::git::GitError::BranchNotFound {
+                        branch: branch_name,
+                        show_create_hint: true,
+                        last_fetch_ago: None,
+                        pr_mr_platform: repo.detect_ref_type(),
+                    }
+                    .into());
+                }
+            };
+
+            let pr_status = CiBranchName::from_branch_ref(&branch_ref)
+                .and_then(|ci_branch| PrStatus::detect(&repo, &ci_branch, &branch_ref.commit_sha));
+
+            if format == SwitchFormat::Json {
+                let ci_provider_override = repo.forge_platform_override();
+                let output = pr_status.as_ref().map(|pr| {
+                    super::super::list::json_output::JsonCi::from_pr_status(
+                        pr,
+                        ci_provider_override.as_deref(),
+                    )
+                });
+                println!("{}", serde_json::to_string_pretty(&output)?);
+            } else {
+                let ci_status = pr_status
+                    .map_or(super::super::list::ci_status::CiStatus::NoCI, |s| {
+                        s.ci_status
+                    });
+                let status_str: &'static str = ci_status.into();
+                println!("{status_str}");
+            }
+        }
+        _ => {
+            anyhow::bail!(
+                "Unknown key: {key}. Valid keys: default-branch, previous-branch, ci-status, marker, logs"
+            )
+        }
+    }
+
+    Ok(())
+}
+
+/// Handle the state set command
+pub fn handle_state_set(key: &str, value: String, branch: Option<String>) -> anyhow::Result<()> {
+    let repo = Repository::current()?;
+
+    match key {
+        "default-branch" => {
+            // Warn if the branch doesn't exist locally
+            if !repo.branch(&value).exists_locally()? {
+                eprintln!(
+                    "{}",
+                    warning_message(cformat!("Branch <bold>{value}</> does not exist locally"))
+                );
+            }
+            repo.set_default_branch(&value)?;
+            eprintln!(
+                "{}",
+                success_message(cformat!("Set default branch to <bold>{value}</>"))
+            );
+        }
+        "previous-branch" => {
+            repo.set_switch_previous(Some(&value))?;
+            eprintln!(
+                "{}",
+                success_message(cformat!("Set previous branch to <bold>{value}</>"))
+            );
+        }
+        "marker" => {
+            let branch_name = match branch {
+                Some(b) => b,
+                None => repo.require_current_branch("set marker for current branch")?,
+            };
+
+            // Store as JSON with timestamp
+            let now = epoch_now();
+            let json = serde_json::json!({
+                "marker": value,
+                "set_at": now
+            });
+
+            let config_key = format!("worktrunk.state.{branch_name}.marker");
+            repo.set_config(&config_key, &json.to_string())?;
+
+            eprintln!(
+                "{}",
+                success_message(cformat!(
+                    "Set marker for <bold>{branch_name}</> to <bold>{value}</>"
+                ))
+            );
+        }
+        _ => {
+            anyhow::bail!("Unknown key: {key}. Valid keys: default-branch, previous-branch, marker")
+        }
+    }
+
+    Ok(())
+}
+
+/// Handle the state clear command
+pub fn handle_state_clear(key: &str, branch: Option<String>, all: bool) -> anyhow::Result<()> {
+    let repo = Repository::current()?;
+
+    match key {
+        "default-branch" => {
+            if repo.clear_default_branch_cache()? {
+                eprintln!("{}", success_message("Cleared default branch cache"));
+            } else {
+                eprintln!("{}", info_message("No default branch cache to clear"));
+            }
+        }
+        "previous-branch" => {
+            if repo.unset_config("worktrunk.history")? {
+                eprintln!("{}", success_message("Cleared previous branch"));
+            } else {
+                eprintln!("{}", info_message("No previous branch to clear"));
+            }
+        }
+        "ci-status" => {
+            if all {
+                // Same category as `state clear` / `cache clear` — includes
+                // the PR-number width ratchet.
+                if !clear_ci_status_reported(&repo)? {
+                    eprintln!("{}", info_message("No CI cache entries to clear"));
+                }
+            } else {
+                // Clear CI status for specific branch
+                let branch_name = match branch {
+                    Some(b) => b,
+                    None => repo.require_current_branch("clear ci-status for current branch")?,
+                };
+                if CachedCiStatus::clear_one(&repo, &branch_name)? {
+                    eprintln!(
+                        "{}",
+                        success_message(cformat!("Cleared CI cache for <bold>{branch_name}</>"))
+                    );
+                } else {
+                    eprintln!(
+                        "{}",
+                        info_message(cformat!("No CI cache for <bold>{branch_name}</>"))
+                    );
+                }
+            }
+        }
+        "marker" => {
+            if all {
+                let cleared_count = clear_all_markers(&repo)?;
+                if cleared_count == 0 {
+                    eprintln!("{}", info_message("No markers to clear"));
+                } else {
+                    eprintln!(
+                        "{}",
+                        success_message(cformat!(
+                            "Cleared <bold>{cleared_count}</> marker{}",
+                            if cleared_count == 1 { "" } else { "s" }
+                        ))
+                    );
+                }
+            } else {
+                let branch_name = match branch {
+                    Some(b) => b,
+                    None => repo.require_current_branch("clear marker for current branch")?,
+                };
+
+                let config_key = format!("worktrunk.state.{branch_name}.marker");
+                if repo.unset_config(&config_key)? {
+                    eprintln!(
+                        "{}",
+                        success_message(cformat!("Cleared marker for <bold>{branch_name}</>"))
+                    );
+                } else {
+                    eprintln!(
+                        "{}",
+                        info_message(cformat!("No marker set for <bold>{branch_name}</>"))
+                    );
+                }
+            }
+        }
+        "logs" => {
+            let cleared = clear_logs(&repo)?;
+            if cleared == 0 {
+                eprintln!("{}", info_message("No logs to clear"));
+            } else {
+                eprintln!(
+                    "{}",
+                    success_message(cformat!(
+                        "Cleared <bold>{cleared}</> log file{}",
+                        if cleared == 1 { "" } else { "s" }
+                    ))
+                );
+            }
+        }
+        _ => {
+            anyhow::bail!(
+                "Unknown key: {key}. Valid keys: default-branch, previous-branch, ci-status, marker, logs"
+            )
+        }
+    }
+
+    Ok(())
+}
+
+/// Handle the state clear all command
+pub fn handle_state_clear_all(yes: bool) -> anyhow::Result<()> {
+    let repo = Repository::current()?;
+
+    // `clear` removes hand-authored markers and vars, so confirm first unless
+    // `--yes`. The regenerable caches have their own no-prompt path
+    // (`wt config state cache clear`).
+    if !yes {
+        match prompt_yes_no_preview(
+            "Clear all stored state, including branch markers and vars?",
+            || {},
+        )? {
+            PromptResponse::Accepted => {}
+            PromptResponse::Declined => {
+                eprintln!("{}", info_message("Clear cancelled"));
+                return Ok(());
+            }
+        }
+    }
+
+    let mut cleared_any = false;
+    cleared_any |= clear_default_branch_reported(&repo)?;
+    cleared_any |= clear_previous_branch_reported(&repo)?;
+    cleared_any |= clear_markers_reported(&repo)?;
+    cleared_any |= clear_ci_status_reported(&repo)?;
+    cleared_any |= clear_summary_reported(&repo)?;
+    cleared_any |= clear_git_commands_reported(&repo)?;
+    cleared_any |= clear_vars_reported(&repo)?;
+    cleared_any |= clear_logs_reported(&repo)?;
+    cleared_any |= clear_hints_reported(&repo)?;
+    cleared_any |= clear_trash_reported(&repo)?;
+
+    if !cleared_any {
+        eprintln!("{}", info_message("No stored state to clear"));
+    }
+
+    Ok(())
+}
+
+/// Handle `wt config state cache clear`.
+///
+/// Drops every regenerable cache — the same categories `clear` removes minus
+/// the authoritative state (markers, vars, default-branch override). No
+/// confirmation prompt: clearing only forces recomputation. Re-shows one-time
+/// hints and forgets the `wt switch -` target; both repopulate on their own.
+pub fn handle_cache_clear() -> anyhow::Result<()> {
+    let repo = Repository::current()?;
+
+    let mut cleared_any = false;
+    cleared_any |= clear_previous_branch_reported(&repo)?;
+    cleared_any |= clear_ci_status_reported(&repo)?;
+    cleared_any |= clear_summary_reported(&repo)?;
+    cleared_any |= clear_git_commands_reported(&repo)?;
+    cleared_any |= clear_hints_reported(&repo)?;
+
+    if !cleared_any {
+        eprintln!("{}", info_message("No cache to clear"));
+    }
+
+    Ok(())
+}
+
+// ==================== Per-category clear + report ====================
+//
+// Each helper clears one category and prints its success message when it
+// removed anything, returning whether it did. `handle_state_clear_all`
+// composes all ten; `handle_cache_clear` composes the regenerable subset.
+// Co-locating the clear call with its message keeps the two entry points
+// reporting identically.
+
+fn clear_default_branch_reported(repo: &Repository) -> anyhow::Result<bool> {
+    if repo.clear_default_branch_cache()? {
+        eprintln!("{}", success_message("Cleared default branch cache"));
+        return Ok(true);
+    }
+    Ok(false)
+}
+
+fn clear_previous_branch_reported(repo: &Repository) -> anyhow::Result<bool> {
+    if repo.unset_config("worktrunk.history")? {
+        eprintln!("{}", success_message("Cleared previous branch"));
+        return Ok(true);
+    }
+    Ok(false)
+}
+
+fn clear_markers_reported(repo: &Repository) -> anyhow::Result<bool> {
+    let cleared = clear_all_markers(repo)?;
+    if cleared > 0 {
+        eprintln!(
+            "{}",
+            success_message(cformat!(
+                "Cleared <bold>{cleared}</> marker{}",
+                if cleared == 1 { "" } else { "s" }
+            ))
+        );
+        return Ok(true);
+    }
+    Ok(false)
+}
+
+fn clear_ci_status_reported(repo: &Repository) -> anyhow::Result<bool> {
+    // The PR-number width ratchet is part of the CI cache category — it is
+    // derived from the same fetches and re-learns on the next one.
+    let cleared = CachedCiStatus::clear_all(repo)? + MaxPrNumber::clear(repo)?;
+    if cleared > 0 {
+        eprintln!(
+            "{}",
+            success_message(cformat!(
+                "Cleared <bold>{cleared}</> CI cache entr{}",
+                if cleared == 1 { "y" } else { "ies" }
+            ))
+        );
+        return Ok(true);
+    }
+    Ok(false)
+}
+
+fn clear_summary_reported(repo: &Repository) -> anyhow::Result<bool> {
+    let cleared = CachedSummary::clear_all(repo)?;
+    if cleared > 0 {
+        eprintln!(
+            "{}",
+            success_message(cformat!(
+                "Cleared <bold>{cleared}</> summary cache entr{}",
+                if cleared == 1 { "y" } else { "ies" }
+            ))
+        );
+        return Ok(true);
+    }
+    Ok(false)
+}
+
+/// Clear all SHA-keyed git command caches: parsed results (merge-tree,
+/// ancestry, diff-stats) plus rendered picker previews (log, branch-diff,
+/// upstream-diff). Surfaced as one user-facing category — see the parity
+/// docstring at the top of this file.
+fn clear_git_commands_reported(repo: &Repository) -> anyhow::Result<bool> {
+    let cleared = sha_cache::clear_all(repo)? + preview_cache::clear_all(repo)?;
+    if cleared > 0 {
+        eprintln!(
+            "{}",
+            success_message(cformat!(
+                "Cleared <bold>{cleared}</> git commands cache entr{}",
+                if cleared == 1 { "y" } else { "ies" }
+            ))
+        );
+        return Ok(true);
+    }
+    Ok(false)
+}
+
+fn clear_vars_reported(repo: &Repository) -> anyhow::Result<bool> {
+    let cleared = clear_all_vars(repo)?;
+    if cleared > 0 {
+        eprintln!(
+            "{}",
+            success_message(cformat!(
+                "Cleared <bold>{cleared}</> variable{}",
+                if cleared == 1 { "" } else { "s" }
+            ))
+        );
+        return Ok(true);
+    }
+    Ok(false)
+}
+
+fn clear_logs_reported(repo: &Repository) -> anyhow::Result<bool> {
+    let cleared = clear_logs(repo)?;
+    if cleared > 0 {
+        eprintln!(
+            "{}",
+            success_message(cformat!(
+                "Cleared <bold>{cleared}</> log file{}",
+                if cleared == 1 { "" } else { "s" }
+            ))
+        );
+        return Ok(true);
+    }
+    Ok(false)
+}
+
+fn clear_hints_reported(repo: &Repository) -> anyhow::Result<bool> {
+    let cleared = repo.clear_all_hints()?;
+    if cleared > 0 {
+        eprintln!(
+            "{}",
+            success_message(cformat!(
+                "Cleared <bold>{cleared}</> hint{}",
+                if cleared == 1 { "" } else { "s" }
+            ))
+        );
+        return Ok(true);
+    }
+    Ok(false)
+}
+
+fn clear_trash_reported(repo: &Repository) -> anyhow::Result<bool> {
+    let cleared = clear_trash(repo)?;
+    if cleared > 0 {
+        eprintln!(
+            "{}",
+            success_message(cformat!(
+                "Cleared <bold>{cleared}</> trash entr{}",
+                if cleared == 1 { "y" } else { "ies" }
+            ))
+        );
+        return Ok(true);
+    }
+    Ok(false)
+}
+
+// ==================== State Show Commands ====================
+
+/// Handle the state get command (shows all state)
+pub fn handle_state_show(format: OutputFormat) -> anyhow::Result<()> {
+    let repo = Repository::current()?;
+
+    match format {
+        OutputFormat::Json => handle_state_show_json(&repo),
+        OutputFormat::Table => handle_state_show_table(&repo),
+    }
+}
+
+/// Output state as JSON
+fn handle_state_show_json(repo: &Repository) -> anyhow::Result<()> {
+    // Read-only: report the cached default branch without detecting/persisting
+    // (see handle_state_show_table).
+    let default_branch = repo.cached_default_branch();
+
+    // Get previous branch
+    let previous_branch = repo.switch_previous();
+
+    // Get markers
+    let markers: Vec<serde_json::Value> = all_markers(repo)
+        .into_iter()
+        .map(|m| {
+            serde_json::json!({
+                "branch": m.branch,
+                "marker": m.marker,
+                "set_at": if m.set_at > 0 { Some(m.set_at) } else { None }
+            })
+        })
+        .collect();
+
+    // Get CI status and summary caches (pre-sorted newest-first)
+    let ci_status = ci_status_json(repo);
+    let summaries = summaries_json(repo);
+
+    let (command_log, hook_output, diagnostic) = partition_log_files_json(repo)?;
+
+    // Get vars data (all branches) — collect into BTreeMap for sorted output
+    let all_vars: std::collections::BTreeMap<_, _> = repo.all_vars_entries().into_iter().collect();
+    let vars_data: Vec<serde_json::Value> = all_vars
+        .into_iter()
+        .flat_map(|(branch, entries)| {
+            entries.into_iter().map(move |(key, value)| {
+                serde_json::json!({
+                    "branch": branch,
+                    "key": key,
+                    "value": value
+                })
+            })
+        })
+        .collect();
+
+    // Get hints
+    let hints = repo.list_shown_hints();
+
+    // Get trash entries
+    let trash: Vec<serde_json::Value> = list_trash_entries(repo)?
+        .iter()
+        .map(|e| {
+            let modified_at = e
+                .metadata
+                .modified()
+                .ok()
+                .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                .map(|d| d.as_secs());
+            serde_json::json!({
+                "name": e.name,
+                "path": e.path,
+                "modified_at": modified_at,
+            })
+        })
+        .collect();
+
+    let output = serde_json::json!({
+        "default_branch": default_branch,
+        "previous_branch": previous_branch,
+        "markers": markers,
+        "ci_status": ci_status,
+        "max_pr_number": MaxPrNumber::read(repo),
+        "summaries": summaries,
+        "git_commands_cache": sha_cache::count_all(repo) + preview_cache::count_all(repo),
+        "vars": vars_data,
+        "command_log": command_log,
+        "hook_output": hook_output,
+        "diagnostic": diagnostic,
+        "hints": hints,
+        "trash": trash,
+    });
+
+    println!("{}", serde_json::to_string_pretty(&output)?);
+    Ok(())
+}
+
+/// Output state as human-readable table
+fn handle_state_show_table(repo: &Repository) -> anyhow::Result<()> {
+    // Build complete output as a string
+    let mut out = String::new();
+
+    // Show default branch cache. Read-only: this inspection must not detect
+    // or persist, or it would silently repopulate a just-cleared cache.
+    writeln!(out, "{}", format_heading("DEFAULT BRANCH", None))?;
+    match repo.cached_default_branch() {
+        Some(branch) => writeln!(out, "{}", format_with_gutter(&branch, None))?,
+        None => writeln!(out, "{}", format_with_gutter("(none)", None))?,
+    }
+    writeln!(out)?;
+
+    // Show previous branch (for `wt switch -`)
+    render_previous_branch_section(&mut out, repo)?;
+    writeln!(out)?;
+
+    // Show branch markers
+    writeln!(out, "{}", format_heading("BRANCH MARKERS", None))?;
+    let markers = all_markers(repo);
+    if markers.is_empty() {
+        writeln!(out, "{}", format_with_gutter("(none)", None))?;
+    } else {
+        let rows: Vec<Vec<String>> = markers
+            .iter()
+            .map(|entry| {
+                let age = format_relative_time_short(entry.set_at as i64);
+                vec![entry.branch.clone(), entry.marker.clone(), age]
+            })
+            .collect();
+        let rendered = crate::md_help::render_data_table(&["Branch", "Marker", "Age"], &rows);
+        writeln!(out, "{}", rendered.trim_end())?;
+    }
+    writeln!(out)?;
+
+    // Show vars data
+    writeln!(out, "{}", format_heading("VARS", None))?;
+    let all_vars: std::collections::BTreeMap<_, _> = repo.all_vars_entries().into_iter().collect();
+
+    if all_vars.is_empty() {
+        writeln!(out, "{}", format_with_gutter("(none)", None))?;
+    } else {
+        let headers = &["Branch", "Key", "Value"];
+        let mut rows: Vec<Vec<String>> = Vec::new();
+        for (branch, entries) in &all_vars {
+            for (key, value) in entries {
+                rows.push(vec![
+                    branch.to_string(),
+                    key.to_string(),
+                    truncate_display(value, 40),
+                ]);
+            }
+        }
+        let rendered = crate::md_help::render_data_table(headers, &rows);
+        writeln!(out, "{}", rendered.trim_end())?;
+    }
+    writeln!(out)?;
+
+    // Show CI status cache (pre-sorted newest-first)
+    render_ci_status_section(&mut out, repo)?;
+    writeln!(out)?;
+
+    // Show summary cache (LLM summaries keyed by branch + diff hash)
+    render_summary_section(&mut out, repo)?;
+    writeln!(out)?;
+
+    // Show git commands cache summary
+    render_git_commands_section(&mut out, repo)?;
+    writeln!(out)?;
+
+    // Show hints
+    render_hints_section(&mut out, repo)?;
+    writeln!(out)?;
+
+    // Show log files
+    render_all_log_sections(&mut out, repo)?;
+    writeln!(out)?;
+
+    // Show trash (staged worktree removals awaiting background delete)
+    let trash_dir = repo.wt_trash_dir();
+    let trash_display = format_path_for_display(&trash_dir);
+    writeln!(
+        out,
+        "{}",
+        format_heading("TRASH", Some(&format!("@ {trash_display}")))
+    )?;
+    let trash = list_trash_entries(repo)?;
+    if trash.is_empty() {
+        writeln!(out, "{}", format_with_gutter("(none)", None))?;
+    } else {
+        let rows: Vec<Vec<String>> = trash
+            .iter()
+            .map(|e| {
+                let age = e
+                    .metadata
+                    .modified()
+                    .ok()
+                    .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                    .map(|d| format_relative_time_short(d.as_secs() as i64))
+                    .unwrap_or_else(|| "?".to_string());
+                vec![e.name.clone(), age]
+            })
+            .collect();
+        let rendered = crate::md_help::render_data_table(&["Entry", "Age"], &rows);
+        writeln!(out, "{}", rendered.trim_end())?;
+    }
+
+    show_help_in_pager(&out, true);
+
+    Ok(())
+}
+
+// ==================== Cache view ====================
+//
+// `cache get`/`cache clear` operate on the regenerable subset of state. The
+// section renderers and JSON builders below are shared with the aggregate
+// `state get` so both views render each category identically.
+
+/// Handle `wt config state cache get` (regenerable caches only).
+pub fn handle_cache_get(format: SwitchFormat) -> anyhow::Result<()> {
+    let repo = Repository::current()?;
+    match format {
+        SwitchFormat::Json => handle_cache_get_json(&repo),
+        SwitchFormat::Text => handle_cache_get_table(&repo),
+    }
+}
+
+fn handle_cache_get_table(repo: &Repository) -> anyhow::Result<()> {
+    let mut out = String::new();
+
+    render_previous_branch_section(&mut out, repo)?;
+    writeln!(out)?;
+    render_ci_status_section(&mut out, repo)?;
+    writeln!(out)?;
+    render_summary_section(&mut out, repo)?;
+    writeln!(out)?;
+    render_git_commands_section(&mut out, repo)?;
+    writeln!(out)?;
+    render_hints_section(&mut out, repo)?;
+
+    show_help_in_pager(&out, true);
+
+    Ok(())
+}
+
+fn handle_cache_get_json(repo: &Repository) -> anyhow::Result<()> {
+    let output = serde_json::json!({
+        "previous_branch": repo.switch_previous(),
+        "ci_status": ci_status_json(repo),
+        "max_pr_number": MaxPrNumber::read(repo),
+        "summaries": summaries_json(repo),
+        "git_commands_cache": sha_cache::count_all(repo) + preview_cache::count_all(repo),
+        "hints": repo.list_shown_hints(),
+    });
+
+    println!("{}", serde_json::to_string_pretty(&output)?);
+    Ok(())
+}
+
+// ==================== Shared section renderers ====================
+
+fn render_previous_branch_section(out: &mut String, repo: &Repository) -> anyhow::Result<()> {
+    writeln!(out, "{}", format_heading("PREVIOUS BRANCH", None))?;
+    match repo.switch_previous() {
+        Some(prev) => writeln!(out, "{}", format_with_gutter(&prev, None))?,
+        None => writeln!(out, "{}", format_with_gutter("(none)", None))?,
+    }
+    Ok(())
+}
+
+fn render_ci_status_section(out: &mut String, repo: &Repository) -> anyhow::Result<()> {
+    writeln!(out, "{}", format_heading("CI STATUS CACHE", None))?;
+    let entries = CachedCiStatus::list_all(repo);
+    let max_pr_number = MaxPrNumber::read(repo);
+    if entries.is_empty() && max_pr_number.is_none() {
+        writeln!(out, "{}", format_with_gutter("(none)", None))?;
+    } else if entries.is_empty() {
+        writeln!(out, "{}", format_with_gutter("(no entries)", None))?;
+    } else {
+        let rows: Vec<Vec<String>> = entries
+            .iter()
+            .map(|cached| {
+                let status = match &cached.status {
+                    Some(pr_status) => {
+                        let s: &'static str = pr_status.ci_status.into();
+                        s.to_string()
+                    }
+                    None => "none".to_string(),
+                };
+                let age = format_relative_time_short(cached.checked_at as i64);
+                let head: String = cached.head.chars().take(8).collect();
+                vec![cached.branch.clone(), status, age, head]
+            })
+            .collect();
+        let rendered =
+            crate::md_help::render_data_table(&["Branch", "Status", "Age", "Head"], &rows);
+        writeln!(out, "{}", rendered.trim_end())?;
+    }
+    if let Some(number) = max_pr_number {
+        writeln!(
+            out,
+            "{}",
+            format_with_gutter(&format!("largest PR/MR number: {number}"), None)
+        )?;
+    }
+    Ok(())
+}
+
+fn render_summary_section(out: &mut String, repo: &Repository) -> anyhow::Result<()> {
+    writeln!(out, "{}", format_heading("SUMMARY CACHE", None))?;
+    let summary_entries = CachedSummary::list_all(repo);
+    if summary_entries.is_empty() {
+        writeln!(out, "{}", format_with_gutter("(none)", None))?;
+    } else {
+        let rows: Vec<Vec<String>> = summary_entries
+            .iter()
+            .map(|cached| {
+                let subject = cached.summary.lines().next().unwrap_or("").trim();
+                let age = format_relative_time_short(cached.generated_at as i64);
+                vec![cached.branch.clone(), truncate_display(subject, 40), age]
+            })
+            .collect();
+        let rendered = crate::md_help::render_data_table(&["Branch", "Summary", "Age"], &rows);
+        writeln!(out, "{}", rendered.trim_end())?;
+    }
+    Ok(())
+}
+
+/// Render the git commands cache summary. Spans both `sha_cache` (parsed
+/// SHA-keyed results) and the picker preview cache (rendered SHA-keyed
+/// previews) — one user-facing category covering every SHA-keyed disk cache,
+/// regardless of which module owns the entries.
+fn render_git_commands_section(out: &mut String, repo: &Repository) -> anyhow::Result<()> {
+    writeln!(out, "{}", format_heading("GIT COMMANDS CACHE", None))?;
+    let cache_count = sha_cache::count_all(repo) + preview_cache::count_all(repo);
+    if cache_count == 0 {
+        writeln!(out, "{}", format_with_gutter("(none)", None))?;
+    } else {
+        let label = if cache_count == 1 { "entry" } else { "entries" };
+        writeln!(
+            out,
+            "{}",
+            format_with_gutter(&format!("{cache_count} {label}"), None)
+        )?;
+    }
+    Ok(())
+}
+
+fn render_hints_section(out: &mut String, repo: &Repository) -> anyhow::Result<()> {
+    writeln!(out, "{}", format_heading("HINTS", None))?;
+    let hints = repo.list_shown_hints();
+    if hints.is_empty() {
+        writeln!(out, "{}", format_with_gutter("(none)", None))?;
+    } else {
+        for hint in hints {
+            writeln!(out, "{}", format_with_gutter(&hint, None))?;
+        }
+    }
+    Ok(())
+}
+
+/// CI status cache entries as JSON (pre-sorted newest-first). Shared by
+/// `state get` and `cache get`.
+fn ci_status_json(repo: &Repository) -> Vec<serde_json::Value> {
+    CachedCiStatus::list_all(repo)
+        .into_iter()
+        .map(|cached| {
+            let status = cached
+                .status
+                .as_ref()
+                .map(|s| -> &'static str { s.ci_status.into() });
+            serde_json::json!({
+                "branch": cached.branch,
+                "status": status,
+                "checked_at": cached.checked_at,
+                "head": cached.head
+            })
+        })
+        .collect()
+}
+
+/// Summary cache entries as JSON (freshest per branch, pre-sorted
+/// newest-first). Shared by `state get` and `cache get`.
+fn summaries_json(repo: &Repository) -> Vec<serde_json::Value> {
+    CachedSummary::list_all(repo)
+        .into_iter()
+        .map(|cached| {
+            serde_json::json!({
+                "branch": cached.branch,
+                "summary": cached.summary,
+                "generated_at": cached.generated_at,
+            })
+        })
+        .collect()
+}
+
+// ==================== Vars Operations ====================
+
+/// Validate a vars key name: letters, digits, and hyphens only.
+fn validate_vars_key(key: &str) -> anyhow::Result<()> {
+    if key.is_empty() {
+        anyhow::bail!("Key cannot be empty");
+    }
+    if !key.chars().all(|c| c.is_ascii_alphanumeric() || c == '-') {
+        anyhow::bail!("Invalid key {key:?}: keys must contain only letters, digits, and hyphens");
+    }
+    Ok(())
+}
+
+/// Handle vars get
+pub fn handle_vars_get(key: &str, branch: Option<String>) -> anyhow::Result<()> {
+    validate_vars_key(key)?;
+    let repo = Repository::current()?;
+    let branch_name = match branch {
+        Some(b) => b,
+        None => repo.require_current_branch("get variable for current branch")?,
+    };
+
+    let config_key = format!("worktrunk.state.{branch_name}.vars.{key}");
+    if let Some(value) = repo.config_value(&config_key)? {
+        println!("{value}");
+    }
+    Ok(())
+}
+
+/// Handle vars set
+pub fn handle_vars_set(key: &str, value: &str, branch: Option<String>) -> anyhow::Result<()> {
+    validate_vars_key(key)?;
+    let repo = Repository::current()?;
+    let branch_name = match branch {
+        Some(b) => b,
+        None => repo.require_current_branch("set variable for current branch")?,
+    };
+
+    let config_key = format!("worktrunk.state.{branch_name}.vars.{key}");
+    repo.set_config(&config_key, value)?;
+
+    eprintln!(
+        "{}",
+        success_message(cformat!("Set <bold>{key}</> for <bold>{branch_name}</>"))
+    );
+    Ok(())
+}
+
+/// Handle vars list
+pub fn handle_vars_list(branch: Option<String>, format: SwitchFormat) -> anyhow::Result<()> {
+    let repo = Repository::current()?;
+    let branch_name = match branch {
+        Some(b) => b,
+        None => repo.require_current_branch("list variables for current branch")?,
+    };
+
+    let entries: Vec<_> = repo.vars_entries(&branch_name).into_iter().collect();
+
+    if format == SwitchFormat::Json {
+        let obj: serde_json::Map<String, serde_json::Value> = entries
+            .into_iter()
+            .map(|(k, v)| (k, serde_json::Value::String(v)))
+            .collect();
+        println!("{}", serde_json::to_string_pretty(&obj)?);
+    } else if entries.is_empty() {
+        eprintln!(
+            "{}",
+            info_message(cformat!("No variables for <bold>{branch_name}</>"))
+        );
+    } else {
+        for (key, value) in &entries {
+            println!("{key}\t{value}");
+        }
+    }
+    Ok(())
+}
+
+/// Handle vars clear
+pub fn handle_vars_clear(
+    key: Option<&str>,
+    all: bool,
+    branch: Option<String>,
+) -> anyhow::Result<()> {
+    let repo = Repository::current()?;
+    let branch_name = match branch {
+        Some(b) => b,
+        None => repo.require_current_branch("clear variable for current branch")?,
+    };
+
+    if !all && key.is_none() {
+        anyhow::bail!("Specify a key to clear, or use --all to clear all keys");
+    }
+
+    if all {
+        let entries: Vec<_> = repo.vars_entries(&branch_name).into_iter().collect();
+        if entries.is_empty() {
+            eprintln!(
+                "{}",
+                info_message(cformat!("No variables for <bold>{branch_name}</>"))
+            );
+        } else {
+            let count = entries.len();
+            for (key, _) in entries {
+                let config_key = format!("worktrunk.state.{branch_name}.vars.{key}");
+                repo.unset_config(&config_key)?;
+            }
+            eprintln!(
+                "{}",
+                success_message(cformat!(
+                    "Cleared <bold>{count}</> variable{} for <bold>{branch_name}</>",
+                    if count == 1 { "" } else { "s" }
+                ))
+            );
+        }
+    } else {
+        let key = key.expect("key required when --all not set");
+        validate_vars_key(key)?;
+        let config_key = format!("worktrunk.state.{branch_name}.vars.{key}");
+        if repo.unset_config(&config_key)? {
+            eprintln!(
+                "{}",
+                success_message(cformat!(
+                    "Cleared <bold>{key}</> for <bold>{branch_name}</>"
+                ))
+            );
+        } else {
+            eprintln!(
+                "{}",
+                info_message(cformat!(
+                    "No variable <bold>{key}</> for <bold>{branch_name}</>"
+                ))
+            );
+        }
+    }
+    Ok(())
+}
+
+/// Clear all branch markers. Used by `state clear marker --all` and
+/// `state clear --all`.
+///
+/// `get_config_regexp` returns an empty string when no keys match (git exit 1)
+/// and `Err` for real config errors — both the listing step and each
+/// `unset_config` call propagate errors so user-initiated clears never lie
+/// about success.
+fn clear_all_markers(repo: &Repository) -> anyhow::Result<usize> {
+    let output = repo.get_config_regexp(r"^worktrunk\.state\..+\.marker$")?;
+    let mut cleared = 0;
+    for line in output.lines() {
+        if let Some(config_key) = line.split_whitespace().next() {
+            repo.unset_config(config_key)?;
+            cleared += 1;
+        }
+    }
+    Ok(cleared)
+}
+
+/// Clear all vars entries across all branches (used by handle_state_clear_all).
+///
+/// Enumerates keys via `get_config_regexp` (not `all_vars_entries`) so a
+/// config read failure surfaces as an error — the display-path helper
+/// absorbs errors as empty, which would silently report "cleared 0" here.
+fn clear_all_vars(repo: &Repository) -> anyhow::Result<usize> {
+    let output = repo.get_config_regexp(r"^worktrunk\.state\..+\.vars\.")?;
+    let mut cleared = 0;
+    for line in output.lines() {
+        if let Some(config_key) = line.split_whitespace().next() {
+            repo.unset_config(config_key)?;
+            cleared += 1;
+        }
+    }
+    Ok(cleared)
+}
+
+// ==================== Marker Helpers ====================
+
+/// Marker entry with branch, text, and timestamp
+pub(super) struct MarkerEntry {
+    pub branch: String,
+    pub marker: String,
+    pub set_at: u64,
+}
+
+/// Get all branch markers from git config with timestamps
+pub(super) fn all_markers(repo: &Repository) -> Vec<MarkerEntry> {
+    let output = repo
+        .get_config_regexp(r"^worktrunk\.state\..+\.marker$")
+        .unwrap_or_default();
+
+    let mut markers = Vec::new();
+    for line in output.lines() {
+        // Format: "worktrunk.state.<branch>.marker json_value"
+        let Some((key, value)) = line.split_once(' ') else {
+            continue;
+        };
+        let Some(branch) = key
+            .strip_prefix("worktrunk.state.")
+            .and_then(|s| s.strip_suffix(".marker"))
+        else {
+            continue;
+        };
+        let Ok(parsed) = serde_json::from_str::<serde_json::Value>(value) else {
+            continue; // Skip invalid JSON
+        };
+        let Some(marker) = parsed.get("marker").and_then(|v| v.as_str()) else {
+            continue; // Skip if "marker" field is missing
+        };
+        let set_at = parsed.get("set_at").and_then(|v| v.as_u64()).unwrap_or(0);
+        markers.push(MarkerEntry {
+            branch: branch.to_string(),
+            marker: marker.to_string(),
+            set_at,
+        });
+    }
+
+    // Sort by age (most recent first), then by branch name for ties
+    markers.sort_by(|a, b| {
+        b.set_at
+            .cmp(&a.set_at)
+            .then_with(|| a.branch.cmp(&b.branch))
+    });
+    markers
+}

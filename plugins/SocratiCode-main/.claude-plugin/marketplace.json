@@ -1,0 +1,18 @@
+{
+  "name": "socraticode",
+  "owner": {
+    "name": "Giancarlo Erra",
+    "email": "giancarlo@altaire.com"
+  },
+  "metadata": {
+    "description": "SocratiCode — codebase intelligence plugin for Claude Code"
+  },
+  "plugins": [
+    {
+      "name": "socraticode",
+      "source": "./",
+      "description": "Codebase intelligence — semantic search workflows, dependency graph analysis, and context artifact exploration",
+      "category": "development"
+    }
+  ]
+}

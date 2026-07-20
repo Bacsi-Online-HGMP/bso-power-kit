@@ -1,0 +1,1256 @@
+//! Core list item types for worktrees and branches.
+//!
+//! This module contains the main data structures used to represent
+//! worktrees and branches in `wt list` output.
+
+use std::path::PathBuf;
+
+use worktrunk::git::{IntegrationReason, IntegrationSignals, LineDiff, check_integration};
+
+use super::state::{ActiveGitOperation, Divergence, MainState, OperationState, WorktreeState};
+use super::stats::{AheadBehind, BranchDiffTotals, CommitDetails, UpstreamStatus};
+use super::status_symbols::{StatusSymbols, WorkingTreeStatus};
+use crate::commands::list::ci_status::PrStatus;
+use crate::commands::list::columns::ColumnKind;
+
+/// Compute the `WorktreeState` from `WorktreeData` metadata alone.
+///
+/// Used by `refresh_status_symbols` to resolve the worktree-state position
+/// (Gate 2) from metadata alone. The decision priority is:
+/// `branch_worktree_mismatch` > `prunable` > `locked` > `None`.
+fn metadata_worktree_state(data: &WorktreeData) -> WorktreeState {
+    if data.branch_worktree_mismatch {
+        WorktreeState::BranchWorktreeMismatch
+    } else if data.is_prunable() {
+        WorktreeState::Prunable
+    } else if data.locked.is_some() {
+        WorktreeState::Locked
+    } else {
+        WorktreeState::None
+    }
+}
+
+/// Type-specific data for worktrees
+#[derive(Clone, Default)]
+pub struct WorktreeData {
+    pub path: PathBuf,
+    pub detached: bool,
+    pub locked: Option<String>,
+    pub prunable: Option<String>,
+    pub working_tree_diff: Option<LineDiff>,
+    /// Working-tree change flags (tracked/untracked/modified). `None` = not yet
+    /// loaded; `Some` = loaded (possibly empty). Fed by the `WorkingTreeDiff` task.
+    pub working_tree_status: Option<WorkingTreeStatus>,
+    /// Whether the working tree has merge conflicts in tracked files. `None` =
+    /// not yet loaded; `Some` = loaded. Fed by the `WorkingTreeDiff` task.
+    pub has_conflicts: Option<bool>,
+    /// Result of `WorkingTreeConflicts` task (`--full` mode only). Outer `None`
+    /// = task hasn't run yet. Outer `Some(None)` = task ran but working tree
+    /// was clean, so fall back to the committed-HEAD merge-tree check.
+    /// Outer `Some(Some(b))` = dirty working tree, `b` is the conflict result.
+    pub has_working_tree_conflicts: Option<Option<bool>>,
+    /// Git operation in progress (rebase/merge). `None` = not yet loaded;
+    /// `Some(ActiveGitOperation::None)` = loaded, no operation in progress.
+    /// Fed by the `GitOperation` task.
+    pub git_operation: Option<ActiveGitOperation>,
+    pub is_main: bool,
+    /// Whether this is the current worktree (matches repo discovery path: PWD or `-C`)
+    pub is_current: bool,
+    /// Whether this was the previous worktree (from `worktrunk.history`)
+    pub is_previous: bool,
+    /// Whether the worktree is at an unexpected location (branch-worktree mismatch).
+    /// Only true when: has branch name, not main worktree, and path differs from template.
+    pub branch_worktree_mismatch: bool,
+}
+
+impl WorktreeData {
+    /// Returns true if this worktree is prunable (directory deleted but git still tracks metadata).
+    pub fn is_prunable(&self) -> bool {
+        self.prunable.is_some()
+    }
+
+    /// This worktree's location on the gutter's presence axis (see
+    /// [`WorktreePresence`]). `is_current` wins when a worktree is both
+    /// current and primary — you're sitting in the main worktree.
+    pub fn presence(&self) -> WorktreePresence {
+        if self.is_current {
+            WorktreePresence::Current
+        } else if self.is_main {
+            WorktreePresence::Primary
+        } else {
+            WorktreePresence::Linked
+        }
+    }
+
+    /// Create WorktreeData from a WorktreeInfo, with all computed fields set to None.
+    pub(crate) fn from_worktree(
+        wt: &worktrunk::git::WorktreeInfo,
+        is_main: bool,
+        is_current: bool,
+        is_previous: bool,
+    ) -> Self {
+        Self {
+            // Identity fields (known immediately from worktree list)
+            path: wt.path.clone(),
+            detached: wt.detached,
+            locked: wt.locked.clone(),
+            prunable: wt.prunable.clone(),
+            is_main,
+            is_current,
+            is_previous,
+
+            // Computed fields start as None (filled progressively)
+            ..Default::default()
+        }
+    }
+}
+
+/// Discriminator for item type (worktree vs branch)
+///
+/// WorktreeData is boxed to reduce the size of ItemKind enum (304 bytes → 24 bytes).
+/// This reduces stack pressure when passing ListItem by value and improves cache locality
+/// in `Vec<ListItem>` by keeping the discriminant and common fields together.
+#[derive(Clone)]
+pub enum ItemKind {
+    Worktree(Box<WorktreeData>),
+    Branch(BranchScope),
+}
+
+impl ItemKind {
+    /// The single-character gutter glyph identifying this row's kind:
+    /// worktrees by location (`@` current, `^` primary/main, `+` other
+    /// linked), branches by scope (`/` local, `|` remote). Single-width
+    /// ASCII by design — the gutter must dodge skim's `width_cjk` clipping.
+    ///
+    /// Canonical source shared by the rendered Gutter column (which appends
+    /// a trailing space for the two-cell sigil) and the picker's fuzzy-search
+    /// text, so the glyph a user sees is the glyph they can type to filter.
+    /// A skeleton-time fact — `is_current`/`is_main` are set at construction
+    /// and `BranchScope` is structural — so folding it into the search text
+    /// keeps fuzzy ranks stable across the picker's progressive column updates.
+    pub fn gutter_glyph(&self) -> char {
+        match self {
+            ItemKind::Worktree(data) => data.presence().gutter_glyph(),
+            ItemKind::Branch(scope) => scope.gutter_glyph(),
+        }
+    }
+}
+
+/// A worktree row's location on the gutter's presence axis: the worktree
+/// currently in use (`@`), the primary/main worktree (`^`), or any other
+/// linked worktree (`+`) — the three worktree rungs before the branch
+/// glyphs (`/`/`|`). See [`ItemKind::gutter_glyph`].
+///
+/// Unlike [`BranchScope`], which is stored structurally, this is *derived*
+/// from `WorktreeData` via [`WorktreeData::presence`]. `is_current` and
+/// `is_main` are orthogonal bits — the main worktree is also current when
+/// you sit in it — and `is_main` is consumed independently by the status
+/// column and JSON, so the pair can't collapse into a single stored
+/// discriminant. `is_current` wins when a worktree is both.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum WorktreePresence {
+    /// The current worktree (matches repo discovery path: PWD or `-C`).
+    Current,
+    /// The primary/main worktree, and not the current one.
+    Primary,
+    /// Any other linked worktree.
+    Linked,
+}
+
+impl WorktreePresence {
+    /// The gutter glyph for a worktree row at this presence: `@` current,
+    /// `^` primary, `+` other linked. See [`ItemKind::gutter_glyph`] for the
+    /// row-kind axis this feeds and how the rendered sigil and picker search
+    /// text share it.
+    pub const fn gutter_glyph(self) -> char {
+        match self {
+            WorktreePresence::Current => '@',
+            WorktreePresence::Primary => '^',
+            WorktreePresence::Linked => '+',
+        }
+    }
+}
+
+/// Whether a branch-without-worktree row is a local branch
+/// (`refs/heads/…`, checked out nowhere) or a remote-tracking branch
+/// (`refs/remotes/<remote>/…`, not present locally until fetched).
+///
+/// Recorded structurally at construction (the `RemoteBranch` vs
+/// `LocalBranch` inventory is known then) rather than inferred from the
+/// branch name — a local branch may legitimately be named `origin/foo`,
+/// so a name-prefix heuristic would misclassify it.
+///
+/// Drives the gutter sigil: local branches render `/`, remote branches
+/// render `|` — the two branch rungs past the worktree glyphs (`@`/`^`/`+`)
+/// on the gutter's presence/location axis. See `ColumnKind::Gutter` in
+/// `render.rs`.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum BranchScope {
+    /// Local branch with no worktree.
+    Local,
+    /// Remote-tracking branch (needs a fetch to materialize locally).
+    Remote,
+}
+
+impl BranchScope {
+    /// The gutter glyph for a branch row of this scope: `/` local, `|`
+    /// remote. See [`ItemKind::gutter_glyph`] for the row-kind axis this
+    /// feeds and how the rendered sigil and picker search text share it.
+    pub const fn gutter_glyph(self) -> char {
+        match self {
+            BranchScope::Local => '/',
+            BranchScope::Remote => '|',
+        }
+    }
+}
+
+/// Unified item for displaying worktrees and branches in the same table.
+///
+/// Column-rendered fields are `Option<U>` where the outer `Option` encodes whether data
+/// was collected (`None` = not loaded, render shows placeholder). The inner type `U` is
+/// whatever the data naturally is — e.g., `AheadBehind` (always has a value, even if zero)
+/// or `Option<PrStatus>` (CI may not exist).
+#[derive(Clone)]
+pub struct ListItem {
+    // Common fields (present for both worktrees and branches)
+    pub head: String,
+    /// Abbreviated form of `head`, honoring `core.abbrev` and auto-extending
+    /// for ambiguous prefixes. Always populated when there is a HEAD commit
+    /// to abbreviate (the `git log` batch in `collect()` emits `%h` for every
+    /// row, including prunable worktrees). Empty for null OIDs (unborn
+    /// branches) or when the batch failed for this row.
+    pub short_sha: String,
+    /// Branch name - None for detached worktrees
+    pub branch: Option<String>,
+    pub commit: Option<CommitDetails>,
+
+    pub counts: Option<AheadBehind>,
+    pub branch_diff: Option<BranchDiffTotals>,
+    /// Whether HEAD's tree SHA matches the integration target's tree SHA.
+    /// True when committed content is identical regardless of commit history.
+    /// Internal field used to compute `BranchState::Integrated(TreesMatch)`.
+    pub committed_trees_match: Option<bool>,
+    /// Whether branch has file changes beyond the merge-base with the integration target.
+    /// False when three-dot diff (`<integration-target>...branch`) is empty.
+    /// Internal field used for integration detection (no unique content).
+    pub has_file_changes: Option<bool>,
+    /// Whether merging branch into the integration target would add changes (merge simulation).
+    /// False when `git merge-tree --write-tree <integration-target> branch` produces the same tree
+    /// as the integration target. Catches squash-merged branches where the integration target advanced.
+    pub would_merge_add: Option<bool>,
+    /// Whether the branch's squashed patch-id matches a commit on the integration target.
+    /// Detects squash merges when merge-tree conflicts (both sides modified the same files).
+    pub is_patch_id_match: Option<bool>,
+    /// Whether branch HEAD is an ancestor of the integration target (or same commit).
+    /// True means branch is already part of the integration target's history.
+    /// This is the cheapest integration check (~1ms).
+    pub is_ancestor: Option<bool>,
+    /// Whether this branch is an orphan (no common ancestor with default branch).
+    /// Orphan branches have independent history and can't compute meaningful ahead/behind counts.
+    pub is_orphan: Option<bool>,
+
+    pub upstream: Option<UpstreamStatus>,
+
+    /// CI/PR status (inner Option: whether CI exists for this branch)
+    pub pr_status: Option<Option<PrStatus>>,
+
+    /// Dev server URL computed from project config template
+    pub url: Option<String>,
+    /// Whether the URL's port is actively listening
+    pub url_active: Option<bool>,
+
+    /// LLM-generated branch summary (inner Option: whether LLM produced a summary)
+    pub summary: Option<Option<String>>,
+
+    /// Potential merge conflicts with the integration target, computed from
+    /// the committed HEAD via `git merge-tree`. `None` = not yet loaded;
+    /// `Some` = loaded. Fed by the `MergeTreeConflicts` task.
+    pub has_merge_tree_conflicts: Option<bool>,
+    /// User-defined status marker from git config. Outer `None` = task
+    /// hasn't run yet; `Some(None)` = task ran, no marker configured;
+    /// `Some(Some(s))` = task ran, marker is `s`. Fed by the `UserMarker` task.
+    pub user_marker: Option<Option<String>>,
+
+    /// Git status symbols — one `StatusSymbols` struct per item, always
+    /// present after construction. Each *field inside* `StatusSymbols` is an
+    /// `Option` that progresses from `None` (loading, renders `·`) to `Some`
+    /// as task results arrive. See the `status_symbols` module docstring for
+    /// the per-gate rendering rules.
+    pub status_symbols: StatusSymbols,
+
+    /// Pre-formatted single-line representation for statusline tools.
+    /// Format: `branch  status  @working  commits  ^branch_diff  upstream  ci` (2-space separators)
+    ///
+    /// Populated by [`finalize_display`](Self::finalize_display); read by
+    /// `JsonItem` for the `statusline` field.
+    pub statusline: Option<String>,
+
+    /// Rendered `[list.custom-columns]` values, indexed like the resolved column
+    /// list (`ColumnKind::Custom`). Unlike the `Option`-gated fields above,
+    /// these are final at construction time: templates expand from in-memory
+    /// data before layout, so there is no loading state. Empty when no custom
+    /// columns are configured.
+    pub custom_values: Vec<String>,
+
+    // Type-specific data (worktree vs branch)
+    pub kind: ItemKind,
+}
+
+/// Container for list command results.
+pub struct ListData {
+    pub items: Vec<ListItem>,
+    /// Resolved `[list.custom-columns]` definitions; each item's `custom_values`
+    /// uses the same indexing.
+    pub custom_columns: Vec<crate::commands::list::custom_columns::ResolvedCustomColumn>,
+}
+
+impl ListItem {
+    /// Create a ListItem for a local branch without a worktree.
+    pub(crate) fn new_branch(head: String, branch: String) -> Self {
+        Self::new_branch_with_scope(head, branch, BranchScope::Local)
+    }
+
+    /// Create a ListItem for a remote-tracking branch (no local worktree).
+    pub(crate) fn new_remote_branch(head: String, branch: String) -> Self {
+        Self::new_branch_with_scope(head, branch, BranchScope::Remote)
+    }
+
+    fn new_branch_with_scope(head: String, branch: String, scope: BranchScope) -> Self {
+        Self {
+            head,
+            short_sha: String::new(),
+            branch: Some(branch),
+            commit: None,
+            counts: None,
+            branch_diff: None,
+            committed_trees_match: None,
+            has_file_changes: None,
+            would_merge_add: None,
+            is_patch_id_match: None,
+            is_ancestor: None,
+            is_orphan: None,
+            upstream: None,
+            pr_status: None,
+            url: None,
+            url_active: None,
+            summary: None,
+            has_merge_tree_conflicts: None,
+            user_marker: None,
+            status_symbols: StatusSymbols::default(),
+            statusline: None,
+            custom_values: Vec::new(),
+            kind: ItemKind::Branch(scope),
+        }
+    }
+
+    pub fn branch_name(&self) -> &str {
+        self.branch.as_deref().unwrap_or("(detached)")
+    }
+
+    /// Short display name for this item — the branch if present, otherwise
+    /// the short SHA. Use when reporting which item is pending, stuck, or
+    /// missing: `branch_name()`'s `"(detached)"` fallback collapses distinct
+    /// detached items into one label.
+    pub fn display_name(&self) -> &str {
+        self.branch.as_deref().unwrap_or(&self.short_sha)
+    }
+
+    pub fn is_main(&self) -> bool {
+        matches!(&self.kind, ItemKind::Worktree(data) if data.is_main)
+    }
+
+    pub fn head(&self) -> &str {
+        &self.head
+    }
+
+    pub fn branch_diff(&self) -> Option<&BranchDiffTotals> {
+        self.branch_diff.as_ref()
+    }
+
+    pub fn worktree_data(&self) -> Option<&WorktreeData> {
+        match &self.kind {
+            ItemKind::Worktree(data) => Some(data),
+            ItemKind::Branch(_) => None,
+        }
+    }
+
+    pub fn worktree_data_mut(&mut self) -> Option<&mut WorktreeData> {
+        match &mut self.kind {
+            ItemKind::Worktree(data) => Some(data),
+            ItemKind::Branch(_) => None,
+        }
+    }
+
+    pub fn worktree_path(&self) -> Option<&PathBuf> {
+        self.worktree_data().map(|data| &data.path)
+    }
+
+    /// Determine if the item contains no unique work and can likely be removed.
+    ///
+    /// Returns:
+    /// - `Some(true)` - confirmed removable (no unique work vs the integration target)
+    /// - `Some(false)` - confirmed not removable (has unique work)
+    /// - `None` - data still loading, cannot determine yet
+    ///
+    /// The verdict is read directly from the already-resolved gate-3
+    /// [`MainState`] (`None` until its inputs land). `Empty` (same commit as
+    /// the default branch with a clean tree) and `Integrated` (content reached
+    /// the default branch via different history) are removable; everything
+    /// else — including `SameCommit`, where uncommitted work would be lost — is
+    /// not. The integration tiers themselves (ancestor, matching trees, no
+    /// added changes, merge-adds-nothing) live on `MainState` /
+    /// [`IntegrationReason`]; see the `MainState` spec in `model/state.rs`.
+    pub(crate) fn is_potentially_removable(&self) -> Option<bool> {
+        // Gate 3 (`main_state`) is `None` until its inputs land. Until
+        // then, we don't know whether the item is removable.
+        let main_state = self.status_symbols.main_state?;
+        // SameCommit excluded: has uncommitted work that would be lost
+        Some(matches!(
+            main_state,
+            MainState::Empty | MainState::Integrated(_)
+        ))
+    }
+
+    /// Whether the branch/path text should be dimmed in list output.
+    ///
+    /// Returns true only when we have confirmed the item is removable.
+    /// Returns false when data is still loading (prevents UI flash).
+    pub(crate) fn should_dim(&self) -> bool {
+        self.is_potentially_removable() == Some(true)
+    }
+
+    /// Format this item as a single-line statusline string with clickable links.
+    ///
+    /// Format: `branch  status  @working  commits  ^branch_diff  upstream  ci`
+    /// Uses 2-space separators between non-empty parts.
+    pub fn format_statusline(&self) -> String {
+        self.format_statusline_with_options(true)
+    }
+
+    /// Format this item as a single-line statusline string with link control.
+    ///
+    /// When `include_links` is false, CI indicators are colored but not clickable.
+    /// Used for environments that don't support OSC 8 hyperlinks (e.g., Claude Code).
+    pub fn format_statusline_with_options(&self, include_links: bool) -> String {
+        use super::statusline_segment::StatuslineSegment;
+        StatuslineSegment::join(&self.format_statusline_segments(include_links))
+    }
+
+    /// Format this item as prioritized segments for smart truncation.
+    ///
+    /// Returns segments with priorities matching `wt list` column priorities.
+    /// Use [`super::statusline_segment::StatuslineSegment::fit_to_width`] to truncate intelligently.
+    pub fn format_statusline_segments(
+        &self,
+        include_links: bool,
+    ) -> Vec<super::statusline_segment::StatuslineSegment> {
+        use super::statusline_segment::StatuslineSegment;
+
+        let mut segments = Vec::new();
+
+        // 1. Branch name (priority 1)
+        segments.push(StatuslineSegment::from_column(
+            self.branch_name().to_string(),
+            ColumnKind::Branch,
+        ));
+
+        // 2. Status symbols (priority 2)
+        let status = self.status_symbols.format_compact();
+        if !status.is_empty() {
+            segments.push(StatuslineSegment::from_column(status, ColumnKind::Status));
+        }
+
+        // 3. Working diff (priority 3)
+        if let Some(data) = self.worktree_data()
+            && let Some(ref diff) = data.working_tree_diff
+            && !diff.is_empty()
+            && let Some(formatted) =
+                ColumnKind::WorkingDiff.format_diff_plain(diff.added, diff.deleted)
+        {
+            segments.push(StatuslineSegment::from_column(
+                format!("@{formatted}"),
+                ColumnKind::WorkingDiff,
+            ));
+        }
+
+        // 4. Commits ahead/behind main (priority 4)
+        if let Some(counts) = self.counts
+            && let Some(formatted) =
+                ColumnKind::AheadBehind.format_diff_plain(counts.ahead, counts.behind)
+        {
+            segments.push(StatuslineSegment::from_column(
+                formatted,
+                ColumnKind::AheadBehind,
+            ));
+        }
+
+        // 5. Branch diff vs main (priority 5)
+        if let Some(branch_diff) = self.branch_diff()
+            && !branch_diff.diff.is_empty()
+            && let Some(formatted) = ColumnKind::BranchDiff
+                .format_diff_plain(branch_diff.diff.added, branch_diff.diff.deleted)
+        {
+            segments.push(StatuslineSegment::from_column(
+                format!("^{formatted}"),
+                ColumnKind::BranchDiff,
+            ));
+        }
+
+        // 6. Upstream status (priority 7)
+        if let Some(ref upstream) = self.upstream
+            && let Some(active) = upstream.active()
+            && let Some(formatted) =
+                ColumnKind::Upstream.format_diff_plain(active.ahead, active.behind)
+        {
+            segments.push(StatuslineSegment::from_column(
+                formatted,
+                ColumnKind::Upstream,
+            ));
+        }
+
+        // 7. CI status (priority 9) — PR/MR reference when one exists,
+        // bare `#` otherwise (no width cap in the statusline)
+        if let Some(Some(ref pr_status)) = self.pr_status {
+            segments.push(StatuslineSegment::from_column(
+                pr_status.format_cell(usize::MAX, include_links),
+                ColumnKind::CiStatus,
+            ));
+        }
+
+        // 8. URL (priority 8)
+        if let Some(ref url) = self.url {
+            segments.push(StatuslineSegment::from_column(url.clone(), ColumnKind::Url));
+        }
+
+        segments
+    }
+
+    /// Populate the pre-formatted statusline for JSON output.
+    ///
+    /// Call after all computed fields (counts, diffs, upstream, CI) are available.
+    pub fn finalize_display(&mut self) {
+        self.statusline = Some(self.format_statusline());
+    }
+
+    /// Refresh status symbols for this item, populating any gates whose
+    /// inputs have newly become available.
+    ///
+    /// Idempotent: safe to call repeatedly as task results arrive. Each
+    /// gate is resolved independently; a gate once resolved is never
+    /// unresolved. Gates whose inputs aren't ready yet are left at
+    /// `None`, and the renderer emits the position-level `·` placeholder
+    /// for them (step 5).
+    ///
+    /// See the `status_symbols` module docstring for the full per-gate
+    /// spec including priority short-circuit rules.
+    pub(crate) fn refresh_status_symbols(&mut self, default_branch: Option<&str>) {
+        // Gate 2 (metadata family — position 3). Metadata-only, so it
+        // resolves synchronously on the first refresh call. After this
+        // line, `status_symbols.worktree_state` is always `Some`.
+        // (Prunable worktrees are pre-seeded at spawn time and have
+        // `worktree_state = Some(Prunable)` by the time this runs.)
+        let metadata_state = match &self.kind {
+            ItemKind::Worktree(data) => metadata_worktree_state(data),
+            ItemKind::Branch(_) => WorktreeState::Branch,
+        };
+        if self.status_symbols.worktree_state.is_none() {
+            self.status_symbols.worktree_state = Some(metadata_state);
+        }
+
+        // Gate 1 (working tree flags — positions 0-2).
+        if self.status_symbols.working_tree.is_none()
+            && let Some(wt) = self.try_gate_working_tree()
+        {
+            self.status_symbols.working_tree = Some(wt);
+        }
+
+        // Gate 2 (operation family — position 3).
+        if self.status_symbols.operation_state.is_none()
+            && let Some(op) = self.try_gate_operation_state()
+        {
+            self.status_symbols.operation_state = Some(op);
+        }
+
+        // Gate 3 (main state — position 4).
+        // Gate 3 is re-evaluable: unlike other gates, its answer can
+        // become more specific as later signals arrive. Integration
+        // signals are not hard-gated, so the first pass may see only
+        // counts and produce `Ahead`; a later pass with `has_file_changes`
+        // loaded can refine to `Integrated(NoAddedChanges)`. The
+        // progression is strictly refinement (never wrong, just less
+        // specific), so re-evaluation is safe.
+        if let Some(ms) = self.try_gate_main_state(default_branch) {
+            self.status_symbols.main_state = Some(ms);
+        }
+
+        // Gate 4 (upstream divergence — position 5).
+        if self.status_symbols.upstream_divergence.is_none()
+            && let Some(d) = self.try_gate_upstream_divergence()
+        {
+            self.status_symbols.upstream_divergence = Some(d);
+        }
+
+        // Gate 5 (user marker — position 6).
+        if self.status_symbols.user_marker.is_none()
+            && let Some(m) = self.try_gate_user_marker()
+        {
+            self.status_symbols.user_marker = Some(m);
+        }
+    }
+
+    /// Gate 1: working tree flags. Resolves as soon as `working_tree_status`
+    /// is loaded (for worktrees) or immediately (for branches, which have
+    /// no working tree).
+    fn try_gate_working_tree(&self) -> Option<WorkingTreeStatus> {
+        match &self.kind {
+            ItemKind::Worktree(data) => data.working_tree_status,
+            // Branches have no working tree; treat as permanently clean.
+            ItemKind::Branch(_) => Some(WorkingTreeStatus::default()),
+        }
+    }
+
+    /// Gate 2: operation state. Resolves once both `has_conflicts` and
+    /// `git_operation` have reported. Priority within the gate:
+    /// `has_conflicts` > rebase > merge > none.
+    fn try_gate_operation_state(&self) -> Option<OperationState> {
+        match &self.kind {
+            ItemKind::Worktree(data) => {
+                let has_conflicts = data.has_conflicts?;
+                if has_conflicts {
+                    return Some(OperationState::Conflicts);
+                }
+                let git_operation = data.git_operation.as_ref()?;
+                match git_operation {
+                    ActiveGitOperation::Rebase => Some(OperationState::Rebase),
+                    ActiveGitOperation::Merge => Some(OperationState::Merge),
+                    ActiveGitOperation::None => Some(OperationState::None),
+                }
+            }
+            // Branches have no operation state; trivially resolved to None.
+            ItemKind::Branch(_) => Some(OperationState::None),
+        }
+    }
+
+    /// Gate 3: main state. Walks the priority chain tier by tier, using
+    /// the per-tier helpers from `state.rs`.
+    ///
+    /// Tier order: `IsMain > Orphan > integration (⊂/_) > WouldConflict (✗) >
+    /// same-commit-dirty / counts`. Integration outranks `WouldConflict`
+    /// because a branch whose content is already in the default branch is
+    /// safe to delete even if a naive re-merge would conflict (the conflict
+    /// is vacuous). To keep that from *delaying* the common `↑`/`↓`/`⊂`
+    /// cases, integration stays fire-or-continue (never blocks); only `✗` is
+    /// held back until the integration verdict is final, so an integrated
+    /// branch never momentarily flashes `✗` before settling to `⊂`.
+    fn try_gate_main_state(&self, default_branch: Option<&str>) -> Option<MainState> {
+        use super::state::{Tier, tier_counts, tier_is_main, tier_orphan, tier_would_conflict};
+
+        let is_main = matches!(&self.kind, ItemKind::Worktree(data) if data.is_main);
+
+        // Tier 1: IsMain (immediate if `is_main`, otherwise rule out).
+        match tier_is_main(is_main) {
+            Tier::Fired(s) => return Some(s),
+            Tier::RuledOut => {}
+            Tier::Wait => return None, // unreachable: tier 1 never waits
+        }
+
+        // Tier 2: Orphan.
+        match tier_orphan(self.is_orphan) {
+            Tier::Fired(s) => return Some(s),
+            Tier::RuledOut => {}
+            Tier::Wait => return None,
+        }
+
+        // `is_clean` feeds both the integration verdict (only a clean tree
+        // can be shown as integrated) and the `✗` guard (we can rule out
+        // "clean & integrated" only once cleanliness is known). It comes
+        // from the cheap local `WorkingTreeDiff`, which lands well before
+        // the merge-tree probes, so requiring it here rarely delays a cell.
+        let is_clean = match &self.kind {
+            ItemKind::Worktree(data) => {
+                let diff = data.working_tree_diff.as_ref()?;
+                let status = data.working_tree_status?;
+                diff.is_empty() && !status.untracked
+            }
+            // Branches have no working tree; trivially clean.
+            ItemKind::Branch(_) => true,
+        };
+
+        // Tier 3: Integration (`⊂`/`_`). Fire when the content is known to be
+        // in the default branch; otherwise fall through (the gate re-evaluates,
+        // so a later pass can still upgrade `↑` to `⊂`). `is_main` is already
+        // `false` here (tier 1 returned otherwise).
+        if let Some(state) = self.check_integration_state(is_main, default_branch, is_clean) {
+            return Some(state);
+        }
+
+        // Tier 4: WouldConflict (`✗`). Held until the integration verdict is
+        // final (`integration_resolved`) so an integrated-but-stale branch
+        // never flashes `✗` before tier 3 settles it to `⊂`. For branches
+        // there's no working-tree conflict probe, so substitute `Some(None)`
+        // (the "task ran but working tree is clean / N/A" sentinel).
+        let has_working_tree_conflicts = match &self.kind {
+            ItemKind::Worktree(data) => data.has_working_tree_conflicts,
+            ItemKind::Branch(_) => Some(None),
+        };
+        let integration_resolved = self.integration_resolved(default_branch, is_clean);
+        match tier_would_conflict(
+            self.has_merge_tree_conflicts,
+            has_working_tree_conflicts,
+            integration_resolved,
+        ) {
+            Tier::Fired(s) => return Some(s),
+            Tier::RuledOut => {}
+            Tier::Wait => return None,
+        }
+
+        // Tiers 5-6: same-commit-dirty / counts-based fallback.
+        match tier_counts(self.counts, Some(is_clean)) {
+            Tier::Fired(s) => Some(s),
+            Tier::RuledOut | Tier::Wait => None,
+        }
+    }
+
+    /// Whether the integration verdict for this item is final — i.e. it will
+    /// not later flip to "integrated". Used by gate 3 to decide when `✗`
+    /// (WouldConflict) is safe to render: a detected conflict only means `✗`
+    /// for a branch that isn't already in the default branch, so `✗` holds
+    /// until this returns `true`.
+    ///
+    /// The verdict is final immediately when integration can't apply (no
+    /// default branch, or a dirty tree — integration states require a clean
+    /// tree). Otherwise it can still resolve to integrated until every feeder
+    /// signal of `check_integration_state` has reported. Those signals are
+    /// seeded on skip (see `seed_skipped_task_defaults`), so this converges
+    /// for every item — including branches, which schedule the same probes.
+    fn integration_resolved(&self, default_branch: Option<&str>, is_clean: bool) -> bool {
+        if default_branch.is_none() || !is_clean {
+            return true;
+        }
+        self.counts.is_some()
+            && self.is_ancestor.is_some()
+            && self.has_file_changes.is_some()
+            && self.committed_trees_match.is_some()
+            && self.would_merge_add.is_some()
+            && self.is_patch_id_match.is_some()
+    }
+
+    /// Gate 4: upstream divergence. Resolves once `upstream` is loaded.
+    fn try_gate_upstream_divergence(&self) -> Option<Divergence> {
+        let upstream = self.upstream.as_ref()?;
+        Some(match upstream.active() {
+            Some(active) => Divergence::from_counts_with_remote(active.ahead, active.behind),
+            None => Divergence::None,
+        })
+    }
+
+    /// Gate 5: user marker. Resolves once the `UserMarker` task reports,
+    /// carrying either `Some(marker)` or `None` (no marker configured).
+    fn try_gate_user_marker(&self) -> Option<Option<String>> {
+        self.user_marker.clone()
+    }
+
+    /// Check if branch content is integrated into the default branch (safe to delete).
+    ///
+    /// Returns `Some(MainState)` only for truly integrated states:
+    /// - `Empty` = same commit as default branch with clean working tree
+    /// - `Integrated(...)` = content in default branch via different history
+    ///
+    /// Does NOT detect `SameCommit` (same commit with dirty working tree) -
+    /// that's handled separately in the caller since it's not an integration state.
+    fn check_integration_state(
+        &self,
+        is_main: bool,
+        default_branch: Option<&str>,
+        is_clean: bool,
+    ) -> Option<MainState> {
+        if is_main || default_branch.is_none() {
+            return None;
+        }
+
+        // Only show integration state if working tree is clean.
+        // Dirty working tree means there's work that would be lost on removal.
+        if !is_clean {
+            return None;
+        }
+
+        // Compute is_same_commit from ahead/behind counts (vs stats_base/main)
+        // This detects "same commit as main" for the _ symbol
+        let is_same_commit = self.counts.as_ref().map(|c| c.ahead == 0 && c.behind == 0);
+
+        // Use the shared integration check (same logic as wt remove)
+        let signals = IntegrationSignals {
+            is_same_commit,
+            is_ancestor: self.is_ancestor,
+            has_added_changes: self.has_file_changes,
+            trees_match: self.committed_trees_match,
+            would_merge_add: self.would_merge_add,
+            is_patch_id_match: self.is_patch_id_match,
+        };
+        let reason = check_integration(&signals);
+
+        // Convert to MainState, with SameCommit becoming Empty for display
+        match reason {
+            Some(IntegrationReason::SameCommit) => Some(MainState::Empty),
+            Some(other) => Some(MainState::Integrated(other)),
+            None => None,
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_list_item_branch_name() {
+        let item = ListItem::new_branch("abc123".to_string(), "feature".to_string());
+        assert_eq!(item.branch_name(), "feature");
+
+        let mut item = ListItem::new_branch("abc123".to_string(), "feature".to_string());
+        item.branch = None; // Simulate detached
+        assert_eq!(item.branch_name(), "(detached)");
+    }
+
+    #[test]
+    fn test_list_item_head() {
+        let item = ListItem::new_branch("abc123def".to_string(), "feature".to_string());
+        assert_eq!(item.head(), "abc123def");
+    }
+
+    #[test]
+    fn test_list_item_counts() {
+        // New items have no counts computed yet
+        let item = ListItem::new_branch("abc123".to_string(), "feature".to_string());
+        assert!(item.counts.is_none());
+
+        // After setting counts, they're accessible
+        let mut item = ListItem::new_branch("abc123".to_string(), "feature".to_string());
+        item.counts = Some(AheadBehind {
+            ahead: 5,
+            behind: 3,
+        });
+        let counts = item.counts.unwrap();
+        assert_eq!(counts.ahead, 5);
+        assert_eq!(counts.behind, 3);
+    }
+
+    #[test]
+    fn test_list_item_branch_diff() {
+        let item = ListItem::new_branch("abc123".to_string(), "feature".to_string());
+        // New items have no branch_diff computed yet
+        assert!(item.branch_diff().is_none());
+    }
+
+    #[test]
+    fn test_list_item_worktree_data() {
+        // Branch items have no worktree data, via either accessor.
+        let mut item = ListItem::new_branch("abc123".to_string(), "feature".to_string());
+        assert!(item.worktree_data().is_none());
+        assert!(item.worktree_data_mut().is_none());
+        assert!(item.worktree_path().is_none());
+    }
+
+    #[test]
+    fn gutter_glyph_marks_each_row_kind() {
+        let worktree = |is_main, is_current| {
+            ItemKind::Worktree(Box::new(WorktreeData {
+                is_main,
+                is_current,
+                ..Default::default()
+            }))
+        };
+        // Worktrees by location (`is_current` wins when a row is both).
+        assert_eq!(worktree(false, true).gutter_glyph(), '@');
+        assert_eq!(worktree(true, false).gutter_glyph(), '^');
+        assert_eq!(worktree(false, false).gutter_glyph(), '+');
+        assert_eq!(worktree(true, true).gutter_glyph(), '@');
+        // Branches by scope.
+        assert_eq!(ItemKind::Branch(BranchScope::Local).gutter_glyph(), '/');
+        assert_eq!(ItemKind::Branch(BranchScope::Remote).gutter_glyph(), '|');
+    }
+
+    #[test]
+    fn test_list_item_should_dim() {
+        // No status_symbols = should NOT dim (data still loading)
+        let item = ListItem::new_branch("abc123".to_string(), "feature".to_string());
+        assert!(!item.should_dim());
+    }
+
+    #[test]
+    fn test_check_integration_state_requires_clean() {
+        // Integration checks require is_clean to avoid marking worktrees with
+        // uncommitted changes as integrated (which would incorrectly suggest
+        // they're safe to remove).
+
+        // Create a minimal ListItem for testing - set committed_trees_match = true
+        let mut item = ListItem::new_branch("abc123".to_string(), "feature".to_string());
+        item.is_ancestor = Some(false); // not an ancestor (to skip priority 1-2)
+        item.committed_trees_match = Some(true); // trees match (priority 4)
+        item.has_file_changes = None; // unknown (to skip priority 3)
+        item.would_merge_add = None; // unknown (to skip priority 6)
+
+        // Dirty working tree: should NOT return Integrated
+        assert_eq!(
+            item.check_integration_state(
+                false,        // not main
+                Some("main"), // has default branch
+                false,        // is_clean = false (dirty working tree)
+            ),
+            None,
+            "Integration should reject dirty working tree"
+        );
+
+        // Clean working tree: SHOULD return Integrated(TreesMatch)
+        assert_eq!(
+            item.check_integration_state(
+                false,
+                Some("main"),
+                true, // is_clean = true
+            ),
+            Some(MainState::Integrated(IntegrationReason::TreesMatch)),
+            "Integration should accept clean working tree with matching trees"
+        );
+    }
+
+    #[test]
+    fn test_check_integration_state_untracked_blocks_integration() {
+        // When is_clean is computed at the call site, untracked files make is_clean=false.
+        // This test verifies that is_clean=false blocks integration, which is what happens
+        // when there are untracked files.
+
+        let mut item = ListItem::new_branch("abc123".to_string(), "feature".to_string());
+        item.is_ancestor = Some(false);
+        item.committed_trees_match = Some(true); // trees match (would show integration if clean)
+        item.has_file_changes = None;
+        item.would_merge_add = None;
+
+        // is_clean=false (as computed when untracked files exist): should NOT return Integrated
+        assert_eq!(
+            item.check_integration_state(
+                false,
+                Some("main"),
+                false, // is_clean = false (represents untracked files blocking integration)
+            ),
+            None,
+            "Dirty working tree (untracked files) should block integration"
+        );
+
+        // is_clean=true: SHOULD return Integrated
+        assert_eq!(
+            item.check_integration_state(
+                false,
+                Some("main"),
+                true, // is_clean = true
+            ),
+            Some(MainState::Integrated(IntegrationReason::TreesMatch)),
+            "Clean working tree should show as integrated"
+        );
+    }
+
+    // ============================================================================
+    // Per-gate refresh_status_symbols tests
+    //
+    // Each test exercises one gate's "waiting for inputs" / "short-circuit
+    // resolved" behavior. These replace the old
+    // `test_compute_status_symbols_waits_for_every_required_field` in
+    // results.rs, which fused all five gates into one "this field gates
+    // the whole function" assertion list.
+    // ============================================================================
+
+    /// Build a worktree `ListItem` pointing at a non-null HEAD, with
+    /// `is_main=false` so tests can exercise the full gate chain without
+    /// hitting the main-worktree short-circuit.
+    fn make_worktree_item() -> ListItem {
+        use crate::commands::list::collect::build_worktree_item;
+        use worktrunk::git::WorktreeInfo;
+        let wt = WorktreeInfo {
+            path: std::path::PathBuf::from("/tmp/wt"),
+            head: "abc123".into(),
+            branch: Some("feat".into()),
+            bare: false,
+            detached: false,
+            locked: None,
+            prunable: None,
+        };
+        build_worktree_item(&wt, false, false, false)
+    }
+
+    // ---- Gate 1: working tree flags (positions 0-2) ----
+
+    #[test]
+    fn gate_working_tree_loading_vs_resolved() {
+        use super::super::super::model::WorkingTreeStatus;
+
+        // Branch items are treated as permanently clean — gate 1 always
+        // resolves to `Some(default)` on first refresh.
+        let mut item = ListItem::new_branch("abc".into(), "feat".into());
+        item.refresh_status_symbols(None);
+        assert_eq!(
+            item.status_symbols.working_tree,
+            Some(WorkingTreeStatus::default())
+        );
+
+        // Worktree items with no `working_tree_status` → gate 1 stays
+        // None (Loading).
+        let mut item = make_worktree_item();
+        item.refresh_status_symbols(None);
+        assert_eq!(item.status_symbols.working_tree, None);
+
+        // Set working_tree_status → gate 1 resolves on next refresh.
+        if let ItemKind::Worktree(ref mut data) = item.kind {
+            data.working_tree_status =
+                Some(WorkingTreeStatus::new(true, false, false, false, false));
+        }
+        item.refresh_status_symbols(None);
+        assert!(item.status_symbols.working_tree.unwrap().staged);
+    }
+
+    // ---- Gate 2: operation state (position 3) ----
+
+    #[test]
+    fn gate_operation_state_short_circuits_on_conflicts() {
+        // `has_conflicts = Some(true)` fires the gate immediately without
+        // waiting for `git_operation`.
+        let mut item = make_worktree_item();
+        if let ItemKind::Worktree(ref mut data) = item.kind {
+            data.has_conflicts = Some(true);
+            // git_operation deliberately left None
+        }
+        item.refresh_status_symbols(None);
+        assert_eq!(
+            item.status_symbols.operation_state,
+            Some(OperationState::Conflicts)
+        );
+    }
+
+    #[test]
+    fn gate_operation_state_waits_for_both_inputs() {
+        // `has_conflicts = Some(false)` but `git_operation = None` →
+        // gate stays Loading (could still become Rebase/Merge).
+        let mut item = make_worktree_item();
+        if let ItemKind::Worktree(ref mut data) = item.kind {
+            data.has_conflicts = Some(false);
+            data.git_operation = None;
+        }
+        item.refresh_status_symbols(None);
+        assert_eq!(item.status_symbols.operation_state, None);
+
+        // Set git_operation → gate resolves.
+        if let ItemKind::Worktree(ref mut data) = item.kind {
+            data.git_operation = Some(ActiveGitOperation::Rebase);
+        }
+        item.refresh_status_symbols(None);
+        assert_eq!(
+            item.status_symbols.operation_state,
+            Some(OperationState::Rebase)
+        );
+    }
+
+    // ---- Gate 3: main state (position 4) ----
+
+    #[test]
+    fn gate_main_state_is_main_short_circuit() {
+        // Construct a main-worktree ListItem directly.
+        use crate::commands::list::collect::build_worktree_item;
+        use worktrunk::git::WorktreeInfo;
+        let wt = WorktreeInfo {
+            path: std::path::PathBuf::from("/tmp/main"),
+            head: "abc123".into(),
+            branch: Some("main".into()),
+            bare: false,
+            detached: false,
+            locked: None,
+            prunable: None,
+        };
+        let mut item = build_worktree_item(&wt, true, false, false);
+        // No other inputs set — tier 1 fires on metadata alone.
+        item.refresh_status_symbols(Some("main"));
+        assert_eq!(item.status_symbols.main_state, Some(MainState::IsMain));
+    }
+
+    #[test]
+    fn gate_main_state_orphan_blocks_lower_tiers() {
+        let mut item = make_worktree_item();
+        item.is_orphan = Some(true);
+        // Other inputs deliberately left None — tier 2 fires without them.
+        item.refresh_status_symbols(None);
+        assert_eq!(item.status_symbols.main_state, Some(MainState::Orphan));
+    }
+
+    /// Mark `item`'s working tree clean (so `is_clean` resolves) by seeding
+    /// the cheap local probes the gate reads for cleanliness.
+    fn mark_working_tree_clean(item: &mut ListItem) {
+        use super::super::super::model::WorkingTreeStatus;
+        use worktrunk::git::LineDiff;
+        if let ItemKind::Worktree(ref mut data) = item.kind {
+            data.working_tree_diff = Some(LineDiff::default());
+            data.working_tree_status = Some(WorkingTreeStatus::default());
+            data.has_working_tree_conflicts = Some(None); // clean: defer to HEAD probe
+        }
+    }
+
+    #[test]
+    fn gate_main_state_would_conflict_requires_both_conflict_signals() {
+        // Clean tree + no default branch ⇒ integration can't apply, so the
+        // WouldConflict tier is reached and gated only by the conflict probes.
+        // `has_merge_tree_conflicts = None` → the tier waits even with
+        // `has_working_tree_conflicts` saying "clean."
+        let mut item = make_worktree_item();
+        item.is_orphan = Some(false);
+        mark_working_tree_clean(&mut item);
+        item.has_merge_tree_conflicts = None;
+        item.refresh_status_symbols(None);
+        assert_eq!(item.status_symbols.main_state, None);
+
+        // Set the merge-tree probe to "no conflict" → the tier rules out and
+        // falls through. But counts is still None, so the counts tier waits
+        // and the gate stays None.
+        item.has_merge_tree_conflicts = Some(false);
+        item.refresh_status_symbols(None);
+        assert_eq!(item.status_symbols.main_state, None);
+    }
+
+    #[test]
+    fn gate_main_state_counts_tier_waits_for_counts_and_clean() {
+        use super::super::super::model::AheadBehind;
+
+        let mut item = make_worktree_item();
+        item.is_orphan = Some(false);
+        item.has_merge_tree_conflicts = Some(false);
+        if let ItemKind::Worktree(ref mut data) = item.kind {
+            data.has_working_tree_conflicts = Some(None);
+        }
+        // counts set but is_clean inputs missing → the gate can't even
+        // compute `is_clean`, so it waits.
+        item.counts = Some(AheadBehind {
+            ahead: 3,
+            behind: 2,
+        });
+        item.refresh_status_symbols(None);
+        assert_eq!(item.status_symbols.main_state, None);
+
+        // Fill in the is_clean inputs → gate resolves to Diverged.
+        mark_working_tree_clean(&mut item);
+        item.refresh_status_symbols(None);
+        assert_eq!(item.status_symbols.main_state, Some(MainState::Diverged));
+    }
+
+    /// Seed the integration feeder signals for a branch whose squashed diff
+    /// matches a commit already on the default branch (patch-id match), with
+    /// ahead/behind counts so it isn't same-commit. `patch_id` and
+    /// `would_merge_add` are left to the caller to model the loading state.
+    fn seed_patch_id_integration(item: &mut ListItem) {
+        use super::super::super::model::AheadBehind;
+        item.is_orphan = Some(false);
+        item.counts = Some(AheadBehind {
+            ahead: 1,
+            behind: 11,
+        });
+        item.is_ancestor = Some(false);
+        item.has_file_changes = Some(true); // has added changes (not NoAddedChanges)
+        item.committed_trees_match = Some(false);
+        // A real merge-tree conflict against today's default branch.
+        item.has_merge_tree_conflicts = Some(true);
+        mark_working_tree_clean(item);
+    }
+
+    #[test]
+    fn gate_main_state_integration_outranks_would_conflict() {
+        // The squash-merged-then-base-moved-on case: content is in the
+        // default branch (patch-id match) AND a naive re-merge conflicts.
+        // The row must show ⊂ (Integrated), never ✗ — matching what
+        // `wt step prune` reports.
+        let mut item = make_worktree_item();
+        seed_patch_id_integration(&mut item);
+        item.would_merge_add = Some(true); // merge-tree conflicted, can't tell
+        item.is_patch_id_match = Some(true); // …but the patch-id matches
+        item.refresh_status_symbols(Some("main"));
+        assert_eq!(
+            item.status_symbols.main_state,
+            Some(MainState::Integrated(IntegrationReason::PatchIdMatch))
+        );
+    }
+
+    #[test]
+    fn gate_main_state_conflict_holds_until_integration_resolves() {
+        // While the patch-id probe is still loading, a detected conflict must
+        // NOT flash ✗ — the gate holds at `·` (None) so an integrated branch
+        // never momentarily alarms before settling to ⊂.
+        let mut item = make_worktree_item();
+        seed_patch_id_integration(&mut item);
+        item.would_merge_add = None; // integration verdict not yet final
+        item.is_patch_id_match = None;
+        item.refresh_status_symbols(Some("main"));
+        assert_eq!(item.status_symbols.main_state, None);
+
+        // Once the probe lands as a patch-id match, it settles to ⊂.
+        item.would_merge_add = Some(true);
+        item.is_patch_id_match = Some(true);
+        item.refresh_status_symbols(Some("main"));
+        assert_eq!(
+            item.status_symbols.main_state,
+            Some(MainState::Integrated(IntegrationReason::PatchIdMatch))
+        );
+    }
+
+    #[test]
+    fn gate_main_state_genuine_conflict_shows_would_conflict() {
+        // Not integrated (patch-id resolves negative) AND a real conflict →
+        // ✗ is correct and still rendered.
+        let mut item = make_worktree_item();
+        seed_patch_id_integration(&mut item);
+        item.would_merge_add = Some(true);
+        item.is_patch_id_match = Some(false); // resolved: NOT integrated
+        item.refresh_status_symbols(Some("main"));
+        assert_eq!(
+            item.status_symbols.main_state,
+            Some(MainState::WouldConflict)
+        );
+    }
+
+    // ---- Gate 4: upstream divergence (position 5) ----
+
+    #[test]
+    fn gate_upstream_divergence() {
+        use super::super::super::model::UpstreamStatus;
+
+        let mut item = make_worktree_item();
+        // upstream None → Loading.
+        item.refresh_status_symbols(None);
+        assert_eq!(item.status_symbols.upstream_divergence, None);
+
+        // Default UpstreamStatus has remote=None, so active() returns
+        // None → resolves to Divergence::None.
+        item.upstream = Some(UpstreamStatus::default());
+        item.refresh_status_symbols(None);
+        assert_eq!(
+            item.status_symbols.upstream_divergence,
+            Some(Divergence::None)
+        );
+    }
+
+    // ---- Gate 5: user marker (position 6) ----
+
+    #[test]
+    fn gate_user_marker() {
+        // Loading until user_marker is Some(_).
+        let mut item = make_worktree_item();
+        item.refresh_status_symbols(None);
+        assert_eq!(item.status_symbols.user_marker, None);
+
+        // Task ran, no marker configured → resolves to Some(None).
+        item.user_marker = Some(None);
+        item.refresh_status_symbols(None);
+        assert_eq!(item.status_symbols.user_marker, Some(None));
+
+        // Task ran with a marker value → resolves to Some(Some(s)).
+        let mut item = make_worktree_item();
+        item.user_marker = Some(Some("🔥".to_string()));
+        item.refresh_status_symbols(None);
+        assert_eq!(
+            item.status_symbols.user_marker,
+            Some(Some("🔥".to_string()))
+        );
+    }
+}

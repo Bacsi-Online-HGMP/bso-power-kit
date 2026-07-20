@@ -1,0 +1,336 @@
+//! Snapshot tests for `-h` (short) and `--help` (long) output.
+//!
+//! These ensure our help formatting stays stable across releases and
+//! catches accidental regressions in wording or wrapping.
+//!
+//! - Short help (`-h`): Compact format, single-line options
+//! - Long help (`--help`): Verbose format with `after_long_help` content
+//!
+//! Skipped on Windows: clap renders markdown differently on Windows (tables, links,
+//! emphasis) resulting in formatting-only differences. The help content is identical;
+//! only the presentation varies.
+#![cfg(not(windows))]
+
+use crate::common::{add_standard_env_redactions, wt_command};
+use insta::Settings;
+use insta_cmd::assert_cmd_snapshot;
+use rstest::rstest;
+
+/// Insta settings shared by every help / version / usage snapshot: the
+/// standard env redactions plus the snapshot path. Routing all of them through
+/// one builder is deliberate — a test that constructs its own `Settings` and
+/// forgets `add_standard_env_redactions` leaks host-specific env (e.g.
+/// `LLVM_PROFILE_FILE`'s temp path) into the recorded `env:` block, which then
+/// diffs whenever the snapshot is regenerated on another machine. Callers layer
+/// extra filters (e.g. the version-string filter) on the returned value.
+fn help_settings() -> Settings {
+    let mut settings = Settings::clone_current();
+    settings.set_snapshot_path("../snapshots");
+    add_standard_env_redactions(&mut settings);
+    settings
+}
+
+fn snapshot_help(test_name: &str, args: &[&str]) {
+    let settings = help_settings();
+    settings.bind(|| {
+        let mut cmd = wt_command();
+        cmd.args(args);
+
+        // Check for double blank lines before snapshotting.
+        // Double blanks indicate formatting issues (e.g., HTML comments like
+        // `<!-- demo: file.gif -->` with blank lines on both sides).
+        let output = cmd.output().expect("failed to run command");
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert!(
+            !stdout.contains("\n\n\n"),
+            "Double blank line in help output for `wt {}`",
+            args.join(" ")
+        );
+
+        // Re-run for snapshot (assert_cmd_snapshot needs the Command)
+        let mut cmd = wt_command();
+        cmd.args(args);
+        assert_cmd_snapshot!(test_name, cmd);
+    });
+}
+
+// Root command (wt)
+#[rstest]
+#[case("help_root_short", "-h")]
+#[case("help_root_long", "--help")]
+#[case("help_no_args", "")]
+// Major commands - short and long variants
+#[case("help_config_short", "config -h")]
+#[case("help_config_long", "config --help")]
+#[case("help_list_short", "list -h")]
+#[case("help_list_long", "list --help")]
+#[case("help_switch_short", "switch -h")]
+#[case("help_switch_long", "switch --help")]
+#[case("help_remove_short", "remove -h")]
+#[case("help_remove_long", "remove --help")]
+#[case("help_merge_short", "merge -h")]
+#[case("help_merge_long", "merge --help")]
+#[case("help_step_short", "step -h")]
+#[case("help_step_long", "step --help")]
+#[case("help_step_promote", "step promote --help")]
+#[case("help_step_copy_ignored", "step copy-ignored --help")]
+// Config subcommands (long help only - these are less frequently accessed)
+#[case("help_config_shell", "config shell --help")]
+#[case("help_config_create", "config create --help")]
+#[case("help_config_show", "config show --help")]
+#[case("help_config_plugins", "config plugins --help")]
+#[case("help_config_plugins_codex", "config plugins codex --help")]
+#[case(
+    "help_config_plugins_codex_install",
+    "config plugins codex install --help"
+)]
+#[case("help_config_state", "config state --help")]
+#[case("help_config_state_cache", "config state cache --help")]
+#[case(
+    "help_config_state_default_branch",
+    "config state default-branch --help"
+)]
+#[case(
+    "help_config_state_previous_branch",
+    "config state previous-branch --help"
+)]
+#[case("help_config_state_ci_status", "config state ci-status --help")]
+#[case("help_config_state_marker", "config state marker --help")]
+#[case("help_config_state_logs", "config state logs --help")]
+#[case("help_config_state_logs_profile", "config state logs profile --help")]
+#[case("help_config_state_get", "config state get --help")]
+#[case("help_config_state_clear", "config state clear --help")]
+#[case("help_config_approvals", "config approvals --help")]
+#[case("help_config_approvals_add", "config approvals add --help")]
+#[case("help_config_approvals_clear", "config approvals clear --help")]
+fn test_help(#[case] test_name: &str, #[case] args_str: &str) {
+    let args: Vec<&str> = if args_str.is_empty() {
+        vec![]
+    } else {
+        args_str.split_whitespace().collect()
+    };
+    snapshot_help(test_name, &args);
+}
+
+#[test]
+fn test_version() {
+    let mut settings = help_settings();
+    // Filter out version number for stable snapshots
+    // Formats:
+    // - wt v0.4.0-25-gc9bcf6c0 (version with git commit info)
+    // - wt 7df940e (just git short hash in CI)
+    // - wt v0.4.0-dirty or wt 7df940e-dirty (uncommitted changes)
+    settings.add_filter(
+        r"wt (v\d+\.\d+\.\d+(-[\w.-]+)?|[a-f0-9]{7,40}(?:-dirty)?)",
+        "wt [VERSION]",
+    );
+    settings.bind(|| {
+        let mut cmd = wt_command();
+        cmd.arg("--version");
+        assert_cmd_snapshot!("version", cmd);
+    });
+}
+
+/// `--help` must write to stdout, not stderr. POSIX convention — matches
+/// `cargo`, `curl`, `python`, and `git <cmd> -h`. Lets users do
+/// `wt --help | less` or `wt --help > help.txt` without redirection.
+#[test]
+fn test_help_goes_to_stdout() {
+    for args in [&["--help"][..], &["-h"][..], &["merge", "--help"][..]] {
+        let output = wt_command()
+            .args(args)
+            .output()
+            .unwrap_or_else(|e| panic!("failed to run wt {args:?}: {e}"));
+
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+
+        assert!(
+            stdout.contains("Usage:"),
+            "wt {args:?} should write help to stdout, but stdout was: {stdout:?} (stderr: {stderr:?})"
+        );
+        assert!(
+            stderr.trim().is_empty(),
+            "wt {args:?} should not write to stderr, but stderr was: {stderr:?}"
+        );
+    }
+}
+
+/// When stdout is piped, help must be plain text — no ANSI escapes leaking into
+/// `wt --help > file.txt` or `wt --help | less`. Built from `wt_command()` for
+/// HOME/config isolation, then clears the `CLICOLOR_FORCE` it sets so color
+/// detection sees a non-tty (piped) stdout.
+#[test]
+fn test_help_strips_ansi_when_piped() {
+    let output = wt_command()
+        .arg("--help")
+        .env_remove("CLICOLOR_FORCE")
+        .env("NO_COLOR", "1")
+        .output()
+        .expect("failed to run wt --help");
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        !stdout.contains('\x1b'),
+        "wt --help piped to a file must not contain ANSI escapes; got: {stdout:?}"
+    );
+}
+
+/// `--version` must write to stdout, not stderr. This is the POSIX convention
+/// and what scripts expect — e.g., `version=$(wt --version)` or test harnesses
+/// that grep for a version string from stdout. See #2072.
+#[test]
+fn test_version_goes_to_stdout() {
+    let output = wt_command()
+        .arg("--version")
+        .output()
+        .expect("failed to run wt --version");
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    assert!(
+        stdout.contains("wt "),
+        "wt --version should write to stdout, but stdout was: {stdout:?} (stderr: {stderr:?})"
+    );
+    assert!(
+        stderr.trim().is_empty(),
+        "wt --version should not write to stderr, but stderr was: {stderr:?}"
+    );
+}
+
+#[test]
+fn test_help_md() {
+    help_settings().bind(|| {
+        let mut cmd = wt_command();
+        cmd.args(["--help-md"]);
+        assert_cmd_snapshot!("help_md_root", cmd);
+    });
+}
+
+#[test]
+fn test_help_md_subcommand() {
+    help_settings().bind(|| {
+        let mut cmd = wt_command();
+        cmd.args(["merge", "--help-md"]);
+        assert_cmd_snapshot!("help_md_merge", cmd);
+    });
+}
+
+/// Verifies width handling when help is narrower than its content:
+/// - Markdown tables stay intact (no mid-row breaks), extending past 80 columns.
+/// - Captured `wt list` example tables (`<!-- wt list … -->` blocks) are chopped
+///   to width with an ellipsis — like real `wt list` — instead of word-wrapping,
+///   while hand-authored command sessions (the `jq` examples) still wrap.
+#[test]
+fn test_help_list_narrow_terminal() {
+    help_settings().bind(|| {
+        let mut cmd = wt_command();
+        cmd.env("COLUMNS", "80");
+        cmd.args(["list", "--help"]);
+        assert_cmd_snapshot!("help_list_narrow_80", cmd);
+    });
+}
+
+/// With no detectable width (piped output, no COLUMNS), `terminal_width()`
+/// returns `None` and the markdown renderer falls back to its own defaults.
+/// Back when "no width" was a `usize::MAX` sentinel, `wt list --help` panicked
+/// with a capacity overflow trying to render a `---` rule that wide.
+#[test]
+fn test_help_without_detectable_width() {
+    let mut cmd = wt_command();
+    cmd.env_remove("COLUMNS");
+    cmd.args(["list", "--help"]);
+    let output = cmd.output().expect("failed to run command");
+    assert!(
+        output.status.success(),
+        "wt list --help without COLUMNS failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(!output.stdout.is_empty(), "help output should not be empty");
+}
+
+/// Tests --help-description outputs the meta description for docs frontmatter.
+#[rstest]
+#[case("switch", "Switch to a worktree; create if needed.")]
+#[case(
+    "merge",
+    "Merge current branch into the target branch. Squash & rebase"
+)]
+#[case("hook", "Run configured hooks.")]
+fn test_help_description(#[case] cmd: &str, #[case] expected_prefix: &str) {
+    let output = wt_command()
+        .args([cmd, "--help-description"])
+        .output()
+        .expect("failed to run wt --help-description");
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.starts_with(expected_prefix),
+        "Expected description for '{cmd}' to start with '{expected_prefix}', got: {stdout}"
+    );
+}
+
+#[test]
+fn test_help_description_no_subcommand() {
+    let output = wt_command()
+        .args(["--help-description"])
+        .output()
+        .expect("failed to run wt --help-description");
+
+    // Exits 0 (eprintln + return, not process::exit(1))
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("Usage:"),
+        "Expected usage hint, got: {stderr}"
+    );
+}
+
+#[test]
+fn test_help_description_unknown_command() {
+    let output = wt_command()
+        .args(["nonexistent", "--help-description"])
+        .output()
+        .expect("failed to run wt --help-description");
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("Unknown command"),
+        "Expected unknown command error, got: {stderr}"
+    );
+}
+
+/// Tests that using a nested subcommand at the top level suggests the correct command.
+///
+/// When users type `wt squash` instead of `wt step squash`, or `wt pre-merge` instead
+/// of `wt hook pre-merge`, they should get a helpful suggestion.
+#[rstest]
+#[case("nested_subcommand_step_squash", "squash", "wt step squash")]
+#[case("nested_subcommand_step_commit", "commit", "wt step commit")]
+#[case("nested_subcommand_hook_pre_merge", "pre-merge", "wt hook pre-merge")]
+#[case("nested_subcommand_hook_pre_start", "pre-start", "wt hook pre-start")]
+fn test_nested_subcommand_suggestion(
+    #[case] test_name: &str,
+    #[case] subcommand: &str,
+    #[case] expected_suggestion: &str,
+) {
+    help_settings().bind(|| {
+        let mut cmd = wt_command();
+        cmd.arg(subcommand);
+        let output = cmd.output().expect("failed to run wt");
+
+        // Should fail (exit code 2)
+        assert_eq!(output.status.code(), Some(2));
+
+        // Should contain the suggestion
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            stderr.contains(expected_suggestion),
+            "Expected stderr to contain '{expected_suggestion}', got:\n{stderr}"
+        );
+
+        // Snapshot the full error output
+        assert_cmd_snapshot!(test_name, cmd);
+    });
+}

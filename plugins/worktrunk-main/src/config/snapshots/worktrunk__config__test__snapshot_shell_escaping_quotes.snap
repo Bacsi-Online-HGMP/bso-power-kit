@@ -1,0 +1,16 @@
+---
+source: src/config/test.rs
+expression: results
+---
+- - single_quote
+  - "feature'test"
+  - "echo 'feature'\\''test'"
+- - double_quote
+  - "feature\"test"
+  - "echo 'feature\"test'"
+- - mixed_quotes
+  - "feature'test\"mixed"
+  - "echo 'feature'\\''test\"mixed'"
+- - multiple_single
+  - "don't'panic"
+  - "echo 'don'\\''t'\\''panic'"

@@ -1,0 +1,6 @@
+---
+source: tests/integration_tests/configure_shell.rs
+expression: "output.trim_start_matches('\\n')"
+---
+[36m❯[39m Install shell integration? [1m[y/N/?][22m 
+✗ Cancelled by user

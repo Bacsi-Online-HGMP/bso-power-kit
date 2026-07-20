@@ -1,0 +1,417 @@
+//! Types for worktree operations.
+//!
+//! Core data structures used by switch, remove, and push operations.
+
+use std::path::{Path, PathBuf};
+
+use worktrunk::git::{BranchDeletionMode, RefType};
+
+/// Flags indicating which merge operations occurred
+#[derive(Debug, Clone, Copy)]
+pub struct MergeOperations {
+    pub committed: bool,
+    pub squashed: bool,
+    pub rebased: bool,
+}
+
+/// Result of a worktree switch operation
+pub enum SwitchResult {
+    /// Already at the target worktree (no action taken)
+    AlreadyAt(PathBuf),
+    /// Switched to existing worktree at the given path
+    Existing { path: PathBuf },
+    /// Created new worktree at the given path
+    Created {
+        path: PathBuf,
+        /// True if the user requested branch creation (--create flag)
+        created_branch: bool,
+        /// Base branch when creating new branch (e.g., "main")
+        base_branch: Option<String>,
+        /// Absolute path to base branch's worktree (POSIX format for shell compatibility)
+        base_worktree_path: Option<String>,
+        /// Remote tracking branch if auto-created from remote (e.g., "origin/feature")
+        from_remote: Option<String>,
+        /// PR/MR number when created via `pr:N` / `mr:N` (carried into post-* hook
+        /// templates as `pr_number`).
+        pr_number: Option<u32>,
+        /// PR/MR web URL when created via `pr:N` / `mr:N` (carried into post-* hook
+        /// templates as `pr_url`).
+        pr_url: Option<String>,
+    },
+}
+
+impl SwitchResult {
+    /// Get the worktree path
+    pub fn path(&self) -> &PathBuf {
+        match self {
+            SwitchResult::AlreadyAt(path) => path,
+            SwitchResult::Existing { path, .. } => path,
+            SwitchResult::Created { path, .. } => path,
+        }
+    }
+}
+
+/// Branch state for a switch operation.
+#[derive(Debug, Clone)]
+pub struct SwitchBranchInfo {
+    /// The branch being switched to. `None` for detached HEAD worktrees.
+    pub branch: Option<String>,
+    /// Expected path when there's a branch-worktree mismatch (None = path matches template)
+    pub expected_path: Option<PathBuf>,
+}
+
+/// How the worktree will be created.
+#[derive(Debug)]
+pub enum CreationMethod {
+    /// Use `git worktree add` - handles existing branch, DWIM from remote, or -b for new
+    Regular {
+        /// True if using `-b` to create a new branch (--create flag)
+        create_branch: bool,
+        /// Base branch for creation (resolved, validated to exist)
+        base_branch: Option<String>,
+        /// When `--base pr:N` / `--base mr:N` (same-repo) is paired with `--create`,
+        /// the user's intent is "create a new branch tracking the PR/MR's source
+        /// branch on the remote", so `git push` from the new worktree pushes back
+        /// to that PR/MR. `git worktree add -b new <bare-name>` doesn't set up
+        /// tracking on its own (only `<remote>/<branch>` triggers DWIM, and even
+        /// then we'd unset it via the issue-#713 safety check), so we capture the
+        /// (remote, branch) pair here and configure tracking explicitly after
+        /// `git worktree add` succeeds. `None` for any other base resolution.
+        base_pr_upstream: Option<(String, String)>,
+    },
+    /// Fork PR/MR: fetch from refs/pull/N/head or refs/merge-requests/N/head,
+    /// create branch, configure pushRemote.
+    ///
+    /// The remote is resolved during planning (before approval prompts) to ensure
+    /// early failure if no matching remote exists.
+    ForkRef {
+        /// The reference type (PR or MR).
+        ref_type: RefType,
+        /// The PR/MR number.
+        number: u32,
+        /// The ref path (e.g., "pull/123/head" or "merge-requests/42/head").
+        ref_path: String,
+        /// URL to push to (the fork's URL). `None` when using a prefixed branch
+        /// name (e.g., `contributor/main`) because push won't work.
+        fork_push_url: Option<String>,
+        /// Web URL for the PR/MR.
+        ref_url: String,
+        /// Resolved remote name where PR/MR refs live (e.g., "origin", "upstream").
+        remote: String,
+    },
+}
+
+/// Validated plan for a switch operation.
+///
+/// Created by `plan_switch()`, consumed by `execute_switch()`.
+/// This separation allows validation to happen before approval prompts,
+/// ensuring users aren't asked to approve hooks for operations that will fail.
+#[derive(Debug)]
+pub enum SwitchPlan {
+    /// Branch already has a worktree - just switch to it (no git commands needed)
+    Existing {
+        path: PathBuf,
+        /// The branch at this worktree. `None` for detached HEAD.
+        branch: Option<String>,
+        /// Branch to record as "previous" for `wt switch -`
+        new_previous: Option<String>,
+    },
+    /// Need to create a new worktree
+    Create {
+        branch: String,
+        worktree_path: PathBuf,
+        /// How to create the worktree
+        method: CreationMethod,
+        /// True when a stale path occupies `worktree_path` and `--clobber` was
+        /// given — `execute_switch` backs it up before creating the worktree.
+        needs_clobber_backup: bool,
+        /// Branch to record as "previous" for `wt switch -`
+        new_previous: Option<String>,
+    },
+}
+
+impl SwitchPlan {
+    /// Get the worktree path for this plan.
+    pub fn worktree_path(&self) -> &Path {
+        match self {
+            SwitchPlan::Existing { path, .. } => path,
+            SwitchPlan::Create { worktree_path, .. } => worktree_path,
+        }
+    }
+
+    /// Returns true if this plan will create a new worktree.
+    pub fn is_create(&self) -> bool {
+        matches!(self, SwitchPlan::Create { .. })
+    }
+}
+
+/// Result of a worktree remove operation
+pub enum RemoveResult {
+    /// Removed worktree and changed directory (if needed)
+    RemovedWorktree {
+        /// Stable working directory for post-removal execution: hooks run here,
+        /// background removal spawns from here, and `cd` directs the shell here.
+        /// Usually the primary worktree; falls back to cwd when removing the
+        /// primary worktree itself (bare repo edge case), or the target branch's
+        /// worktree in `wt merge`.
+        main_path: PathBuf,
+        worktree_path: PathBuf,
+        changed_directory: bool,
+        /// Branch name, if known. None for detached HEAD state.
+        branch_name: Option<String>,
+        deletion_mode: BranchDeletionMode,
+        target_branch: Option<String>,
+        /// Force git worktree removal even with untracked files.
+        force_worktree: bool,
+        /// Expected path based on config template. `Some` when actual path differs
+        /// from expected (path mismatch), `None` when path matches template.
+        expected_path: Option<PathBuf>,
+        /// Commit SHA of the removed worktree's HEAD, captured before removal.
+        /// Used for post-remove hook template variables so they reference the
+        /// removed worktree's state, not the execution context.
+        removed_commit: Option<String>,
+    },
+    /// Branch exists but has no worktree - attempt branch deletion only.
+    ///
+    /// `pruned` indicates whether the worktree was pruned (directory was missing).
+    /// When true, shows an info message instead of a warning.
+    BranchOnly {
+        branch_name: String,
+        deletion_mode: BranchDeletionMode,
+        /// True if the worktree was pruned before returning this result.
+        pruned: bool,
+        /// Integration target for display. May be the effective target (e.g.,
+        /// `origin/main` when upstream is ahead) or the local default branch.
+        /// `None` when no default branch is configured.
+        target_branch: Option<String>,
+        /// Pre-computed integration reason. Branch-only removal has no
+        /// worktree-local `pre-remove` hook, so the integration decision can
+        /// be made during preparation.
+        integration_reason: Option<worktrunk::git::IntegrationReason>,
+    },
+}
+
+impl RemoveResult {
+    /// Path of the removed worktree, if this result removed one.
+    ///
+    /// `None` for branch-only deletions — they have no worktree, so no
+    /// `pre-remove` hook runs and there's no worktree-local `.config/wt.toml`
+    /// to consult.
+    pub fn removed_worktree_path(&self) -> Option<&Path> {
+        match self {
+            RemoveResult::RemovedWorktree { worktree_path, .. } => Some(worktree_path),
+            RemoveResult::BranchOnly { .. } => None,
+        }
+    }
+
+    /// Post-removal working directory — where the user lands, and the worktree
+    /// whose `.config/wt.toml` `post-switch` reads. `None` for branch-only
+    /// deletions (no worktree was removed, so nothing was switched away from).
+    /// See the `main_path` field docs on [`RemoveResult::RemovedWorktree`].
+    pub fn destination_path(&self) -> Option<&Path> {
+        match self {
+            RemoveResult::RemovedWorktree { main_path, .. } => Some(main_path),
+            RemoveResult::BranchOnly { .. } => None,
+        }
+    }
+
+    /// Convert to a JSON value for structured output.
+    pub fn to_json(&self) -> serde_json::Value {
+        match self {
+            RemoveResult::RemovedWorktree {
+                worktree_path,
+                branch_name,
+                deletion_mode,
+                ..
+            } => serde_json::json!({
+                "kind": "worktree",
+                "branch": branch_name,
+                "path": worktree_path,
+                "branch_deleted": !deletion_mode.should_keep(),
+            }),
+            RemoveResult::BranchOnly {
+                branch_name,
+                deletion_mode,
+                pruned,
+                ..
+            } => serde_json::json!({
+                "kind": "branch_only",
+                "branch": branch_name,
+                "pruned": pruned,
+                "branch_deleted": !deletion_mode.should_keep(),
+            }),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_switch_result_path_already_at() {
+        let path = PathBuf::from("/test/path");
+        let result = SwitchResult::AlreadyAt(path.clone());
+        assert_eq!(result.path(), &path);
+    }
+
+    #[test]
+    fn test_switch_result_path_existing() {
+        let path = PathBuf::from("/test/existing");
+        let result = SwitchResult::Existing { path: path.clone() };
+        assert_eq!(result.path(), &path);
+    }
+
+    #[test]
+    fn test_switch_result_path_created() {
+        let path = PathBuf::from("/test/created");
+        let result = SwitchResult::Created {
+            path: path.clone(),
+            created_branch: true,
+            base_branch: Some("main".to_string()),
+            base_worktree_path: Some("/test/main".to_string()),
+            from_remote: None,
+            pr_number: None,
+            pr_url: None,
+        };
+        assert_eq!(result.path(), &path);
+    }
+
+    #[test]
+    fn test_switch_result_created_with_remote() {
+        let path = PathBuf::from("/test/remote");
+        let result = SwitchResult::Created {
+            path: path.clone(),
+            created_branch: false,
+            base_branch: None,
+            base_worktree_path: None,
+            from_remote: Some("origin/feature".to_string()),
+            pr_number: None,
+            pr_url: None,
+        };
+        assert_eq!(result.path(), &path);
+    }
+
+    #[test]
+    fn test_remove_result_removed_worktree() {
+        let result = RemoveResult::RemovedWorktree {
+            main_path: PathBuf::from("/main"),
+            worktree_path: PathBuf::from("/worktree"),
+            changed_directory: true,
+            branch_name: Some("feature".to_string()),
+            deletion_mode: BranchDeletionMode::SafeDelete,
+            target_branch: Some("main".to_string()),
+            force_worktree: false,
+            expected_path: None,
+            removed_commit: Some("abc1234567890".to_string()),
+        };
+        match result {
+            RemoveResult::RemovedWorktree {
+                main_path,
+                worktree_path,
+                changed_directory,
+                branch_name,
+                deletion_mode,
+                target_branch,
+                force_worktree,
+                expected_path,
+                removed_commit,
+            } => {
+                assert_eq!(main_path.to_str().unwrap(), "/main");
+                assert_eq!(worktree_path.to_str().unwrap(), "/worktree");
+                assert!(changed_directory);
+                assert_eq!(branch_name.as_deref(), Some("feature"));
+                assert!(!deletion_mode.should_keep());
+                assert!(!deletion_mode.is_force());
+                assert_eq!(target_branch.as_deref(), Some("main"));
+                assert!(!force_worktree);
+                assert!(expected_path.is_none());
+                assert_eq!(removed_commit.as_deref(), Some("abc1234567890"));
+            }
+            _ => panic!("Expected RemovedWorktree variant"),
+        }
+    }
+
+    #[test]
+    fn test_remove_result_branch_only() {
+        let result = RemoveResult::BranchOnly {
+            branch_name: "stale-branch".to_string(),
+            deletion_mode: BranchDeletionMode::Keep,
+            pruned: false,
+            target_branch: None,
+            integration_reason: None,
+        };
+        match result {
+            RemoveResult::BranchOnly {
+                branch_name,
+                deletion_mode,
+                pruned,
+                target_branch,
+                integration_reason,
+            } => {
+                assert_eq!(branch_name, "stale-branch");
+                assert!(deletion_mode.should_keep());
+                assert!(!deletion_mode.is_force());
+                assert!(!pruned);
+                assert!(target_branch.is_none());
+                assert!(integration_reason.is_none());
+            }
+            _ => panic!("Expected BranchOnly variant"),
+        }
+    }
+
+    #[test]
+    fn test_remove_result_branch_only_pruned() {
+        let result = RemoveResult::BranchOnly {
+            branch_name: "pruned-branch".to_string(),
+            deletion_mode: BranchDeletionMode::SafeDelete,
+            pruned: true,
+            target_branch: Some("main".to_string()),
+            integration_reason: None,
+        };
+        match result {
+            RemoveResult::BranchOnly {
+                branch_name,
+                deletion_mode,
+                pruned,
+                target_branch,
+                integration_reason,
+            } => {
+                assert_eq!(branch_name, "pruned-branch");
+                assert!(!deletion_mode.should_keep());
+                assert!(pruned);
+                assert_eq!(target_branch.as_deref(), Some("main"));
+                assert!(integration_reason.is_none());
+            }
+            _ => panic!("Expected BranchOnly variant"),
+        }
+    }
+
+    #[test]
+    fn test_remove_result_with_force_delete() {
+        let result = RemoveResult::RemovedWorktree {
+            main_path: PathBuf::from("/main"),
+            worktree_path: PathBuf::from("/worktree"),
+            changed_directory: false,
+            branch_name: None, // Detached HEAD
+            deletion_mode: BranchDeletionMode::ForceDelete,
+            target_branch: None,
+            force_worktree: true,
+            expected_path: None,
+            removed_commit: None, // Detached HEAD may not have meaningful commit
+        };
+        match result {
+            RemoveResult::RemovedWorktree {
+                branch_name,
+                deletion_mode,
+                force_worktree,
+                ..
+            } => {
+                assert!(branch_name.is_none());
+                assert!(deletion_mode.is_force());
+                assert!(force_worktree);
+            }
+            _ => panic!("Expected RemovedWorktree variant"),
+        }
+    }
+}

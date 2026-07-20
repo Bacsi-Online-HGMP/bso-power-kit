@@ -1,0 +1,37 @@
+---
+source: src/config/test.rs
+expression: results
+---
+- - spaces
+  - feature name
+  - "echo 'feature name'"
+- - dollar
+  - feature$USER
+  - "echo 'feature$USER'"
+- - command_sub
+  - feature$(whoami)
+  - "echo 'feature$(whoami)'"
+- - backticks
+  - "feature`id`"
+  - "echo 'feature`id`'"
+- - semicolon
+  - feature;rm -rf /
+  - "echo 'feature;rm -rf /'"
+- - pipe
+  - feature|grep foo
+  - "echo 'feature|grep foo'"
+- - ampersand
+  - feature&background
+  - "echo 'feature&background'"
+- - redirect
+  - feature>output.txt
+  - "echo 'feature>output.txt'"
+- - wildcard
+  - feature*glob
+  - "echo 'feature*glob'"
+- - question
+  - feature?char
+  - "echo 'feature?char'"
+- - brackets
+  - "feature[0-9]"
+  - "echo 'feature[0-9]'"

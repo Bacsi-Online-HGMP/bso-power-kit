@@ -1,0 +1,79 @@
+# Lychee link checker configuration
+# See: https://lychee.cli.rs/
+
+# Root directory for resolving absolute paths (e.g., /assets/...)
+root_dir = "docs/static"
+
+# Network resilience - handles transient failures
+max_retries = 6
+retry_wait_time = 2
+timeout = 20
+max_redirects = 5
+max_concurrency = 8
+
+# Accepted HTTP status codes
+accept = [200, 206, 429]
+
+# Caching to reduce rate limiting and improve performance
+cache = true
+max_cache_age = "1d"
+cache_exclude_status = "400..=599"  # Don't cache errors (only successes)
+
+# Exclude sites that block GitHub Actions or have reliability issues
+exclude = [
+    # Zola internal links use @/ syntax (validated by `zola check`, not lychee)
+    "/@/",
+
+    # Private or authenticated GitHub resources
+    "github\\.com/anthropics/claude-code/issues",
+
+    # GitHub resources that are either immutable or not our content to maintain
+    # (user profiles, stargazers, commit SHAs, external repo issues/PRs/actions)
+    "github\\.com/[^/]+/[^/]+/commit",
+    "github\\.com/[^/]+/[^/]+/issues",
+    "github\\.com/[^/]+/[^/]+/pull",
+    "github\\.com/[^/]+/[^/]+/actions",
+    "github\\.com/[^/]+/[^/]+/stargazers",
+    "github\\.com/[^/]+/[^/]+/releases/tag",
+    "gitlab\\.com/.+/-/merge_requests",
+
+    # GitHub user/org profiles (no content we control, frequently 429/502)
+    "github\\.com/[a-zA-Z0-9_-]+$",
+
+    # Social media (blocks GitHub Actions)
+    "twitter\\.com",
+    "x\\.com",
+    "reddit\\.com",
+    "linkedin\\.com",
+
+    # Sites with bot protection
+    "anthropic\\.com/engineering",
+
+    # Sites with reliability issues in CI
+    "stackoverflow\\.com",
+    "npmjs\\.com",
+    "incident\\.io",
+    "git-scm\\.com",
+    "api\\.star-history\\.com",
+    "no-color\\.org",
+
+    # Package registries and badges (frequently return 429 or block CI)
+    "crates\\.io",
+    "docs\\.rs",
+    "img\\.shields\\.io",
+    "codecov\\.io",
+    "opensource\\.org",
+    "llm\\.datasette\\.io",
+
+    # Asset GIFs stored in separate worktrunk-assets repo (gitignored, fetched at deploy)
+    # Pattern for file:// URLs and root-relative paths
+    "file://.*wt-.*\\.gif",
+    "/assets/.*\\.gif",
+
+    # Local build artifacts (not checked into git)
+    "wt-demo/out/wt-demo\\.gif",
+
+    # Local dev server URLs (not running during CI)
+    "127\\.0\\.0\\.1",
+    "localhost",
+]

@@ -1,0 +1,602 @@
+//! Configuration section structs.
+//!
+//! These structs represent individual configuration sections that can be set
+//! globally or per-project. Each implements the `Merge` trait for layering.
+
+use std::collections::BTreeMap;
+
+use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
+
+use super::merge::{Merge, merge_optional};
+use crate::config::HooksConfig;
+use crate::config::commands::CommandConfig;
+use crate::config::is_default;
+
+/// What to stage before committing
+#[derive(
+    Debug, Clone, Copy, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize, JsonSchema,
+)]
+#[cfg_attr(feature = "cli", derive(clap::ValueEnum))]
+#[serde(rename_all = "kebab-case")]
+pub enum StageMode {
+    /// Stage everything: untracked files + unstaged tracked changes
+    #[default]
+    All,
+    /// Stage tracked changes only (like `git add -u`)
+    Tracked,
+    /// Stage nothing, commit only what's already in the index
+    None,
+}
+
+/// Configuration for commit message generation
+///
+/// The command is a shell string executed via `sh -c`. Environment variables
+/// can be set inline (e.g., `MAX_THINKING_TOKENS=0 claude -p ...`).
+#[derive(Debug, Serialize, Deserialize, Clone, Default, PartialEq, JsonSchema)]
+pub struct CommitGenerationConfig {
+    /// Shell command to invoke for generating commit messages
+    ///
+    /// Examples:
+    /// - `"llm -m claude-haiku-4.5"`
+    /// - `"MAX_THINKING_TOKENS=0 claude -p --no-session-persistence --model=haiku"`
+    ///
+    /// The command receives the prompt via stdin and should output the commit message.
+    #[serde(default)]
+    pub command: Option<String>,
+
+    /// Inline template for commit message prompt
+    /// Available variables: {{ git_diff }}, {{ branch }}, {{ recent_commits }}, {{ repo }}
+    #[serde(default)]
+    pub template: Option<String>,
+
+    /// Path to template file (mutually exclusive with template)
+    /// Supports tilde expansion (e.g., "~/.config/worktrunk/commit-template.txt")
+    #[serde(default, rename = "template-file")]
+    pub template_file: Option<String>,
+
+    /// Inline template for squash commit message prompt
+    /// Available variables: {{ commits }}, {{ target_branch }}, {{ branch }}, {{ repo }}
+    #[serde(default, rename = "squash-template")]
+    pub squash_template: Option<String>,
+
+    /// Path to squash template file (mutually exclusive with squash-template)
+    /// Supports tilde expansion (e.g., "~/.config/worktrunk/squash-template.txt")
+    #[serde(default, rename = "squash-template-file")]
+    pub squash_template_file: Option<String>,
+
+    /// Inline text appended to the commit and squash prompts inside a
+    /// `<user-guidance>` block, after the main template's `<style>`
+    /// section. Rendered as a minijinja template with the same variables
+    /// (`{{ branch }}`, `{{ git_diff }}`, etc.). Unlike `template`, this
+    /// *adds to* the default prompt instead of replacing it — use it for
+    /// personal commit-message preferences without restating the whole
+    /// template. The project config has a `[commit.generation]
+    /// template-append` of its own; it renders into a separate
+    /// `<project-guidance>` block right after this one.
+    ///
+    /// *(Experimental — may change in future releases.)*
+    #[serde(default, rename = "template-append")]
+    pub template_append: Option<String>,
+}
+
+impl CommitGenerationConfig {
+    /// Returns true if an LLM command is configured
+    pub fn is_configured(&self) -> bool {
+        self.command
+            .as_ref()
+            .map(|s| !s.trim().is_empty())
+            .unwrap_or(false)
+    }
+}
+
+impl Merge for CommitGenerationConfig {
+    fn merge_with(&self, other: &Self) -> Self {
+        // For template/template_file pairs: if project sets one, it clears the other
+        // This prevents violating mutual exclusivity when global has one and project has the other
+        let (template, template_file) = if other.template.is_some() {
+            (other.template.clone(), None)
+        } else if other.template_file.is_some() {
+            (None, other.template_file.clone())
+        } else {
+            (self.template.clone(), self.template_file.clone())
+        };
+
+        let (squash_template, squash_template_file) = if other.squash_template.is_some() {
+            (other.squash_template.clone(), None)
+        } else if other.squash_template_file.is_some() {
+            (None, other.squash_template_file.clone())
+        } else {
+            (
+                self.squash_template.clone(),
+                self.squash_template_file.clone(),
+            )
+        };
+
+        Self {
+            command: other.command.clone().or_else(|| self.command.clone()),
+            template,
+            template_file,
+            squash_template,
+            squash_template_file,
+            template_append: other
+                .template_append
+                .clone()
+                .or_else(|| self.template_append.clone()),
+        }
+    }
+}
+
+/// A custom column in the `wt list` table, keyed by its header text.
+///
+/// The value is a minijinja template rendered per row with `{{ branch }}`,
+/// `{{ worktree_path }}`, `{{ worktree_name }}` (empty for branch-only rows),
+/// and `{{ vars.* }}` (per-branch state from `wt config state vars set`).
+/// Rows where the template renders empty show an empty cell; a column that is
+/// empty for every row is dropped from the table.
+///
+/// *(Experimental — fields may change in future releases.)*
+///
+/// ```toml
+/// [list.custom-columns.Ticket]
+/// template = "{{ vars.ticket }}"
+/// ```
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, JsonSchema)]
+pub struct ListColumnConfig {
+    /// Template rendered per row; the result is the cell text
+    pub template: String,
+
+    /// Maximum display width; longer values truncate (default: 40).
+    /// Values below the header's width are raised to it — a column is never
+    /// narrower than its header.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub width: Option<usize>,
+
+    /// Drop order when the terminal narrows; lower = kept longer (default: 9,
+    /// alongside the URL column; built-in columns range 0-13)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub priority: Option<u8>,
+}
+
+/// Configuration for the `wt list` command
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Default, JsonSchema)]
+pub struct ListConfig {
+    /// Show CI and `main` diffstat by default
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub full: Option<bool>,
+
+    /// Include branches without worktrees by default
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub branches: Option<bool>,
+
+    /// Include remote branches by default
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub remotes: Option<bool>,
+
+    /// Enable LLM-generated branch summaries (picker tab 5 + list Summary column).
+    /// Requires `[commit.generation] command` to be configured.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub summary: Option<bool>,
+
+    /// Per-task timeout in milliseconds.
+    /// Kills individual git commands that exceed this duration. Applies to both
+    /// `wt list` and the `wt switch` picker. Set to 0 to explicitly disable
+    /// (useful to override a global setting). Disabled when --full is used.
+    #[serde(rename = "task-timeout-ms", skip_serializing_if = "Option::is_none")]
+    pub task_timeout_ms: Option<u64>,
+
+    /// Wall-clock budget for the entire collect phase in milliseconds.
+    /// Tasks that complete within the budget contribute data; tasks still
+    /// running when it expires are abandoned silently. Set to 0 to disable.
+    /// Disabled when --full is used. Default: no budget (wait for all results).
+    #[serde(rename = "timeout-ms", skip_serializing_if = "Option::is_none")]
+    pub timeout_ms: Option<u64>,
+
+    /// Columns to render, in order. When non-empty this is exhaustive — only
+    /// these columns appear (a subset and/or reorder); empty means the default
+    /// set. Built-ins are kebab identifiers (`branch`, `status`, `working-diff`,
+    /// `ahead-behind`, `branch-diff`, `summary`, `upstream`, `ci`, `path`,
+    /// `url`, `commit`, `age`, `message`); custom columns are named by their
+    /// `[list.custom-columns]` header, so a selection mixes both in one list. A
+    /// built-in wins over a custom header that collides with its name. The
+    /// gutter type indicator always shows. A custom column omitted from a
+    /// non-empty selection is hidden; with no selection, custom columns append
+    /// to the default set. Set as a TOML array in config files.
+    // TODO(list-columns-env): `WORKTRUNK__LIST__COLUMNS` is not wired up yet. The
+    // env overlay can only deliver a scalar string, which a plain `Vec<String>`
+    // rejects. When we add it, parse the scalar as TOML
+    // (`WORKTRUNK__LIST__COLUMNS='["branch", "ci"]'`) so the env form matches the
+    // config-file array exactly, rather than splitting on commas.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub columns: Vec<String>,
+
+    /// Custom columns, keyed by header text. See [`ListColumnConfig`].
+    ///
+    /// *(Experimental — fields may change in future releases.)*
+    #[serde(
+        default,
+        rename = "custom-columns",
+        skip_serializing_if = "BTreeMap::is_empty"
+    )]
+    pub custom_columns: BTreeMap<String, ListColumnConfig>,
+}
+
+impl ListConfig {
+    /// Show CI and `main` diffstat by default (default: false)
+    pub fn full(&self) -> bool {
+        self.full.unwrap_or(false)
+    }
+
+    /// Include branches without worktrees by default (default: false)
+    pub fn branches(&self) -> bool {
+        self.branches.unwrap_or(false)
+    }
+
+    /// Include remote branches by default (default: false)
+    pub fn remotes(&self) -> bool {
+        self.remotes.unwrap_or(false)
+    }
+
+    /// Enable LLM-generated branch summaries (default: false)
+    pub fn summary(&self) -> bool {
+        self.summary.unwrap_or(false)
+    }
+
+    /// Per-task command timeout (default: None — no per-command timeout).
+    /// Returns `None` when disabled (task_timeout_ms = 0 or unset).
+    pub fn task_timeout(&self) -> Option<std::time::Duration> {
+        self.task_timeout_ms
+            .filter(|&ms| ms > 0)
+            .map(std::time::Duration::from_millis)
+    }
+
+    /// Wall-clock budget for the collect phase (default: None — no budget).
+    /// Returns `None` when disabled (timeout_ms = 0 or unset).
+    pub fn timeout(&self) -> Option<std::time::Duration> {
+        self.timeout_ms
+            .filter(|&ms| ms > 0)
+            .map(std::time::Duration::from_millis)
+    }
+}
+
+impl Merge for ListConfig {
+    fn merge_with(&self, other: &Self) -> Self {
+        // Custom columns merge per key: a more specific layer overrides or
+        // adds individual columns without clearing the rest.
+        let mut custom_columns = self.custom_columns.clone();
+        custom_columns.extend(
+            other
+                .custom_columns
+                .iter()
+                .map(|(k, v)| (k.clone(), v.clone())),
+        );
+        // Column selection replaces wholesale (a more specific layer's order is
+        // the order it wants); an empty list means "unset", so it falls back to
+        // the base layer rather than blanking the selection. Unlike
+        // custom_columns, merging entries would be meaningless — a column list
+        // is an ordering, not a keyed set.
+        let columns = if other.columns.is_empty() {
+            self.columns.clone()
+        } else {
+            other.columns.clone()
+        };
+        Self {
+            full: other.full.or(self.full),
+            branches: other.branches.or(self.branches),
+            remotes: other.remotes.or(self.remotes),
+            summary: other.summary.or(self.summary),
+            task_timeout_ms: other.task_timeout_ms.or(self.task_timeout_ms),
+            timeout_ms: other.timeout_ms.or(self.timeout_ms),
+            columns,
+            custom_columns,
+        }
+    }
+}
+
+/// Configuration for the `wt step commit` command
+///
+/// Also used by `wt merge` for shared settings like `stage`.
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Default, JsonSchema)]
+pub struct CommitConfig {
+    /// What to stage before committing (default: all)
+    /// Values: "all", "tracked", "none"
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub stage: Option<StageMode>,
+
+    /// LLM commit message generation settings
+    ///
+    /// Nested under `[commit.generation]` in TOML.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub generation: Option<CommitGenerationConfig>,
+}
+
+impl CommitConfig {
+    /// What to stage before committing (default: All)
+    pub fn stage(&self) -> StageMode {
+        self.stage.unwrap_or_default()
+    }
+}
+
+impl Merge for CommitConfig {
+    fn merge_with(&self, other: &Self) -> Self {
+        Self {
+            stage: other.stage.or(self.stage),
+            generation: merge_optional(self.generation.as_ref(), other.generation.as_ref()),
+        }
+    }
+}
+
+/// Configuration for the `wt merge` command
+///
+/// Note: `stage` defaults from `[commit]` section, not here.
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Default, JsonSchema)]
+pub struct MergeConfig {
+    /// Squash commits when merging (default: true)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub squash: Option<bool>,
+
+    /// Commit, squash, and rebase during merge (default: true)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub commit: Option<bool>,
+
+    /// Rebase onto target branch before merging (default: true)
+    ///
+    /// When false, merge fails if branch is not already rebased.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub rebase: Option<bool>,
+
+    /// Remove worktree after merge (default: true)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub remove: Option<bool>,
+
+    /// Run project hooks (default: true)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub verify: Option<bool>,
+
+    /// Fast-forward merge instead of creating a merge commit (default: true)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ff: Option<bool>,
+}
+
+impl MergeConfig {
+    /// Squash commits when merging (default: true)
+    pub fn squash(&self) -> bool {
+        self.squash.unwrap_or(true)
+    }
+
+    /// Commit, squash, and rebase during merge (default: true)
+    pub fn commit(&self) -> bool {
+        self.commit.unwrap_or(true)
+    }
+
+    /// Rebase onto target branch before merging (default: true)
+    pub fn rebase(&self) -> bool {
+        self.rebase.unwrap_or(true)
+    }
+
+    /// Remove worktree after merge (default: true)
+    pub fn remove(&self) -> bool {
+        self.remove.unwrap_or(true)
+    }
+
+    /// Run project hooks (default: true)
+    pub fn verify(&self) -> bool {
+        self.verify.unwrap_or(true)
+    }
+
+    /// Fast-forward merge instead of creating a merge commit (default: true)
+    pub fn ff(&self) -> bool {
+        self.ff.unwrap_or(true)
+    }
+}
+
+impl Merge for MergeConfig {
+    fn merge_with(&self, other: &Self) -> Self {
+        Self {
+            squash: other.squash.or(self.squash),
+            commit: other.commit.or(self.commit),
+            rebase: other.rebase.or(self.rebase),
+            remove: other.remove.or(self.remove),
+            verify: other.verify.or(self.verify),
+            ff: other.ff.or(self.ff),
+        }
+    }
+}
+
+/// Configuration for the `wt remove` command
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Default, JsonSchema)]
+pub struct RemoveConfig {
+    /// Delete the branch after removing the worktree (default: true)
+    #[serde(rename = "delete-branch", skip_serializing_if = "Option::is_none")]
+    pub delete_branch: Option<bool>,
+}
+
+impl RemoveConfig {
+    /// Delete the branch after removing the worktree (default: true)
+    pub fn delete_branch(&self) -> bool {
+        self.delete_branch.unwrap_or(true)
+    }
+}
+
+impl Merge for RemoveConfig {
+    fn merge_with(&self, other: &Self) -> Self {
+        Self {
+            delete_branch: other.delete_branch.or(self.delete_branch),
+        }
+    }
+}
+
+/// Configuration for the `wt switch` interactive picker.
+///
+/// New format under `[switch.picker]`. Replaces the deprecated `[select]` section.
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Default, JsonSchema)]
+pub struct SwitchPickerConfig {
+    /// Pager command with flags for diff preview
+    ///
+    /// Overrides git's core.pager for the interactive picker's preview panel.
+    /// Use this to specify pager flags needed for non-TTY contexts.
+    ///
+    /// Example: `pager = "delta --paging=never"`
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pager: Option<String>,
+}
+
+impl SwitchPickerConfig {
+    /// Pager command for diff preview (default: None, uses git default)
+    pub fn pager(&self) -> Option<&str> {
+        self.pager.as_deref()
+    }
+}
+
+impl Merge for SwitchPickerConfig {
+    fn merge_with(&self, other: &Self) -> Self {
+        Self {
+            pager: other.pager.clone().or_else(|| self.pager.clone()),
+        }
+    }
+}
+
+/// Configuration for the `wt switch` command
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Default, JsonSchema)]
+pub struct SwitchConfig {
+    /// Change directory after switch (default: true)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cd: Option<bool>,
+
+    /// Picker settings for the interactive selector
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub picker: Option<SwitchPickerConfig>,
+}
+
+impl SwitchConfig {
+    /// Change directory after switch (default: true)
+    pub fn cd(&self) -> bool {
+        self.cd.unwrap_or(true)
+    }
+}
+
+impl Merge for SwitchConfig {
+    fn merge_with(&self, other: &Self) -> Self {
+        Self {
+            cd: other.cd.or(self.cd),
+            picker: merge_optional(self.picker.as_ref(), other.picker.as_ref()),
+        }
+    }
+}
+
+/// Configuration for `wt step copy-ignored`
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Default, JsonSchema)]
+pub struct CopyIgnoredConfig {
+    /// Gitignore-style patterns to exclude from `wt step copy-ignored`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub exclude: Vec<String>,
+}
+
+impl CopyIgnoredConfig {
+    pub fn merged_with(&self, other: &Self) -> Self {
+        let mut exclude = self.exclude.clone();
+        for pattern in &other.exclude {
+            if !exclude.contains(pattern) {
+                exclude.push(pattern.clone());
+            }
+        }
+        Self { exclude }
+    }
+}
+
+impl Merge for CopyIgnoredConfig {
+    fn merge_with(&self, other: &Self) -> Self {
+        self.merged_with(other)
+    }
+}
+
+/// Configuration for `wt step` subcommands.
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Default, JsonSchema)]
+pub struct StepConfig {
+    /// Configuration for `wt step copy-ignored`.
+    #[serde(
+        default,
+        rename = "copy-ignored",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub copy_ignored: Option<CopyIgnoredConfig>,
+}
+
+impl StepConfig {
+    /// Returns the resolved copy-ignored config, defaulting to empty if unset.
+    pub fn copy_ignored(&self) -> CopyIgnoredConfig {
+        self.copy_ignored.clone().unwrap_or_default()
+    }
+}
+
+impl Merge for StepConfig {
+    fn merge_with(&self, other: &Self) -> Self {
+        Self {
+            copy_ignored: merge_optional(self.copy_ignored.as_ref(), other.copy_ignored.as_ref()),
+        }
+    }
+}
+
+/// Per-project overrides in the user's config file
+///
+/// Stored under `[projects."project-id"]` in the user's config.
+/// These are user preferences (not checked into git) that override
+/// the corresponding global settings when set.
+///
+/// # TOML Format
+/// ```toml
+/// [projects."github.com/user/repo"]
+/// worktree-path = ".worktrees/{{ branch | sanitize }}"
+///
+/// [projects."github.com/user/repo".commit.generation]
+/// command = "llm -m gpt-4"
+///
+/// [projects."github.com/user/repo".list]
+/// full = true
+///
+/// [projects."github.com/user/repo".merge]
+/// squash = false
+/// ```
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Default, JsonSchema)]
+pub struct UserProjectOverrides {
+    /// Commands that have been approved for automatic execution in this project
+    #[serde(
+        default,
+        rename = "approved-commands",
+        skip_serializing_if = "Vec::is_empty"
+    )]
+    pub approved_commands: Vec<String>,
+
+    /// Per-project hooks (append to global hooks)
+    #[serde(flatten, default)]
+    pub hooks: HooksConfig,
+
+    /// Per-project worktree path template override
+    #[serde(
+        rename = "worktree-path",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub worktree_path: Option<String>,
+
+    #[serde(default, skip_serializing_if = "is_default")]
+    pub list: ListConfig,
+
+    #[serde(default, skip_serializing_if = "is_default")]
+    pub commit: CommitConfig,
+
+    #[serde(default, skip_serializing_if = "is_default")]
+    pub merge: MergeConfig,
+
+    #[serde(default, skip_serializing_if = "is_default")]
+    pub remove: RemoveConfig,
+
+    #[serde(default, skip_serializing_if = "is_default")]
+    pub switch: SwitchConfig,
+
+    #[serde(default, skip_serializing_if = "is_default")]
+    pub step: StepConfig,
+
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub aliases: BTreeMap<String, CommandConfig>,
+}

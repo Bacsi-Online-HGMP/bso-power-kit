@@ -1,0 +1,88 @@
+{
+  "hooks": {
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"$CLAUDE_PLUGIN_ROOT/hooks/wt.sh\" config state marker set 🤖 || true"
+          }
+        ]
+      }
+    ],
+    "Notification": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"$CLAUDE_PLUGIN_ROOT/hooks/wt.sh\" config state marker set 💬 || true"
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "AskUserQuestion",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"$CLAUDE_PLUGIN_ROOT/hooks/wt.sh\" config state marker set 💬 || true"
+          }
+        ]
+      }
+    ],
+    "PermissionRequest": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"$CLAUDE_PLUGIN_ROOT/hooks/wt.sh\" config state marker set 💬 || true"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"$CLAUDE_PLUGIN_ROOT/hooks/wt.sh\" config state marker set 💬 || true"
+          }
+        ]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"$CLAUDE_PLUGIN_ROOT/hooks/wt.sh\" config state marker clear || true"
+          }
+        ]
+      }
+    ],
+    "WorktreeCreate": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash -c 'name=$(jq -er .name) || exit 1; bash \"$CLAUDE_PLUGIN_ROOT/hooks/wt.sh\" switch --create \"$name\" --no-cd --format=json | jq -er .path'"
+          }
+        ]
+      }
+    ],
+    "WorktreeRemove": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash -c 'p=$(jq -er .worktree_path) || exit 1; bash \"$CLAUDE_PLUGIN_ROOT/hooks/wt.sh\" remove --foreground \"$p\"'"
+          }
+        ]
+      }
+    ]
+  }
+}

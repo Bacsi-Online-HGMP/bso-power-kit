@@ -1,0 +1,301 @@
+/**
+ * @license
+ * Copyright 2026 Google LLC
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+import assert from 'node:assert';
+import {describe, it, afterEach, beforeEach} from 'node:test';
+
+import sinon from 'sinon';
+
+import {DAEMON_CLIENT_NAME} from '../../src/daemon/utils.js';
+import {ClearcutLogger} from '../../src/telemetry/ClearcutLogger.js';
+import {ErrorCode} from '../../src/telemetry/errors.js';
+import type {Persistence} from '../../src/telemetry/persistence.js';
+import {FilePersistence} from '../../src/telemetry/persistence.js';
+import {McpClient, WatchdogMessageType} from '../../src/telemetry/types.js';
+import {WatchdogClient} from '../../src/telemetry/WatchdogClient.js';
+import {zod} from '../../src/third_party/index.js';
+
+describe('ClearcutLogger', () => {
+  let mockPersistence: sinon.SinonStubbedInstance<Persistence>;
+  let mockWatchdogClient: sinon.SinonStubbedInstance<WatchdogClient>;
+
+  beforeEach(() => {
+    ClearcutLogger.resetForTesting();
+    mockPersistence = sinon.createStubInstance(FilePersistence, {
+      loadState: Promise.resolve({
+        lastActive: '',
+      }),
+    });
+    mockWatchdogClient = sinon.createStubInstance(WatchdogClient);
+  });
+
+  afterEach(() => {
+    sinon.restore();
+    ClearcutLogger.resetForTesting();
+  });
+
+  describe('logToolInvocation', () => {
+    it('sends correct payload', async () => {
+      const logger = ClearcutLogger.initialize({
+        persistence: mockPersistence,
+        appVersion: '1.0.0',
+        watchdogClient: mockWatchdogClient,
+      });
+      await logger.logToolInvocation({
+        toolName: 'test_tool',
+        params: {},
+        schema: {},
+        success: true,
+        latencyMs: 123,
+      });
+
+      assert(mockWatchdogClient.send.calledOnce);
+      const msg = mockWatchdogClient.send.firstCall.args[0];
+      assert.strictEqual(msg.type, WatchdogMessageType.LOG_EVENT);
+      assert.strictEqual(msg.payload.tool_invocation?.tool_name, 'test_tool');
+      assert.strictEqual(msg.payload.tool_invocation?.success, true);
+      assert.strictEqual(msg.payload.tool_invocation?.latency_ms, 123);
+    });
+    it('sends sanitized params', async () => {
+      const logger = ClearcutLogger.initialize({
+        persistence: mockPersistence,
+        appVersion: '1.0.0',
+        watchdogClient: mockWatchdogClient,
+      });
+
+      const schema = {
+        uid: zod.string(),
+        myString: zod.string(),
+      };
+
+      const params = {
+        uid: 'sensitive',
+        myString: 'hello',
+      };
+
+      await logger.logToolInvocation({
+        toolName: 'test_tool',
+        params,
+        schema,
+        success: true,
+        latencyMs: 123,
+      });
+
+      assert(mockWatchdogClient.send.calledOnce);
+      const msg = mockWatchdogClient.send.firstCall.args[0];
+      assert.strictEqual(msg.type, WatchdogMessageType.LOG_EVENT);
+      assert.deepStrictEqual(msg.payload.tool_invocation?.tool_params, {
+        test_tool_params: {
+          my_string_length: 5,
+        },
+      });
+    });
+  });
+
+  describe('setClientName', () => {
+    const clients = [
+      {name: 'claude-code', expected: 1}, // MCP_CLIENT_CLAUDE_CODE
+      {name: 'gemini-cli', expected: 2}, // MCP_CLIENT_GEMINI_CLI
+      {name: DAEMON_CLIENT_NAME, expected: 4}, // MCP_CLIENT_DT_MCP_CLI
+      {name: 'openclaw-browser', expected: 5}, // MCP_CLIENT_OPENCLAW
+      {name: 'codex-mcp-client', expected: 6}, // MCP_CLIENT_CODEX
+      {name: 'antigravity-client', expected: 7}, // MCP_CLIENT_ANTIGRAVITY
+    ];
+
+    for (const {name, expected} of clients) {
+      it(`maps ${name} client correctly`, async () => {
+        const logger = ClearcutLogger.initialize({
+          persistence: mockPersistence,
+          appVersion: '1.0.0',
+          watchdogClient: mockWatchdogClient,
+        });
+
+        logger.setClientName(name);
+        await logger.logServerStart({headless: true});
+
+        assert(mockWatchdogClient.send.calledOnce);
+        const msg = mockWatchdogClient.send.firstCall.args[0];
+        assert.strictEqual(msg.type, WatchdogMessageType.LOG_EVENT);
+        assert.strictEqual(msg.payload.mcp_client, expected);
+      });
+    }
+  });
+
+  describe('logServerError', () => {
+    it('sends correct payload with toolName', async () => {
+      const logger = ClearcutLogger.initialize({
+        persistence: mockPersistence,
+        appVersion: '1.0.0',
+        watchdogClient: mockWatchdogClient,
+      });
+
+      await logger.logServerError({
+        toolName: 'my_tool',
+        errorCode: ErrorCode.ERROR_CODE_UNSPECIFIED,
+      });
+
+      assert(mockWatchdogClient.send.calledOnce);
+      const msg = mockWatchdogClient.send.firstCall.args[0];
+      assert.deepStrictEqual(msg, {
+        type: WatchdogMessageType.LOG_EVENT,
+        payload: {
+          mcp_client: McpClient.MCP_CLIENT_UNSPECIFIED,
+          server_error: {
+            tool_name: 'my_tool',
+            error_code: ErrorCode.ERROR_CODE_UNSPECIFIED,
+          },
+        },
+      });
+    });
+
+    it('sends correct payload without toolName defaulting to empty string', async () => {
+      const logger = ClearcutLogger.initialize({
+        persistence: mockPersistence,
+        appVersion: '1.0.0',
+        watchdogClient: mockWatchdogClient,
+      });
+
+      await logger.logServerError({
+        errorCode: ErrorCode.ERROR_CODE_UNSPECIFIED,
+      });
+
+      assert(mockWatchdogClient.send.calledOnce);
+      const msg = mockWatchdogClient.send.firstCall.args[0];
+      assert.deepStrictEqual(msg, {
+        type: WatchdogMessageType.LOG_EVENT,
+        payload: {
+          mcp_client: McpClient.MCP_CLIENT_UNSPECIFIED,
+          server_error: {
+            tool_name: '',
+            error_code: ErrorCode.ERROR_CODE_UNSPECIFIED,
+          },
+        },
+      });
+    });
+  });
+
+  describe('logServerStart', () => {
+    it('logs flag usage', async () => {
+      const logger = ClearcutLogger.initialize({
+        persistence: mockPersistence,
+        appVersion: '1.0.0',
+        watchdogClient: mockWatchdogClient,
+      });
+
+      await logger.logServerStart({headless: true});
+
+      assert(mockWatchdogClient.send.calledOnce);
+      const msg = mockWatchdogClient.send.firstCall.args[0];
+      assert.strictEqual(msg.type, WatchdogMessageType.LOG_EVENT);
+      assert.strictEqual(msg.payload.server_start?.flag_usage?.headless, true);
+    });
+  });
+
+  describe('logDailyActiveIfNeeded', () => {
+    it('logs daily active if needed (lastActive > 24h ago)', async () => {
+      const yesterday = new Date();
+      yesterday.setDate(yesterday.getDate() - 1);
+
+      mockPersistence.loadState.resolves({
+        lastActive: yesterday.toISOString(),
+      });
+
+      const logger = ClearcutLogger.initialize({
+        persistence: mockPersistence,
+        appVersion: '1.0.0',
+        watchdogClient: mockWatchdogClient,
+      });
+
+      await logger.logDailyActiveIfNeeded();
+
+      assert(mockWatchdogClient.send.calledOnce);
+      const msg = mockWatchdogClient.send.firstCall.args[0];
+      assert.strictEqual(msg.type, WatchdogMessageType.LOG_EVENT);
+      assert.ok(msg.payload.daily_active);
+
+      assert(mockPersistence.saveState.called);
+    });
+
+    it('does not log daily active if not needed (today)', async () => {
+      mockPersistence.loadState.resolves({
+        lastActive: new Date().toISOString(),
+      });
+
+      const logger = ClearcutLogger.initialize({
+        persistence: mockPersistence,
+        appVersion: '1.0.0',
+        watchdogClient: mockWatchdogClient,
+      });
+
+      await logger.logDailyActiveIfNeeded();
+
+      assert(mockWatchdogClient.send.notCalled);
+      assert(mockPersistence.saveState.notCalled);
+    });
+
+    it('logs daily active with -1 if lastActive is missing', async () => {
+      mockPersistence.loadState.resolves({
+        lastActive: '',
+      });
+
+      const logger = ClearcutLogger.initialize({
+        persistence: mockPersistence,
+        appVersion: '1.0.0',
+        watchdogClient: mockWatchdogClient,
+      });
+
+      await logger.logDailyActiveIfNeeded();
+
+      assert(mockWatchdogClient.send.calledOnce);
+      const msg = mockWatchdogClient.send.firstCall.args[0];
+      assert.strictEqual(msg.type, WatchdogMessageType.LOG_EVENT);
+      assert.strictEqual(msg.payload.daily_active?.days_since_last_active, -1);
+      assert(mockPersistence.saveState.called);
+    });
+  });
+
+  describe('Singleton', () => {
+    it('returns undefined if not initialized', () => {
+      assert.strictEqual(ClearcutLogger.get(), undefined);
+    });
+
+    it('returns instance after initialization', () => {
+      const logger = ClearcutLogger.initialize({
+        persistence: mockPersistence,
+        appVersion: '1.0.0',
+        watchdogClient: mockWatchdogClient,
+      });
+      assert.strictEqual(ClearcutLogger.get(), logger);
+    });
+
+    it('throws error if initialized twice', () => {
+      ClearcutLogger.initialize({
+        persistence: mockPersistence,
+        appVersion: '1.0.0',
+        watchdogClient: mockWatchdogClient,
+      });
+
+      assert.throws(() => {
+        ClearcutLogger.initialize({
+          persistence: mockPersistence,
+          appVersion: '1.0.0',
+          watchdogClient: mockWatchdogClient,
+        });
+      }, /ClearcutLogger is already initialized/);
+    });
+
+    it('resets instance for testing', () => {
+      ClearcutLogger.initialize({
+        persistence: mockPersistence,
+        appVersion: '1.0.0',
+        watchdogClient: mockWatchdogClient,
+      });
+
+      ClearcutLogger.resetForTesting();
+      assert.strictEqual(ClearcutLogger.get(), undefined);
+    });
+  });
+});

@@ -1,0 +1,29 @@
+{
+  "$schema": "https://biomejs.dev/schemas/2.4.4/schema.json",
+  "assist": {
+    "actions": {
+      "source": {
+        "organizeImports": "on"
+      }
+    }
+  },
+  "linter": {
+    "enabled": true,
+    "rules": {
+      "recommended": true,
+      "style": {
+        "noNonNullAssertion": "warn",
+        "useTemplate": "warn"
+      },
+      "suspicious": {
+        "noExplicitAny": "warn"
+      }
+    }
+  },
+  "formatter": {
+    "enabled": false
+  },
+  "files": {
+    "includes": ["src/**/*.ts", "tests/**/*.ts"]
+  }
+}

@@ -1,0 +1,669 @@
+#!/usr/bin/env python3
+"""Unified build script for demo GIFs.
+
+Usage:
+    ./build docs                    # Build doc site demos (light + dark, 1600x900)
+    ./build social                  # Build social media demos (light only, 1200x700)
+    ./build docs --only wt-merge    # Build specific demo for docs
+    ./build social --only wt-zellij-omnibus --shell  # Debug shell for social demo
+
+Output is written to docs/static/assets/{mode}/{theme}/, ensuring docs and social
+builds don't overwrite each other. The assets repo mirrors this structure.
+"""
+
+from __future__ import annotations
+
+import argparse
+import os
+import shutil
+import subprocess
+import sys
+import tempfile
+import time
+from concurrent.futures import ProcessPoolExecutor, as_completed
+from functools import partial
+from pathlib import Path
+
+# Add docs/demos/ to path for shared library
+SCRIPT_DIR = Path(__file__).parent
+sys.path.insert(0, str(SCRIPT_DIR))
+
+from shared import (  # noqa: E402
+    FIXTURES_DIR,
+    VALIDATION_RS,
+    DemoEnv,
+    DemoSize,
+    git,
+    prepare_demo_repo,
+    setup_claude_code_config,
+    setup_zellij_config,
+    setup_fish_config,
+    check_dependencies,
+    check_ffmpeg_libass,
+    setup_demo_output,
+    record_all_themes,
+    SIZE_DOCS,
+    SIZE_SOCIAL,
+    record_text,
+    record_snapshot,
+    build_tape_replacements,
+    ensure_vhs_binary,
+)
+from shared.validation import (  # noqa: E402
+    TUI_CHECKPOINTS,
+    validate_tui_demo_verbose,
+)
+
+REPO_ROOT = SCRIPT_DIR.parent.parent
+OUT_DIR = SCRIPT_DIR.parent / "static" / "assets"
+TAPES_DIR = SCRIPT_DIR / "tapes"
+SNAPSHOTS_DIR = SCRIPT_DIR / "snapshots"
+
+# Demos that use TUI or interactive input - not suitable for command snapshots
+TUI_DEMOS = {"wt-switch-picker", "wt-switch", "wt-statusline", "wt-zellij-omnibus"}
+
+
+# =============================================================================
+# Setup Helpers
+# =============================================================================
+
+
+def _add_billing_branch(env: DemoEnv):
+    """Add a billing branch at same commit as main (merged state)."""
+    branch = "billing"
+    path = env.work_base / f"acme.{branch}"
+    git(["-C", str(env.repo), "worktree", "add", "-q", "-b", branch, str(path), "main"])
+    git(["-C", str(path), "push", "-u", "origin", branch, "-q"])
+
+
+def _add_staged_validation(env: DemoEnv):
+    """Add validation.rs with staged changes to hooks branch."""
+    hooks_path = env.work_base / "acme.hooks"
+    if hooks_path.exists():
+        new_file = hooks_path / "src" / "validation.rs"
+        new_file.write_text(VALIDATION_RS)
+        git(["-C", str(hooks_path), "add", "src/validation.rs"])
+
+
+def _write_user_config(
+    env: DemoEnv, approved_commands: list[str], commit_generation: bool = True
+):
+    """Write worktrunk user config and approvals."""
+    config_dir = env.home / ".config" / "worktrunk"
+    project_id = str(env.bare_remote).removesuffix(".git")
+
+    # User config (portable settings only)
+    config_content = ""
+    if commit_generation:
+        config_content += """[commit.generation]
+command = "llm -m claude-haiku-4.5"
+
+"""
+    config_content += """[list]
+summary = true
+
+"""
+    (config_dir / "config.toml").write_text(config_content)
+
+    # Approvals (machine-local trust state, separate from config)
+    approvals_content = f'[projects."{project_id}"]\n'
+    approvals_content += f"approved-commands = {approved_commands!r}\n"
+    (config_dir / "approvals.toml").write_text(approvals_content)
+
+
+# =============================================================================
+# Demo Setup Functions
+# =============================================================================
+
+
+def prepare_basic(env: DemoEnv):
+    """Basic repo setup - no hooks, no extras."""
+    prepare_demo_repo(env, REPO_ROOT)
+
+
+def prepare_with_hooks(env: DemoEnv, include_deps: bool = False):
+    """Standard hooks demo: dev server + cleanup + billing branch."""
+    dev_cmd = "npm run dev -- --port {{ branch | hash_port }}"
+    cleanup_cmd = "flyctl scale count 0"
+
+    post_start = ["[post-create]"]
+    approved = []
+    if include_deps:
+        post_start.append('deps = "npm install"')
+        approved.append("npm install")
+    post_start.append(f'dev = "{dev_cmd}"')
+    approved.append(dev_cmd)
+    approved.append(cleanup_cmd)
+
+    hooks_config = (
+        "\n".join(post_start) + f'\n\n[pre-remove]\ncleanup = "{cleanup_cmd}"\n'
+    )
+
+    prepare_demo_repo(env, REPO_ROOT, hooks_config=hooks_config)
+    _write_user_config(env, approved)
+    _add_billing_branch(env)
+
+
+def prepare_merge_demo(
+    env: DemoEnv, commit_generation: bool = True, staged_changes: bool = True
+):
+    """Merge demo setup. Use commit_generation=False for social (no LLM in GIF)."""
+    prepare_demo_repo(env, REPO_ROOT)
+    _write_user_config(env, ["cargo nextest run"], commit_generation=commit_generation)
+    if staged_changes:
+        _add_staged_validation(env)
+
+
+def prepare_switch(env: DemoEnv):
+    """Switch demo with Claude Code UI."""
+    dev_cmd = "npm run dev -- --port {{ branch | hash_port }}"
+    hooks_config = f"""[post-create]
+copy = "wt step copy-ignored"
+dev = "{dev_cmd}"
+"""
+    prepare_demo_repo(env, REPO_ROOT, hooks_config=hooks_config)
+    _write_user_config(env, [dev_cmd, "wt step copy-ignored"])
+
+    # Create .env file (gitignored) so copy-ignored has something to copy
+    gitignore = env.repo / ".gitignore"
+    gitignore.write_text(gitignore.read_text() + ".env\n")
+    env_file = env.repo / ".env"
+    env_file.write_text("DATABASE_URL=postgres://localhost/acme_dev\nAPI_KEY=dev-key-123\n")
+
+    setup_claude_code_config(
+        env,
+        [
+            str(env.repo),
+            str(env.work_base / "acme.alpha"),
+            str(env.work_base / "acme.api"),
+            str(env.work_base / "acme.dashboard"),
+        ],
+    )
+
+
+def prepare_devserver(env: DemoEnv):
+    """Setup for wt-devserver demo - shows URL column in wt list."""
+    dev_cmd = "npm run dev -- --port {{ branch | hash_port }}"
+    hooks_config = f'''[post-create]
+dev = "{dev_cmd}"
+
+[list]
+url = "http://localhost:{{{{ branch | hash_port }}}}"
+'''
+    prepare_demo_repo(env, REPO_ROOT, hooks_config=hooks_config)
+    _write_user_config(env, [dev_cmd])
+
+    # Override npm mock to start nc listener so URL appears active
+    npm_mock = env.home / ".local" / "bin" / "npm"
+    npm_mock.write_text("""#!/bin/bash
+if [[ "$1" == "run" && "$2" == "dev" ]]; then
+    PORT="$5"
+    echo ""
+    echo "  VITE v5.4.2  ready in 342 ms"
+    echo ""
+    echo "  ➜  Local:   http://localhost:$PORT/"
+    # Start nc listener so wt list shows URL as active (not dimmed)
+    nc -l "$PORT" >/dev/null 2>&1 &
+fi
+""")
+    npm_mock.chmod(0o755)
+
+
+def prepare_zellij_omnibus(env: DemoEnv):
+    """Setup for wt-zellij-omnibus demo - comprehensive showcase."""
+    hooks_config = """[post-create]
+dev = "npm run dev -- --port {{ branch | hash_port }}"
+
+[pre-merge]
+test = "cargo nextest run"
+
+[list]
+url = "http://localhost:{{ branch | hash_port }}"
+"""
+    prepare_demo_repo(env, REPO_ROOT, hooks_config=hooks_config)
+
+    # Clean up branches that might exist from previous runs (billing, feature created during demo)
+    origin = env.home / "origin.git"
+    for branch in ["billing", "feature"]:
+        # Delete from origin if exists (ignore errors if not)
+        subprocess.run(
+            ["git", "-C", str(origin), "branch", "-D", branch], capture_output=True
+        )
+
+    # Enable git colors for non-TTY environments (VHS)
+    git(["-C", str(env.repo), "config", "color.ui", "always"])
+
+    _write_user_config(
+        env,
+        ["npm run dev -- --port {{ branch | hash_port }}", "cargo nextest run"],
+    )
+
+    # Zellij + Fish configs (with --create in wsl abbreviation)
+    setup_zellij_config(env, default_cwd=str(env.repo))
+    setup_fish_config(env, wsl_create=True)
+
+    # Claude Code config with pre-approved tools
+    worktree_branches = ["api", "auth", "billing", "feature"]
+    worktree_paths = [str(env.repo)] + [
+        str(env.work_base / f"acme.{branch}") for branch in worktree_branches
+    ]
+    allowed_tools = [
+        "Bash",
+        "Read",
+        "Write",
+        "Edit",
+        "Glob",
+        "Grep",
+        "Task",
+        "TodoWrite",
+    ]
+    setup_claude_code_config(env, worktree_paths, allowed_tools)
+
+    # Pre-create worktrees (api and auth only - billing created during demo)
+    demo_env = {
+        **os.environ,
+        "HOME": str(env.home),
+        "PATH": f"{REPO_ROOT}/target/debug:{env.home}/.local/bin:{os.environ.get('PATH', '')}",
+    }
+
+    def run_wt(args, cwd):
+        result = subprocess.run(
+            ["wt"] + args, cwd=str(cwd), env=demo_env, capture_output=True, text=True
+        )
+        if result.returncode != 0:
+            raise RuntimeError(f"wt {' '.join(args)} failed: {result.stderr}")
+
+    run_wt(["switch", "--create", "api"], env.repo)
+    git(["-C", str(env.work_base / "acme.api"), "push", "-u", "origin", "api", "-q"])
+
+    run_wt(["switch", "--create", "auth"], env.repo)
+    git(["-C", str(env.work_base / "acme.auth"), "push", "-u", "origin", "auth", "-q"])
+
+    # Return to main worktree for the demo to start
+    run_wt(["switch", "main"], env.work_base / "acme.api")
+
+
+# =============================================================================
+# Demo Registrations
+# =============================================================================
+
+# Format: (tape_file, output_name, setup_func)
+# All demos in a mode use that mode's default size.
+# Note: setup_func must be a named function (not lambda) for multiprocessing.
+
+DOCS_DEMOS = [
+    ("wt-core.tape", "wt-core", prepare_with_hooks),
+    ("wt-switch.tape", "wt-switch", prepare_switch),
+    ("wt-list.tape", "wt-list", prepare_with_hooks),
+    ("wt-commit.tape", "wt-commit", prepare_merge_demo),
+    ("wt-statusline.tape", "wt-statusline", prepare_switch),
+    ("wt-merge.tape", "wt-merge", prepare_merge_demo),
+    ("wt-switch-picker.tape", "wt-switch-picker", prepare_basic),
+    ("wt-zellij-omnibus.tape", "wt-zellij-omnibus", prepare_zellij_omnibus),
+]
+
+SOCIAL_DEMOS = [
+    ("wt-switch.tape", "wt-switch", prepare_switch),
+    ("wt-statusline.tape", "wt-statusline", prepare_switch),
+    ("wt-list.tape", "wt-list", prepare_with_hooks),
+    ("wt-list-remove.tape", "wt-list-remove", prepare_with_hooks),
+    ("wt-hooks.tape", "wt-hooks", partial(prepare_with_hooks, include_deps=True)),
+    ("wt-devserver.tape", "wt-devserver", prepare_devserver),
+    ("wt-commit.tape", "wt-commit", prepare_merge_demo),
+    (
+        "wt-merge.tape",
+        "wt-merge",
+        partial(prepare_merge_demo, commit_generation=False, staged_changes=False),
+    ),
+    ("wt-switch-picker.tape", "wt-switch-picker", prepare_basic),
+    ("wt-core.tape", "wt-core", prepare_with_hooks),
+    ("wt-zellij-omnibus.tape", "wt-zellij-omnibus", prepare_zellij_omnibus),
+]
+
+TARGETS = {
+    "docs": {
+        "demos": DOCS_DEMOS,
+        "size": SIZE_DOCS,
+        "themes": ["light", "dark"],
+    },
+    "social": {
+        "demos": SOCIAL_DEMOS,
+        "size": SIZE_SOCIAL,
+        "themes": ["light"],
+    },
+}
+
+
+# =============================================================================
+# Parallel Recording
+# =============================================================================
+
+
+def record_demo(
+    tape_file: str,
+    output_name: str,
+    setup_func,
+    mode_out_dir: Path,
+    themes: list[str],
+    demo_size: DemoSize,
+    vhs_binary: str,
+    text_mode: bool = False,
+    snapshot_mode: bool = False,
+) -> float:
+    """Record a single demo. Returns elapsed seconds."""
+    t0 = time.monotonic()
+    tape_path = TAPES_DIR / tape_file
+    if not tape_path.exists():
+        raise FileNotFoundError(f"{tape_file} not found")
+
+    # Create fresh environment in temp directory
+    demo_env_dir = Path(tempfile.mkdtemp(prefix="wt-demo-"))
+    setup_demo_output(demo_env_dir)
+    env = DemoEnv(name=output_name, out_dir=demo_env_dir, repo_name="acme")
+    setup_func(env)
+
+    replacements = build_tape_replacements(env, REPO_ROOT)
+
+    if snapshot_mode:
+        output_snap = SNAPSHOTS_DIR / f"{output_name}.snap"
+        record_snapshot(env, tape_path, output_snap, REPO_ROOT)
+        elapsed = time.monotonic() - t0
+        print(f"✓ {output_name}: Snapshot saved ({elapsed:.0f}s)")
+        return elapsed
+
+    if text_mode:
+        output_txt = mode_out_dir / f"{output_name}.txt"
+        record_text(env, tape_path, output_txt, replacements, REPO_ROOT)
+        elapsed = time.monotonic() - t0
+        print(f"✓ {output_name}: Text saved ({elapsed:.0f}s)")
+        return elapsed
+
+    output_gifs = {}
+    for theme in themes:
+        theme_dir = mode_out_dir / theme
+        theme_dir.mkdir(parents=True, exist_ok=True)
+        output_gifs[theme] = theme_dir / f"{output_name}.gif"
+
+    record_all_themes(
+        env,
+        tape_path,
+        output_gifs,
+        REPO_ROOT,
+        vhs_binary=vhs_binary,
+        size=demo_size,
+    )
+
+    elapsed = time.monotonic() - t0
+
+    # Validate TUI demos with OCR after recording
+    if output_name in TUI_CHECKPOINTS:
+        gif_path = output_gifs.get("light", list(output_gifs.values())[0])
+        success, output = validate_tui_demo_verbose(output_name, gif_path)
+        if success:
+            print(f"✓ {output_name}: GIFs saved + validation passed ({elapsed:.0f}s)")
+        else:
+            print(f"✓ {output_name}: GIFs saved ({elapsed:.0f}s)")
+            print(f"✗ {output_name}: Validation failed")
+            for line in output.split("\n"):
+                if line.startswith("  "):
+                    print(line)
+            raise RuntimeError(f"TUI validation failed for {output_name}")
+    else:
+        print(f"✓ {output_name}: GIFs saved: {', '.join(themes)} ({elapsed:.0f}s)")
+
+    return elapsed
+
+
+# =============================================================================
+# Main
+# =============================================================================
+
+
+def spawn_debug_shell(env: DemoEnv, starship_config: Path):
+    """Spawn an interactive fish shell with the demo environment set up."""
+    shell_env = os.environ.copy()
+    shell_env.update(
+        {
+            "HOME": str(env.home),
+            "XDG_CONFIG_HOME": str(env.home / ".config"),
+            "STARSHIP_CONFIG": str(starship_config),
+            "PATH": f"{REPO_ROOT / 'target' / 'debug'}:{env.home / '.local' / 'bin'}:{os.environ.get('PATH', '')}",
+            # Keep real rustup/cargo for any rust tools
+            "RUSTUP_HOME": str(Path.home() / ".rustup"),
+            "CARGO_HOME": str(Path.home() / ".cargo"),
+        }
+    )
+
+    print("\nSpawning fish shell in demo environment...")
+    print(f"  HOME={env.home}")
+    print(f"  Demo repo: {env.repo}\n")
+
+    init_cmd = "starship init fish | source; wt config shell init fish | source"
+    subprocess.run(["fish", "-C", init_cmd], env=shell_env, cwd=str(env.repo))
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        description="Build demo GIFs for worktrunk",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  ./build docs social             Build all demos for both targets
+  ./build docs                    Build all doc site demos (light + dark)
+  ./build social                  Build all social media demos (light only)
+  ./build docs --only wt-merge    Build specific demo for docs
+  ./build docs --text             Build text output instead of GIFs
+  ./build social --only wt-zellij-omnibus --shell   Debug shell for demo
+""",
+    )
+    parser.add_argument(
+        "target",
+        nargs="+",
+        choices=["docs", "social"],
+        help="Target(s) to build demos for",
+    )
+    parser.add_argument("--only", help="Only record specific demo (e.g., wt-switch)")
+    parser.add_argument(
+        "--shell",
+        action="store_true",
+        help="Build demo and spawn interactive shell for debugging (requires --only)",
+    )
+    parser.add_argument(
+        "--text", action="store_true", help="Record text output instead of GIFs"
+    )
+    parser.add_argument(
+        "--snapshot",
+        action="store_true",
+        help="Record command output snapshots for regression testing (non-TUI demos only)",
+    )
+    parser.add_argument(
+        "--sequential",
+        action="store_true",
+        help="Record demos sequentially instead of in parallel",
+    )
+    args = parser.parse_args()
+
+    if args.shell and not args.only:
+        print("--shell requires --only to specify which demo to debug")
+        return
+
+    if args.shell and args.text:
+        print("--shell and --text are mutually exclusive")
+        return
+
+    if args.shell and args.snapshot:
+        print("--shell and --snapshot are mutually exclusive")
+        return
+
+    if args.text and args.snapshot:
+        print("--text and --snapshot are mutually exclusive")
+        return
+
+    if args.only and len(args.target) > 1:
+        print("--only cannot be used with multiple targets")
+        return
+
+    # Check dependencies (VHS is built from source, not required in PATH)
+    deps = ["wt", "starship", "zellij"]
+    check_dependencies(deps)
+    if not args.text and not args.snapshot:
+        check_dependencies(["delta"])
+        check_ffmpeg_libass()
+
+    # Kill stale Zellij processes from previous demo runs (they interfere
+    # with new recordings by holding locks or sockets)
+    subprocess.run(["pkill", "-f", "zellij.*wt-demos"], capture_output=True)
+
+    # Ensure VHS is built (requires Go)
+    vhs_binary = str(ensure_vhs_binary())
+
+    # Build each target sequentially (parallel targets cause Zellij conflicts)
+    t0 = time.monotonic()
+    all_failed = []
+    for target in dict.fromkeys(args.target):  # deduplicate, preserve order
+        failed = build_target(
+            target, args, vhs_binary,
+        )
+        all_failed.extend(f"{target}/{name}" for name in failed)
+
+    # Overall summary for multi-target builds
+    if len(args.target) > 1:
+        elapsed = time.monotonic() - t0
+        mins, secs = divmod(int(elapsed), 60)
+        print(f"\n{'=' * 60}")
+        print(f"Total: {mins}m{secs:02d}s")
+
+    if all_failed:
+        if len(args.target) <= 1:
+            print(f"\n{'=' * 60}")
+        print(f"Failed: {', '.join(all_failed)}")
+        sys.exit(1)
+
+
+def build_target(target: str, args, vhs_binary: str) -> list[str]:
+    """Build all demos for a single target. Returns list of failed demo names."""
+    t0 = time.monotonic()
+    mode_out_dir = OUT_DIR / target
+    mode_out_dir.mkdir(parents=True, exist_ok=True)
+
+    if target == "docs":
+        shutil.copy(FIXTURES_DIR / "starship.toml", mode_out_dir / "starship.toml")
+
+    target_config = TARGETS[target]
+    demos = target_config["demos"]
+    demo_size = target_config["size"]
+    themes = target_config["themes"]
+
+    # Filter demos if --only specified
+    if args.only:
+        demos = [(t, n, s) for t, n, s in demos if n == args.only]
+        if not demos:
+            all_names = [n for _, n, _ in target_config["demos"]]
+            print(f"Unknown demo: {args.only}")
+            print(f"Available for {target}: {', '.join(all_names)}")
+            return []
+
+    # In snapshot mode, skip TUI demos (they validate via checkpoints during GIF recording)
+    if args.snapshot:
+        original_count = len(demos)
+        demos = [(t, n, s) for t, n, s in demos if n not in TUI_DEMOS]
+        skipped = original_count - len(demos)
+        if skipped:
+            print(f"Skipping {skipped} TUI demo(s) (validate during GIF recording instead)")
+        if not demos:
+            print("No snapshotable demos found")
+            return []
+
+    # Handle --shell mode (interactive, must be sequential)
+    if args.shell:
+        tape_file, output_name, setup_func = demos[0]
+        demo_env_dir = Path(tempfile.mkdtemp(prefix="wt-demo-"))
+        setup_demo_output(demo_env_dir)
+        env = DemoEnv(name=output_name, out_dir=demo_env_dir, repo_name="acme")
+        setup_func(env)
+        print(f"Demo repo: {env.repo}")
+        spawn_debug_shell(env, FIXTURES_DIR / "starship.toml")
+        return []
+
+    # TUI demos run sequentially (they use Zellij which conflicts when parallel)
+    tui_demos = [(t, n, s) for t, n, s in demos if n in TUI_DEMOS]
+    non_tui_demos = [(t, n, s) for t, n, s in demos if n not in TUI_DEMOS]
+
+    failed = []
+    succeeded = []
+
+    def _record_one(tape_file, output_name, setup_func):
+        try:
+            elapsed = record_demo(
+                tape_file,
+                output_name,
+                setup_func,
+                mode_out_dir,
+                themes,
+                demo_size,
+                vhs_binary,
+                args.text,
+                args.snapshot,
+            )
+            succeeded.append((output_name, elapsed))
+        except Exception as e:
+            print(f"✗ {output_name}: {e}")
+            failed.append(output_name)
+
+    # Record non-TUI demos (parallel unless --sequential)
+    if non_tui_demos:
+        if args.sequential or len(non_tui_demos) == 1:
+            print(f"\n[{target}] Recording {len(non_tui_demos)} demo(s) sequentially...")
+            for tape_file, output_name, setup_func in non_tui_demos:
+                _record_one(tape_file, output_name, setup_func)
+        else:
+            print(f"\n[{target}] Recording {len(non_tui_demos)} demo(s) in parallel...")
+            max_workers = min(len(non_tui_demos), os.cpu_count() or 4)
+
+            with ProcessPoolExecutor(max_workers=max_workers) as executor:
+                futures = {
+                    executor.submit(
+                        record_demo,
+                        tape_file,
+                        output_name,
+                        setup_func,
+                        mode_out_dir,
+                        themes,
+                        demo_size,
+                        vhs_binary,
+                        args.text,
+                        args.snapshot,
+                    ): output_name
+                    for tape_file, output_name, setup_func in non_tui_demos
+                }
+
+                for future in as_completed(futures):
+                    output_name = futures[future]
+                    try:
+                        elapsed = future.result()
+                        succeeded.append((output_name, elapsed))
+                    except Exception as e:
+                        print(f"✗ {output_name}: {e}")
+                        failed.append(output_name)
+
+    # Record TUI demos sequentially (Zellij conflicts when parallel)
+    if tui_demos:
+        print(f"\n[{target}] Recording {len(tui_demos)} TUI demo(s) sequentially...")
+        for tape_file, output_name, setup_func in tui_demos:
+            _record_one(tape_file, output_name, setup_func)
+
+    # Summary
+    elapsed_total = time.monotonic() - t0
+    mins, secs = divmod(int(elapsed_total), 60)
+    passed_str = ", ".join(f"{n} ({e:.0f}s)" for n, e in succeeded)
+    print(f"\n[{target}] {len(succeeded)} passed, {len(failed)} failed ({mins}m{secs:02d}s)")
+    if succeeded:
+        print(f"  Passed: {passed_str}")
+    if failed:
+        print(f"  Failed: {', '.join(failed)}")
+
+    return failed
+
+
+if __name__ == "__main__":
+    main()

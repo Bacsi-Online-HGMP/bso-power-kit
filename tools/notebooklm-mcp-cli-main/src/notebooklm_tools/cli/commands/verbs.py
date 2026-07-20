@@ -1,0 +1,1117 @@
+"""Verb-first CLI commands for NotebookLM Tools.
+
+This module provides alternative command structure:
+- nlm create notebook "Title"  (vs nlm notebook create "Title")
+- nlm list notebooks           (vs nlm notebook list)
+- nlm delete notebook <id>     (vs nlm notebook delete <id>)
+
+Both command structures coexist for user flexibility.
+"""
+
+import typer
+
+from notebooklm_tools.cli.commands.alias import (
+    delete_alias,
+    get_alias,
+    list_aliases,
+    set_alias,
+)
+from notebooklm_tools.cli.commands.chat import (
+    configure_chat,
+)
+from notebooklm_tools.cli.commands.config import (
+    get_config_value,
+    set_config_value,
+    show_config,
+)
+from notebooklm_tools.cli.commands.download import (
+    download_audio,
+    download_data_table,
+    download_infographic,
+    download_mind_map,
+    download_report,
+    download_slide_deck,
+    download_video,
+)
+
+# Import existing command implementations
+from notebooklm_tools.cli.commands.notebook import (
+    create_notebook,
+    delete_notebook,
+    describe_notebook,
+    get_notebook,
+    list_notebooks,
+    query_notebook,
+    rename_notebook,
+)
+from notebooklm_tools.cli.commands.research import (
+    check_status as research_status,
+)
+from notebooklm_tools.cli.commands.research import (
+    import_research,
+    start_research,
+)
+from notebooklm_tools.cli.commands.skill import (
+    install as skill_install,
+)
+from notebooklm_tools.cli.commands.skill import (
+    list_tools as skill_list,
+)
+from notebooklm_tools.cli.commands.skill import (
+    show as skill_show,
+)
+from notebooklm_tools.cli.commands.skill import (
+    uninstall as skill_uninstall,
+)
+from notebooklm_tools.cli.commands.skill import (
+    update as skill_update,
+)
+from notebooklm_tools.cli.commands.source import (
+    add_source,
+    delete_source,
+    describe_source,
+    get_source,
+    get_source_content,
+    list_sources,
+    list_stale_sources,
+    rename_source,
+    sync_sources,
+)
+from notebooklm_tools.cli.commands.studio import (
+    create_audio,
+    create_data_table,
+    create_flashcards,
+    create_infographic,
+    create_mindmap,
+    create_quiz,
+    create_report,
+    create_slides,
+    create_video,
+    studio_delete,
+    studio_rename,
+    studio_status,
+)
+
+# =============================================================================
+# CREATE verb
+# =============================================================================
+
+create_app = typer.Typer(help="Create resources (notebooks, audio, video, etc)")
+
+
+@create_app.command("notebook")
+def create_notebook_verb(
+    title: str = typer.Argument(..., help="Notebook title"),
+    profile: str | None = typer.Option(None, "--profile", "-p", help="Profile to use"),
+) -> None:
+    """Create a new notebook."""
+    create_notebook(title=title, profile=profile)
+
+
+@create_app.command("audio")
+def create_audio_verb(
+    notebook: str = typer.Argument(..., help="Notebook ID or alias"),
+    format_opt: str | None = typer.Option(
+        None, "--format", "-f", help="Audio format (deep_dive/brief/critique/debate)"
+    ),
+    length: str | None = typer.Option(
+        None, "--length", "-l", help="Audio length (short/default/long)"
+    ),
+    language: str | None = typer.Option(
+        None, "--language", help="BCP-47 language code (en, es, fr, de, ja)"
+    ),
+    focus: str | None = typer.Option(None, "--focus", help="Optional focus topic"),
+    source_ids: str | None = typer.Option(
+        None, "--source-ids", "-s", help="Comma-separated source IDs"
+    ),
+    confirm: bool = typer.Option(False, "--confirm", "-y", help="Skip confirmation prompt"),
+    profile: str | None = typer.Option(None, "--profile", "-p", help="Profile to use"),
+) -> None:
+    """Create an audio overview."""
+    create_audio(
+        notebook_id=notebook,
+        format=format_opt or "deep_dive",
+        length=length or "default",
+        language=language or "",
+        focus=focus,
+        source_ids=source_ids,
+        confirm=confirm,
+        profile=profile,
+    )
+
+
+@create_app.command("video")
+def create_video_verb(
+    notebook: str = typer.Argument(..., help="Notebook ID or alias"),
+    format_opt: str | None = typer.Option(
+        None, "--format", "-f", help="Format: explainer, brief, cinematic, short"
+    ),
+    style: str | None = typer.Option(
+        None,
+        "--style",
+        "-s",
+        help="Visual style: auto_select, custom, classic, whiteboard, kawaii, anime, watercolor, retro_print, heritage, paper_craft",
+    ),
+    style_prompt: str | None = typer.Option(
+        None,
+        "--style-prompt",
+        help="Custom visual style description (implies --style custom unless another style is explicitly set)",
+    ),
+    language: str | None = typer.Option(None, "--language", help="BCP-47 language code"),
+    focus: str | None = typer.Option(None, "--focus", help="Optional focus topic"),
+    source_ids: str | None = typer.Option(None, "--source-ids", help="Comma-separated source IDs"),
+    confirm: bool = typer.Option(False, "--confirm", "-y", help="Skip confirmation prompt"),
+    profile: str | None = typer.Option(None, "--profile", "-p", help="Profile to use"),
+) -> None:
+    """Create a video overview."""
+    create_video(
+        notebook_id=notebook,
+        format=format_opt or "explainer",
+        style=style or "auto_select",
+        style_prompt=style_prompt or "",
+        language=language or "",
+        focus=focus or "",
+        source_ids=source_ids,
+        confirm=confirm,
+        profile=profile,
+    )
+
+
+@create_app.command("report")
+def create_report_verb(
+    notebook: str = typer.Argument(..., help="Notebook ID or alias"),
+    format_opt: str | None = typer.Option(
+        None,
+        "--format",
+        "-f",
+        help="Format: 'Briefing Doc', 'Study Guide', 'Blog Post', 'Create Your Own'",
+    ),
+    prompt: str | None = typer.Option(
+        None, "--prompt", help="Custom prompt (required for 'Create Your Own')"
+    ),
+    language: str | None = typer.Option(None, "--language", help="BCP-47 language code"),
+    source_ids: str | None = typer.Option(
+        None, "--source-ids", "-s", help="Comma-separated source IDs"
+    ),
+    confirm: bool = typer.Option(False, "--confirm", "-y", help="Skip confirmation prompt"),
+    profile: str | None = typer.Option(None, "--profile", "-p", help="Profile to use"),
+) -> None:
+    """Create a report."""
+    create_report(
+        notebook_id=notebook,
+        format=format_opt or "Briefing Doc",
+        prompt=prompt or "",
+        language=language or "",
+        source_ids=source_ids,
+        confirm=confirm,
+        profile=profile,
+    )
+
+
+@create_app.command("infographic")
+def create_infographic_verb(
+    notebook: str = typer.Argument(..., help="Notebook ID or alias"),
+    orientation: str | None = typer.Option(
+        None, "--orientation", "-o", help="Orientation: landscape, portrait, square"
+    ),
+    detail: str | None = typer.Option(
+        None, "--detail", "-d", help="Detail level: concise, standard, detailed"
+    ),
+    style: str | None = typer.Option(
+        None,
+        "--style",
+        help="Visual style: auto_select, sketch_note, professional, bento_grid, editorial, instructional, bricks, clay, anime, kawaii, scientific",
+    ),
+    language: str | None = typer.Option(None, "--language", help="BCP-47 language code"),
+    focus: str | None = typer.Option(None, "--focus", help="Optional focus topic"),
+    source_ids: str | None = typer.Option(
+        None, "--source-ids", "-s", help="Comma-separated source IDs"
+    ),
+    confirm: bool = typer.Option(False, "--confirm", "-y", help="Skip confirmation prompt"),
+    profile: str | None = typer.Option(None, "--profile", "-p", help="Profile to use"),
+) -> None:
+    """Create an infographic."""
+    create_infographic(
+        notebook_id=notebook,
+        orientation=orientation or "landscape",
+        detail=detail or "standard",
+        style=style or "auto_select",
+        language=language or "",
+        focus=focus or "",
+        source_ids=source_ids,
+        confirm=confirm,
+        profile=profile,
+    )
+
+
+@create_app.command("slides")
+def create_slides_verb(
+    notebook: str = typer.Argument(..., help="Notebook ID or alias"),
+    format_opt: str | None = typer.Option(
+        None, "--format", "-f", help="Format: detailed_deck, presenter_slides"
+    ),
+    length: str | None = typer.Option(None, "--length", "-l", help="Length: short, default"),
+    language: str | None = typer.Option(None, "--language", help="BCP-47 language code"),
+    focus: str | None = typer.Option(None, "--focus", help="Optional focus topic"),
+    source_ids: str | None = typer.Option(
+        None, "--source-ids", "-s", help="Comma-separated source IDs"
+    ),
+    confirm: bool = typer.Option(False, "--confirm", "-y", help="Skip confirmation prompt"),
+    profile: str | None = typer.Option(None, "--profile", "-p", help="Profile to use"),
+) -> None:
+    """Create a slide deck."""
+    create_slides(
+        notebook_id=notebook,
+        format=format_opt or "detailed_deck",
+        length=length or "default",
+        language=language or "",
+        focus=focus or "",
+        source_ids=source_ids,
+        confirm=confirm,
+        profile=profile,
+    )
+
+
+@create_app.command("quiz")
+def create_quiz_verb(
+    notebook: str = typer.Argument(..., help="Notebook ID or alias"),
+    count: int | None = typer.Option(None, "--count", "-c", help="Number of questions"),
+    difficulty: int | None = typer.Option(
+        None, "--difficulty", "-d", help="Difficulty 1-5 (1=easy, 5=hard)"
+    ),
+    focus: str | None = typer.Option(None, "--focus", help="Optional focus topic"),
+    source_ids: str | None = typer.Option(
+        None, "--source-ids", "-s", help="Comma-separated source IDs"
+    ),
+    confirm: bool = typer.Option(False, "--confirm", "-y", help="Skip confirmation prompt"),
+    profile: str | None = typer.Option(None, "--profile", "-p", help="Profile to use"),
+) -> None:
+    """Create a quiz."""
+    create_quiz(
+        notebook_id=notebook,
+        count=count or 2,
+        difficulty=difficulty or 2,
+        focus=focus or "",
+        source_ids=source_ids,
+        confirm=confirm,
+        profile=profile,
+    )
+
+
+@create_app.command("flashcards")
+def create_flashcards_verb(
+    notebook: str = typer.Argument(..., help="Notebook ID or alias"),
+    difficulty: str | None = typer.Option(
+        None, "--difficulty", "-d", help="Difficulty: easy, medium, hard"
+    ),
+    focus: str | None = typer.Option(None, "--focus", help="Optional focus topic"),
+    source_ids: str | None = typer.Option(
+        None, "--source-ids", "-s", help="Comma-separated source IDs"
+    ),
+    confirm: bool = typer.Option(False, "--confirm", "-y", help="Skip confirmation prompt"),
+    profile: str | None = typer.Option(None, "--profile", "-p", help="Profile to use"),
+) -> None:
+    """Create flashcards."""
+    create_flashcards(
+        notebook_id=notebook,
+        difficulty=difficulty or "medium",
+        focus=focus or "",
+        source_ids=source_ids,
+        confirm=confirm,
+        profile=profile,
+    )
+
+
+@create_app.command("data-table")
+def create_data_table_verb(
+    notebook: str = typer.Argument(..., help="Notebook ID or alias"),
+    description: str = typer.Argument(..., help="Description of the data table to create"),
+    language: str | None = typer.Option(None, "--language", help="BCP-47 language code"),
+    source_ids: str | None = typer.Option(
+        None, "--source-ids", "-s", help="Comma-separated source IDs"
+    ),
+    confirm: bool = typer.Option(False, "--confirm", "-y", help="Skip confirmation prompt"),
+    profile: str | None = typer.Option(None, "--profile", "-p", help="Profile to use"),
+) -> None:
+    """Create a data table."""
+    create_data_table(
+        notebook_id=notebook,
+        description=description,
+        language=language or "",
+        source_ids=source_ids,
+        confirm=confirm,
+        profile=profile,
+    )
+
+
+@create_app.command("mindmap")
+def create_mindmap_verb(
+    notebook: str = typer.Argument(..., help="Notebook ID or alias"),
+    title: str | None = typer.Option(None, "--title", "-t", help="Mind map title"),
+    source_ids: str | None = typer.Option(
+        None, "--source-ids", "-s", help="Comma-separated source IDs"
+    ),
+    confirm: bool = typer.Option(False, "--confirm", "-y", help="Skip confirmation prompt"),
+    profile: str | None = typer.Option(None, "--profile", "-p", help="Profile to use"),
+) -> None:
+    """Create a mind map."""
+    create_mindmap(
+        notebook_id=notebook,
+        title=title or "Mind Map",
+        source_ids=source_ids,
+        confirm=confirm,
+        profile=profile,
+    )
+
+
+# =============================================================================
+# LIST verb
+# =============================================================================
+
+list_app = typer.Typer(help="List resources (notebooks, sources, artifacts)")
+
+
+@list_app.command("notebooks")
+def list_notebooks_verb(
+    full: bool = typer.Option(False, "--full", "-a", help="Show all columns"),
+    json_output: bool = typer.Option(False, "--json", help="Output as JSON"),
+    quiet: bool = typer.Option(False, "--quiet", "-q", help="Output IDs only"),
+    title: bool = typer.Option(False, "--title", "-t", help="Show ID: Title format"),
+    profile: str | None = typer.Option(None, "--profile", "-p", help="Profile to use"),
+) -> None:
+    """List all notebooks."""
+    list_notebooks(full=full, json_output=json_output, quiet=quiet, title=title, profile=profile)
+
+
+@list_app.command("sources")
+def list_sources_verb(
+    notebook: str = typer.Argument(..., help="Notebook ID or alias"),
+    full: bool = typer.Option(False, "--full", "-a", help="Show all columns"),
+    drive: bool = typer.Option(
+        False, "--drive", "-d", help="Show Drive sources with freshness status"
+    ),
+    skip_freshness: bool = typer.Option(
+        False, "--skip-freshness", "-S", help="Skip freshness checks (faster, use with --drive)"
+    ),
+    json_output: bool = typer.Option(False, "--json", help="Output as JSON"),
+    quiet: bool = typer.Option(False, "--quiet", "-q", help="Output IDs only"),
+    url: bool = typer.Option(False, "--url", "-u", help="Output as ID: URL"),
+    profile: str | None = typer.Option(None, "--profile", "-p", help="Profile to use"),
+) -> None:
+    """List sources in a notebook."""
+    list_sources(
+        notebook_id=notebook,
+        full=full,
+        drive=drive,
+        skip_freshness=skip_freshness,
+        json_output=json_output,
+        quiet=quiet,
+        url=url,
+        profile=profile,
+    )
+
+
+@list_app.command("artifacts")
+def list_artifacts_verb(
+    notebook: str = typer.Argument(..., help="Notebook ID or alias"),
+    full: bool = typer.Option(False, "--full", "-a", help="Show all details"),
+    json_output: bool = typer.Option(False, "--json", "-j", help="Output as JSON"),
+    profile: str | None = typer.Option(None, "--profile", "-p", help="Profile to use"),
+) -> None:
+    """List all studio artifacts."""
+    studio_status(notebook_id=notebook, full=full, json_output=json_output, profile=profile)
+
+
+@list_app.command("aliases")
+def list_aliases_verb() -> None:
+    """List all aliases."""
+    list_aliases()
+
+
+@list_app.command("stale-sources")
+def list_stale_sources_verb(
+    notebook: str = typer.Argument(..., help="Notebook ID or alias"),
+    json_output: bool = typer.Option(False, "--json", help="Output as JSON"),
+    profile: str | None = typer.Option(None, "--profile", "-p", help="Profile to use"),
+) -> None:
+    """List Drive sources that need syncing."""
+    list_stale_sources(notebook_id=notebook, json_output=json_output, profile=profile)
+
+
+@list_app.command("skills")
+def list_skills_verb() -> None:
+    """List available skills and installation status."""
+    skill_list()
+
+
+# =============================================================================
+# GET verb
+# =============================================================================
+
+get_app = typer.Typer(help="Get details about resources")
+
+
+@get_app.command("notebook")
+def get_notebook_verb(
+    notebook: str = typer.Argument(..., help="Notebook ID or alias"),
+    json_output: bool = typer.Option(False, "--json", help="Output as JSON"),
+    profile: str | None = typer.Option(None, "--profile", "-p", help="Profile to use"),
+) -> None:
+    """Get notebook details."""
+    get_notebook(notebook_id=notebook, json_output=json_output, profile=profile)
+
+
+@get_app.command("source")
+def get_source_verb(
+    source: str = typer.Argument(..., help="Source ID"),
+    json_output: bool = typer.Option(False, "--json", help="Output as JSON"),
+    profile: str | None = typer.Option(None, "--profile", "-p", help="Profile to use"),
+) -> None:
+    """Get source details."""
+    get_source(source_id=source, json_output=json_output, profile=profile)
+
+
+@get_app.command("config")
+def get_config_verb(
+    key: str = typer.Argument(..., help="Configuration key (e.g. output.format)"),
+) -> None:
+    """Get configuration value."""
+    get_config_value(key=key)
+
+
+@get_app.command("alias")
+def get_alias_verb(
+    name: str = typer.Argument(..., help="Alias name"),
+) -> None:
+    """Get alias value."""
+    get_alias(name=name)
+
+
+# =============================================================================
+# DELETE verb
+# =============================================================================
+
+delete_app = typer.Typer(help="Delete resources (notebooks, sources, artifacts)")
+
+
+@delete_app.command("notebook")
+def delete_notebook_verb(
+    notebook: str = typer.Argument(..., help="Notebook ID or alias"),
+    confirm: bool = typer.Option(False, "--confirm", "-y", help="Skip confirmation prompt"),
+    profile: str | None = typer.Option(None, "--profile", "-p", help="Profile to use"),
+) -> None:
+    """Delete a notebook permanently."""
+    delete_notebook(notebook_id=notebook, confirm=confirm, profile=profile)
+
+
+@delete_app.command("source")
+def delete_source_verb(
+    source: str = typer.Argument(..., help="Source ID"),
+    confirm: bool = typer.Option(False, "--confirm", "-y", help="Skip confirmation prompt"),
+    profile: str | None = typer.Option(None, "--profile", "-p", help="Profile to use"),
+) -> None:
+    """Delete a source from notebook."""
+    delete_source(source_ids=[source], confirm=confirm, profile=profile)
+
+
+@delete_app.command("artifact")
+def delete_artifact_verb(
+    notebook: str = typer.Argument(..., help="Notebook ID or alias"),
+    artifact: str = typer.Argument(..., help="Artifact ID"),
+    confirm: bool = typer.Option(False, "--confirm", "-y", help="Skip confirmation prompt"),
+    profile: str | None = typer.Option(None, "--profile", "-p", help="Profile to use"),
+) -> None:
+    """Delete a studio artifact permanently."""
+    studio_delete(notebook_id=notebook, artifact_id=artifact, confirm=confirm, profile=profile)
+
+
+@delete_app.command("alias")
+def delete_alias_verb(
+    name: str = typer.Argument(..., help="Alias name"),
+    confirm: bool = typer.Option(False, "--confirm", "-y", help="Skip confirmation prompt"),
+) -> None:
+    """Delete an alias."""
+    delete_alias(name=name, confirm=confirm)
+
+
+# =============================================================================
+# ADD verb (for sources)
+# =============================================================================
+
+add_app = typer.Typer(help="Add resources (sources to notebooks)")
+
+
+@add_app.command("url")
+def add_url_verb(
+    notebook: str = typer.Argument(..., help="Notebook ID or alias"),
+    url_arg: str = typer.Argument(..., help="URL to add"),
+    profile: str | None = typer.Option(None, "--profile", "-p", help="Profile to use"),
+    wait: bool = typer.Option(False, "--wait", "-w", help="Wait for source processing to complete"),
+    wait_timeout: float = typer.Option(600.0, "--wait-timeout", help="Wait timeout in seconds"),
+) -> None:
+    """Add a URL source to notebook."""
+    # Explicitly wrap the single URL string in a list so it doesn't get unpacked as characters
+    add_source(
+        notebook,
+        url=[url_arg],
+        text=None,
+        drive=None,
+        youtube=None,
+        file=None,
+        wait=wait,
+        wait_timeout=wait_timeout,
+        profile=profile,
+    )
+
+
+@add_app.command("text")
+def add_text_verb(
+    notebook: str = typer.Argument(..., help="Notebook ID or alias"),
+    text_arg: str = typer.Argument(..., help="Text content to add"),
+    title: str | None = typer.Option(None, "--title", help="Source title"),
+    profile: str | None = typer.Option(None, "--profile", "-p", help="Profile to use"),
+    wait: bool = typer.Option(False, "--wait", "-w", help="Wait for source processing to complete"),
+    wait_timeout: float = typer.Option(600.0, "--wait-timeout", help="Wait timeout in seconds"),
+) -> None:
+    """Add text source to notebook."""
+    # Explicitly pass None for unused source types to avoid typer.Option resolution issues
+    add_source(
+        notebook,
+        url=None,
+        text=text_arg,
+        drive=None,
+        youtube=None,
+        file=None,
+        title=title or "Pasted Text",
+        wait=wait,
+        wait_timeout=wait_timeout,
+        profile=profile,
+    )
+
+
+@add_app.command("drive")
+def add_drive_verb(
+    notebook: str = typer.Argument(..., help="Notebook ID or alias"),
+    document_id: str = typer.Argument(..., help="Google Drive document ID"),
+    title: str | None = typer.Option(None, "--title", help="Source title"),
+    doc_type: str = typer.Option("doc", "--type", help="Drive doc type: doc, slides, sheets, pdf"),
+    profile: str | None = typer.Option(None, "--profile", "-p", help="Profile to use"),
+    wait: bool = typer.Option(False, "--wait", "-w", help="Wait for source processing to complete"),
+    wait_timeout: float = typer.Option(600.0, "--wait-timeout", help="Wait timeout in seconds"),
+) -> None:
+    """Add a Google Drive source to notebook."""
+    # Explicitly pass None for unused source types to avoid typer.Option resolution issues
+    add_source(
+        notebook,
+        url=None,
+        text=None,
+        drive=document_id,
+        youtube=None,
+        file=None,
+        title=title or f"Drive Document ({document_id[:8]}...)",
+        doc_type=doc_type,
+        wait=wait,
+        wait_timeout=wait_timeout,
+        profile=profile,
+    )
+
+
+# =============================================================================
+# RENAME verb
+# =============================================================================
+
+rename_app = typer.Typer(help="Rename resources")
+
+
+@rename_app.command("notebook")
+def rename_notebook_verb(
+    notebook: str = typer.Argument(..., help="Notebook ID or alias"),
+    title: str = typer.Argument(..., help="New title"),
+    profile: str | None = typer.Option(None, "--profile", "-p", help="Profile to use"),
+) -> None:
+    """Rename a notebook."""
+    rename_notebook(notebook_id=notebook, new_title=title, profile=profile)
+
+
+@rename_app.command("source")
+def rename_source_verb(
+    source_id: str = typer.Argument(..., help="Source ID"),
+    title: str = typer.Argument(..., help="New title"),
+    notebook_id: str = typer.Option(
+        ..., "--notebook", "-n", help="Notebook ID containing the source"
+    ),
+    profile: str | None = typer.Option(None, "--profile", "-p", help="Profile to use"),
+) -> None:
+    """Rename a source."""
+    rename_source(source_id=source_id, title=title, notebook_id=notebook_id, profile=profile)
+
+
+@rename_app.command("studio")
+def rename_studio_verb(
+    artifact: str = typer.Argument(..., help="Artifact ID to rename"),
+    title: str = typer.Argument(..., help="New title"),
+    profile: str | None = typer.Option(None, "--profile", "-p", help="Profile to use"),
+) -> None:
+    """Rename a studio artifact."""
+    studio_rename(artifact_id=artifact, new_title=title, profile=profile)
+
+
+# =============================================================================
+# STATUS verb
+# =============================================================================
+
+status_app = typer.Typer(help="Check status of resources")
+
+
+@status_app.command("artifacts")
+def status_artifacts_verb(
+    notebook: str = typer.Argument(..., help="Notebook ID or alias"),
+    full: bool = typer.Option(False, "--full", "-a", help="Show all details"),
+    json_output: bool = typer.Option(False, "--json", "-j", help="Output as JSON"),
+    profile: str | None = typer.Option(None, "--profile", "-p", help="Profile to use"),
+) -> None:
+    """Check status of studio artifacts."""
+    studio_status(notebook_id=notebook, full=full, json_output=json_output, profile=profile)
+
+
+@status_app.command("research")
+def status_research_verb(
+    notebook: str = typer.Argument(..., help="Notebook ID or alias"),
+    task_id: str | None = typer.Option(None, "--task-id", "-t", help="Specific task ID to check"),
+    compact: bool = typer.Option(True, "--compact/--full", help="Show compact or full details"),
+    poll_interval: int = typer.Option(30, "--poll-interval", help="Seconds between status checks"),
+    max_wait: int = typer.Option(
+        300, "--max-wait", help="Maximum seconds to wait (0 for single check)"
+    ),
+    profile: str | None = typer.Option(None, "--profile", "-p", help="Profile to use"),
+) -> None:
+    """Check status of research task."""
+    research_status(
+        notebook_id=notebook,
+        task_id=task_id,
+        compact=compact,
+        poll_interval=poll_interval,
+        max_wait=max_wait,
+        profile=profile,
+    )
+
+
+# =============================================================================
+# DESCRIBE verb
+# =============================================================================
+
+describe_app = typer.Typer(help="Get AI-generated descriptions and summaries")
+
+
+@describe_app.command("notebook")
+def describe_notebook_verb(
+    notebook: str = typer.Argument(..., help="Notebook ID or alias"),
+    json_output: bool = typer.Option(False, "--json", help="Output as JSON"),
+    profile: str | None = typer.Option(None, "--profile", "-p", help="Profile to use"),
+) -> None:
+    """Get AI-generated notebook summary with suggested topics."""
+    describe_notebook(notebook_id=notebook, json_output=json_output, profile=profile)
+
+
+@describe_app.command("source")
+def describe_source_verb(
+    source: str = typer.Argument(..., help="Source ID"),
+    json_output: bool = typer.Option(False, "--json", help="Output as JSON"),
+    profile: str | None = typer.Option(None, "--profile", "-p", help="Profile to use"),
+) -> None:
+    """Get AI-generated source summary with keywords."""
+    describe_source(source_id=source, json_output=json_output, profile=profile)
+
+
+# =============================================================================
+# QUERY verb (for chatting with notebooks)
+# =============================================================================
+
+query_app = typer.Typer(help="Chat with notebook sources")
+
+
+@query_app.command("notebook")
+def query_notebook_verb(
+    notebook: str = typer.Argument(..., help="Notebook ID or alias"),
+    question: str = typer.Argument(..., help="Question to ask"),
+    json_output: bool = typer.Option(False, "--json", help="Output as JSON"),
+    conversation_id: str | None = typer.Option(
+        None, "--conversation-id", "-c", help="Conversation ID for follow-up questions"
+    ),
+    source_ids: str | None = typer.Option(
+        None, "--source-ids", "-s", help="Comma-separated source IDs to query (default: all)"
+    ),
+    profile: str | None = typer.Option(None, "--profile", "-p", help="Profile to use"),
+    timeout: float | None = typer.Option(
+        None, "--timeout", "-t", help="Query timeout in seconds (default: 120)"
+    ),
+) -> None:
+    """Chat with notebook sources."""
+    query_notebook(
+        notebook_id=notebook,
+        question=question,
+        json_output=json_output,
+        conversation_id=conversation_id,
+        source_ids=source_ids,
+        profile=profile,
+        timeout=timeout,
+    )
+
+
+# =============================================================================
+# SYNC verb (for Drive sources)
+# =============================================================================
+
+sync_app = typer.Typer(help="Sync resources (Drive sources)")
+
+
+@sync_app.command("sources")
+def sync_sources_verb(
+    notebook: str = typer.Argument(..., help="Notebook ID or alias"),
+    source_ids: str | None = typer.Option(
+        None, "--source-ids", "-s", help="Comma-separated source IDs to sync (default: all stale)"
+    ),
+    confirm: bool = typer.Option(False, "--confirm", "-y", help="Skip confirmation"),
+    profile: str | None = typer.Option(None, "--profile", "-p", help="Profile to use"),
+) -> None:
+    """Sync Drive sources with latest content."""
+    sync_sources(notebook_id=notebook, source_ids=source_ids, confirm=confirm, profile=profile)
+
+
+# =============================================================================
+# CONTENT verb (for getting raw source content)
+# =============================================================================
+
+content_app = typer.Typer(help="Get raw content from sources")
+
+
+@content_app.command("source")
+def content_source_verb(
+    source: str = typer.Argument(..., help="Source ID"),
+    json_output: bool = typer.Option(False, "--json", help="Output as JSON"),
+    output: str | None = typer.Option(None, "--output", "-o", help="Write content to file"),
+    profile: str | None = typer.Option(None, "--profile", "-p", help="Profile to use"),
+) -> None:
+    """Get raw source content (no AI processing)."""
+    get_source_content(source_id=source, json_output=json_output, output=output, profile=profile)
+
+
+# =============================================================================
+# STALE verb (for listing stale Drive sources)
+# =============================================================================
+
+stale_app = typer.Typer(help="List stale resources that need syncing")
+
+
+@stale_app.command("sources")
+def stale_sources_verb(
+    notebook: str = typer.Argument(..., help="Notebook ID or alias"),
+    json_output: bool = typer.Option(False, "--json", help="Output as JSON"),
+    profile: str | None = typer.Option(None, "--profile", "-p", help="Profile to use"),
+) -> None:
+    """List Drive sources that need syncing."""
+    list_stale_sources(notebook_id=notebook, json_output=json_output, profile=profile)
+
+
+# =============================================================================
+# RESEARCH verb
+# =============================================================================
+
+research_app = typer.Typer(help="Research and discover sources")
+
+
+@research_app.command("start")
+def research_start_verb(
+    query: str = typer.Argument(..., help="What to search for"),
+    source: str = typer.Option("web", "--source", "-s", help="Where to search: web or drive"),
+    mode: str = typer.Option(
+        "fast",
+        "--mode",
+        "-m",
+        help="Research mode: fast (~30s, ~10 sources) or deep (~5min, ~40 sources, web only)",
+    ),
+    notebook_id: str | None = typer.Option(
+        None, "--notebook-id", "-n", help="Add to existing notebook"
+    ),
+    title: str | None = typer.Option(None, "--title", "-t", help="Title for new notebook"),
+    force: bool = typer.Option(
+        False, "--force", "-f", help="Start new research even if one is already pending"
+    ),
+    auto_import: bool = typer.Option(
+        False, "--auto-import", help="Wait for research to complete and auto-import sources"
+    ),
+    profile: str | None = typer.Option(None, "--profile", "-p", help="Profile to use"),
+) -> None:
+    """Start a research task to find new sources."""
+    start_research(
+        query=query,
+        source=source,
+        mode=mode,
+        notebook_id=notebook_id,
+        title=title,
+        force=force,
+        auto_import=auto_import,
+        profile=profile,
+    )
+
+
+@research_app.command("import")
+def research_import_verb(
+    notebook: str = typer.Argument(..., help="Notebook ID or alias"),
+    task_id: str | None = typer.Argument(
+        None, help="Research task ID (auto-detects if not provided)"
+    ),
+    indices: str | None = typer.Option(
+        None, "--indices", "-i", help="Comma-separated indices of sources to import (default: all)"
+    ),
+    timeout: float = typer.Option(
+        300.0, "--timeout", "-t", help="Import timeout in seconds (default: 300)"
+    ),
+    cited_only: bool = typer.Option(
+        False,
+        "--cited-only",
+        help="Import only sources cited by the research report (overrides --indices)",
+    ),
+    profile: str | None = typer.Option(None, "--profile", "-p", help="Profile to use"),
+) -> None:
+    """Import discovered sources into notebook."""
+    import_research(
+        notebook_id=notebook,
+        task_id=task_id,
+        indices=indices,
+        timeout=timeout,
+        cited_only=cited_only,
+        profile=profile,
+    )
+
+
+# =============================================================================
+# CONFIGURE verb (for chat settings)
+# =============================================================================
+
+configure_app = typer.Typer(help="Configure settings")
+
+
+@configure_app.command("chat")
+def configure_chat_verb(
+    notebook: str = typer.Argument(..., help="Notebook ID or alias"),
+    goal: str | None = typer.Option(
+        None, "--goal", "-g", help="Chat goal: default, learning_guide, or custom"
+    ),
+    prompt: str | None = typer.Option(
+        None, "--prompt", help="Custom prompt (required when goal=custom, max 10000 chars)"
+    ),
+    response_length: str | None = typer.Option(
+        None, "--response-length", "-r", help="Response length: default, longer, or shorter"
+    ),
+    profile: str | None = typer.Option(None, "--profile", "-p", help="Profile to use"),
+) -> None:
+    """Configure chat settings for a notebook."""
+    configure_chat(
+        notebook_id=notebook,
+        goal=goal or "default",
+        prompt=prompt,
+        response_length=response_length or "default",
+        profile=profile,
+    )
+
+
+# =============================================================================
+# DOWNLOAD verb
+# =============================================================================
+
+download_app = typer.Typer(help="Download studio artifacts")
+
+
+@download_app.command("audio")
+def download_audio_verb(
+    notebook: str = typer.Argument(..., help="Notebook ID or alias"),
+    output: str | None = typer.Option(None, "--output", "-o", help="Output filename"),
+    artifact_id: str | None = typer.Option(None, "--id", help="Specific artifact ID"),
+    no_progress: bool = typer.Option(False, "--no-progress", help="Disable download progress bar"),
+) -> None:
+    """Download audio overview."""
+    download_audio(
+        notebook_id=notebook, output=output, artifact_id=artifact_id, no_progress=no_progress
+    )
+
+
+@download_app.command("video")
+def download_video_verb(
+    notebook: str = typer.Argument(..., help="Notebook ID or alias"),
+    output: str | None = typer.Option(None, "--output", "-o", help="Output filename"),
+    artifact_id: str | None = typer.Option(None, "--id", help="Specific artifact ID"),
+    no_progress: bool = typer.Option(False, "--no-progress", help="Disable download progress bar"),
+) -> None:
+    """Download video overview."""
+    download_video(
+        notebook_id=notebook, output=output, artifact_id=artifact_id, no_progress=no_progress
+    )
+
+
+@download_app.command("report")
+def download_report_verb(
+    notebook: str = typer.Argument(..., help="Notebook ID or alias"),
+    output: str | None = typer.Option(None, "--output", "-o", help="Output filename"),
+    artifact_id: str | None = typer.Option(None, "--id", help="Specific artifact ID"),
+) -> None:
+    """Download report."""
+    download_report(notebook_id=notebook, output=output, artifact_id=artifact_id)
+
+
+@download_app.command("mind-map")
+def download_mindmap_verb(
+    notebook: str = typer.Argument(..., help="Notebook ID or alias"),
+    output: str | None = typer.Option(None, "--output", "-o", help="Output filename"),
+    artifact_id: str | None = typer.Option(None, "--id", help="Specific artifact ID (note ID)"),
+) -> None:
+    """Download mind map."""
+    download_mind_map(notebook_id=notebook, output=output, artifact_id=artifact_id)
+
+
+@download_app.command("slides")
+def download_slides_verb(
+    notebook: str = typer.Argument(..., help="Notebook ID or alias"),
+    output: str | None = typer.Option(None, "--output", "-o", help="Output filename"),
+    artifact_id: str | None = typer.Option(None, "--id", help="Specific artifact ID"),
+    no_progress: bool = typer.Option(False, "--no-progress", help="Disable download progress bar"),
+    format: str = typer.Option("pdf", "--format", "-f", help="Format: pdf, pptx"),
+) -> None:
+    """Download slide deck."""
+    download_slide_deck(
+        notebook_id=notebook,
+        output=output,
+        artifact_id=artifact_id,
+        no_progress=no_progress,
+        format=format,
+    )
+
+
+@download_app.command("infographic")
+def download_infographic_verb(
+    notebook: str = typer.Argument(..., help="Notebook ID or alias"),
+    output: str | None = typer.Option(None, "--output", "-o", help="Output filename"),
+    artifact_id: str | None = typer.Option(None, "--id", help="Specific artifact ID"),
+    no_progress: bool = typer.Option(False, "--no-progress", help="Disable download progress bar"),
+) -> None:
+    """Download infographic."""
+    download_infographic(
+        notebook_id=notebook, output=output, artifact_id=artifact_id, no_progress=no_progress
+    )
+
+
+@download_app.command("data-table")
+def download_data_table_verb(
+    notebook: str = typer.Argument(..., help="Notebook ID or alias"),
+    output: str | None = typer.Option(None, "--output", "-o", help="Output filename"),
+    artifact_id: str | None = typer.Option(None, "--id", help="Specific artifact ID"),
+) -> None:
+    """Download data table."""
+    download_data_table(notebook_id=notebook, output=output, artifact_id=artifact_id)
+
+
+# =============================================================================
+# SET verb (for aliases and config)
+# =============================================================================
+
+set_app = typer.Typer(help="Set values (aliases, config)")
+
+
+@set_app.command("alias")
+def set_alias_verb(
+    name: str = typer.Argument(..., help="Alias name (e.g. 'my-notebook')"),
+    value: str = typer.Argument(..., help="ID to alias"),
+) -> None:
+    """Set an alias for an ID."""
+    set_alias(name=name, value=value)
+
+
+@set_app.command("config")
+def set_config_verb(
+    key: str = typer.Argument(..., help="Configuration key (e.g. output.format)"),
+    value: str = typer.Argument(..., help="Configuration value"),
+) -> None:
+    """Set configuration value."""
+    set_config_value(key=key, value=value)
+
+
+# =============================================================================
+# SHOW verb (for displaying info)
+# =============================================================================
+
+show_app = typer.Typer(help="Show information")
+
+
+@show_app.command("config")
+def show_config_verb(
+    json_output: bool = typer.Option(False, "--json", help="Output as JSON"),
+) -> None:
+    """Show all configuration."""
+    show_config(json_output=json_output)
+
+
+@show_app.command("aliases")
+def show_aliases_verb() -> None:
+    """Show all aliases."""
+    list_aliases()
+
+
+@show_app.command("skill")
+def show_skill_verb() -> None:
+    """Show NotebookLM skill content."""
+    skill_show()
+
+
+# =============================================================================
+# INSTALL verb (for skills)
+# =============================================================================
+
+install_app = typer.Typer(help="Install resources (skills)")
+
+
+@install_app.command("skill")
+def install_skill_verb(
+    tool: str = typer.Argument(
+        ...,
+        help="Tool to install skill for (claude-code, agents, hermes, opencode, antigravity, other)",
+    ),
+    level: str = typer.Option(
+        "user", "--level", "-l", help="Install at user level (~/.config) or project level (./)"
+    ),
+) -> None:
+    """Install NotebookLM skill for an AI tool."""
+    skill_install(tool=tool, level=level)
+
+
+# =============================================================================
+# UNINSTALL verb (for skills)
+# =============================================================================
+
+uninstall_app = typer.Typer(help="Uninstall resources (skills)")
+
+
+@uninstall_app.command("skill")
+def uninstall_skill_verb(
+    tool: str = typer.Argument(..., help="Tool to uninstall skill from"),
+    level: str = typer.Option("user", "--level", "-l", help="Uninstall from user or project level"),
+) -> None:
+    """Remove installed NotebookLM skill."""
+    skill_uninstall(tool=tool, level=level)
+
+
+# =============================================================================
+# UPDATE verb (for skills)
+# =============================================================================
+
+update_app = typer.Typer(help="Update resources (skills)")
+
+
+@update_app.command("skill")
+def update_skill_verb(
+    tool: str | None = typer.Argument(
+        None,
+        help="Tool to update (omit to update all outdated skills)",
+    ),
+) -> None:
+    """Update outdated skills to the current version."""
+    skill_update(tool=tool)

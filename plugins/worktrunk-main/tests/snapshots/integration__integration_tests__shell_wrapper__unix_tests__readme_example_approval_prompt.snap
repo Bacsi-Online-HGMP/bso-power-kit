@@ -1,0 +1,15 @@
+---
+source: tests/integration_tests/shell_wrapper.rs
+expression: prompt_only
+---
+n
+
+▲ repo needs approval to execute 3 commands:
+○ pre-start install:
+  echo 'Installing dependencies...'
+○ pre-start build:
+  echo 'Building project...'
+○ pre-start test:
+  echo 'Running tests...'
+
+❯ Allow and remember? [y/N]

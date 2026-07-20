@@ -1,0 +1,75 @@
+---
+source: tests/integration_tests/diagnostic.rs
+expression: normalize_report(&content)
+---
+## Diagnostic Report
+
+**Generated:** [TIMESTAMP]
+**Command:** `[PROJECT_ROOT]/target/[BUILD_MODE]/wt list -vv`
+**Result:** Command completed successfully
+
+<details open>
+<summary>Performance profile</summary>
+
+[PERFORMANCE_PROFILE_CONTENT]
+</details>
+
+<details>
+<summary>Environment</summary>
+
+```
+wt [VERSION] ([OS] [ARCH])
+git [GIT_VERSION]
+Shell integration: inactive
+```
+</details>
+
+<details>
+<summary>Worktrees</summary>
+
+```
+worktree [PATH]
+HEAD [COMMIT]
+branch refs/heads/main
+
+worktree [PATH]
+HEAD [COMMIT]
+detached
+
+worktree [PATH]
+HEAD [COMMIT]
+branch refs/heads/feature-a
+
+worktree [PATH]
+HEAD [COMMIT]
+branch refs/heads/feature-b
+
+worktree [PATH]
+HEAD [COMMIT]
+branch refs/heads/feature-c
+```
+</details>
+
+<details>
+<summary>Config</summary>
+
+```
+User config: [TEST_CONFIG]
+(file not found)
+
+Project config: _REPO_/.config/wt.toml
+(file not found)
+```
+</details>
+
+<details>
+<summary>Trace log</summary>
+
+[TRACE_LOG_CONTENT]
+</details>
+
+<details>
+<summary>Raw subprocess output</summary>
+
+Full captured stdout/stderr is in `_REPO_/.git/wt/logs/subprocess.log`.
+</details>

@@ -1,0 +1,29 @@
+{
+  "artifacts": [
+    {
+      "name": "database-schema",
+      "path": "docs/schema.sql",
+      "description": "PostgreSQL database schema — all tables, columns, types, constraints, and indexes"
+    },
+    {
+      "name": "api-spec",
+      "path": "docs/openapi.yaml",
+      "description": "OpenAPI 3.0 specification for the REST API — endpoints, request/response schemas, auth"
+    },
+    {
+      "name": "architecture",
+      "path": "docs/architecture.md",
+      "description": "High-level architecture document — system components, data flow, deployment topology"
+    },
+    {
+      "name": "infra-config",
+      "path": "infrastructure/",
+      "description": "Infrastructure-as-code files (Terraform/Docker/K8s) — resource definitions and deployment configs"
+    },
+    {
+      "name": "proto-definitions",
+      "path": "proto/services.proto",
+      "description": "Protobuf service and message definitions for gRPC inter-service communication"
+    }
+  ]
+}

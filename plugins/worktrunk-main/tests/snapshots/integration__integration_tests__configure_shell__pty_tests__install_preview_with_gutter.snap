@@ -1,0 +1,11 @@
+---
+source: tests/integration_tests/configure_shell.rs
+expression: "output.trim_start_matches('\\n')"
+---
+[36m❯[39m Install shell integration? [1m[y/N/?][22m 
+✓ Added shell extension & completions for zsh @ ~/.zshrc
+
+✓ Configured 1 shell
+▲ Completions require compinit; add to ~/.zshrc before the wt line:
+  autoload -Uz compinit && compinit
+↳ Restart shell to activate shell integration

@@ -1,0 +1,78 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.giancarloerra/socraticode",
+  "description": "MCP server for enterprise local codebase indexing, semantic search, and code dependency graphs.",
+  "repository": {
+    "url": "https://github.com/giancarloerra/socraticode",
+    "source": "github"
+  },
+  "version": "1.0.1",
+  "packages": [
+    {
+      "registryType": "npm",
+      "identifier": "socraticode",
+      "version": "1.0.1",
+      "transport": {
+        "type": "stdio"
+      },
+      "environmentVariables": [
+        {
+          "name": "EMBEDDING_PROVIDER",
+          "description": "Embedding provider to use: ollama (default), openai, or google",
+          "isRequired": false,
+          "format": "string",
+          "isSecret": false
+        },
+        {
+          "name": "OPENAI_API_KEY",
+          "description": "API key for OpenAI embeddings (required only when EMBEDDING_PROVIDER=openai)",
+          "isRequired": false,
+          "format": "string",
+          "isSecret": true
+        },
+        {
+          "name": "GOOGLE_API_KEY",
+          "description": "API key for Google embeddings (required only when EMBEDDING_PROVIDER=google)",
+          "isRequired": false,
+          "format": "string",
+          "isSecret": true
+        },
+        {
+          "name": "OLLAMA_URL",
+          "description": "URL of the Ollama server (default: auto-detected; Docker-managed or http://localhost:11434)",
+          "isRequired": false,
+          "format": "string",
+          "isSecret": false
+        },
+        {
+          "name": "EMBEDDING_MODEL",
+          "description": "Embedding model name (defaults per provider: nomic-embed-text for ollama, text-embedding-3-small for openai, gemini-embedding-001 for google)",
+          "isRequired": false,
+          "format": "string",
+          "isSecret": false
+        },
+        {
+          "name": "QDRANT_MODE",
+          "description": "Qdrant mode: managed (default, Docker-managed) or external (user-provided instance)",
+          "isRequired": false,
+          "format": "string",
+          "isSecret": false
+        },
+        {
+          "name": "QDRANT_URL",
+          "description": "Full URL for remote/cloud Qdrant (e.g. https://xyz.cloud.qdrant.io:6333). Only needed when QDRANT_MODE=external",
+          "isRequired": false,
+          "format": "string",
+          "isSecret": false
+        },
+        {
+          "name": "QDRANT_API_KEY",
+          "description": "API key for remote Qdrant instance. Only needed when QDRANT_MODE=external",
+          "isRequired": false,
+          "format": "string",
+          "isSecret": true
+        }
+      ]
+    }
+  ]
+}

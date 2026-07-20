@@ -1,0 +1,113 @@
+---
+source: tests/integration_tests/help.rs
+info:
+  program: wt
+  args:
+    - step
+    - "--help"
+  env:
+    CLICOLOR_FORCE: "1"
+    COLUMNS: "500"
+    LANG: C
+    LC_ALL: C
+    LLVM_PROFILE_FILE: "[LLVM_PROFILE_FILE]"
+    TERM: alacritty
+    WORKTRUNK_APPROVALS_PATH: "[TEST_APPROVALS]"
+    WORKTRUNK_CONFIG_PATH: "[TEST_CONFIG]"
+    WORKTRUNK_SYSTEM_CONFIG_PATH: "[TEST_SYSTEM_CONFIG]"
+    WORKTRUNK_TEST_BASH_INSTALLED: "0"
+    WORKTRUNK_TEST_CLAUDE_INSTALLED: "0"
+    WORKTRUNK_TEST_CODEX_INSTALLED: "0"
+    WORKTRUNK_TEST_DELAYED_STREAM_MS: "-1"
+    WORKTRUNK_TEST_EPOCH: "1735776000"
+    WORKTRUNK_TEST_FISH_INSTALLED: "0"
+    WORKTRUNK_TEST_GEMINI_INSTALLED: "0"
+    WORKTRUNK_TEST_NUSHELL_ENV: "0"
+    WORKTRUNK_TEST_OPENCODE_INSTALLED: "0"
+    WORKTRUNK_TEST_POWERSHELL_ENV: "0"
+    WORKTRUNK_TEST_POWERSHELL_INSTALLED: "0"
+    WORKTRUNK_TEST_SKIP_URL_HEALTH_CHECK: "1"
+    WORKTRUNK_TEST_ZSH_INSTALLED: "0"
+---
+success: true
+exit_code: 0
+----- stdout -----
+wt step - Run individual operations[0m
+
+The building blocks of [1mwt merge[0m — commit, squash, rebase, push — plus standalone utilities.[0m
+
+Usage: [1m[36mwt step[0m [36m[OPTIONS][0m [36m<COMMAND>[0m
+
+[1m[32mCommands:[0m
+  [1m[36mcommit[0m        Stage and commit with LLM-generated message
+  [1m[36msquash[0m        Squash commits since branching
+  [1m[36mrebase[0m        Rebase onto target
+  [1m[36mpush[0m          Fast-forward target to current branch
+  [1m[36mdiff[0m          Show all changes since branching
+  [1m[36mcopy-ignored[0m  Copy gitignored files to another worktree
+  [1m[36meval[0m          [experimental] Evaluate a template expression
+  [1m[36mfor-each[0m      [experimental] Run command in each worktree
+  [1m[36mpromote[0m       [experimental] Swap a branch into the main worktree
+  [1m[36mprune[0m         [experimental] Remove worktrees merged into the default branch
+  [1m[36mrelocate[0m      [experimental] Move worktrees to expected paths
+  [1m[36mtether[0m        [experimental] Run a command; kill its whole process tree when its worktree is removed
+
+[1m[32mOptions:[0m
+  [1m[36m-h[0m, [1m[36m--help[0m
+          Print help (see a summary with '-h')
+
+[1m[32mGlobal Options:[0m
+  [1m[36m-C[0m[36m [0m[36m<path>[0m
+          Working directory for this command
+
+      [1m[36m--config[0m[36m [0m[36m<path>[0m
+          User config file path
+
+      [1m[36m--config-set[0m[36m [0m[36m<toml>[0m
+          Override config with inline TOML, e.g. --config-set list.full=true (repeatable)
+
+  [1m[36m-v[0m, [1m[36m--verbose[0m[36m...[0m
+          Verbose output (-v: info logs + hook/alias template variables on stderr; -vv: also debug logs and raw subprocess output written to .git/wt/logs/). Set WORKTRUNK_VERBOSE=0|1|2 to apply the same level everywhere — including shell completion, which no flag can reach
+
+  [1m[36m-y[0m, [1m[36m--yes[0m
+          Skip approval prompts
+
+[1m[32mExamples[0m
+
+Commit with LLM-generated message:
+
+[107m [0m [2m[0m[2m[34mwt[0m[2m step commit[0m
+[107m [0m [2m[0m[2m[34m◎[0m[2m Generating commit message and committing changes... ([0m[2m[34m2[0m[2m files, +26)[0m
+[107m [0m [2m  [0m[2m[34mfeat[0m[2m([0m[2m[34mvalidation[0m[2m): [0m[2m[34madd[0m[2m input validation utilities[0m
+[107m [0m [2m[0m[2m[34m✓[0m[2m Committed changes @ a1b2c3d[0m
+
+Manual merge workflow with review between steps:
+
+[107m [0m [2m[0m[2m[34mwt[0m[2m step commit[0m
+[107m [0m [2m[0m[2m[34mwt[0m[2m step squash[0m
+[107m [0m [2m[0m[2m[34mwt[0m[2m step rebase[0m
+[107m [0m [2m[0m[2m[34mwt[0m[2m step push[0m
+
+[1m[32mOperations[0m
+
+- [2mcommit[0m — Stage and commit with LLM-generated message
+- [2msquash[0m — Squash all branch commits into one with LLM-generated message
+- [2mrebase[0m — Rebase onto target branch
+- [2mpush[0m — Fast-forward target to current branch
+- [2mdiff[0m — Show all changes since branching (committed, staged, unstaged, untracked)
+- [2mcopy-ignored[0m — Copy gitignored files between worktrees
+- [2meval[0m — [experimental] Evaluate a template expression
+- [2mfor-each[0m — [experimental] Run a command in every worktree
+- [2mpromote[0m — [experimental] Swap a branch into the main worktree
+- [2mprune[0m — Remove worktrees and branches merged into the default branch
+- [2mrelocate[0m — [experimental] Move worktrees to expected paths
+- [2mtether[0m — [experimental] Run a command; kill its whole process tree when its worktree is removed
+- [2m<alias>[0m — Run a configured command alias
+
+[1m[32mSee also[0m
+
+- [2mwt merge[0m — Runs commit → squash → rebase → hooks → push → cleanup automatically
+- [2mwt hook[0m — Run configured hooks
+- Aliases — Custom command templates run as [2mwt <name>[0m
+
+----- stderr -----

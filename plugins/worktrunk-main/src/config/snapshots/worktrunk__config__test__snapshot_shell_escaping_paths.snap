@@ -1,0 +1,19 @@
+---
+source: src/config/test.rs
+expression: results
+---
+- - spaces
+  - /path with spaces/to/worktree
+  - "cd '/path with spaces/to/worktree' && echo main"
+- - dollar
+  - /path/$USER/worktree
+  - "cd '/path/$USER/worktree' && echo main"
+- - tilde
+  - ~/worktree
+  - "cd '~/worktree' && echo main"
+- - special_chars
+  - /path/to/worktree (new)
+  - "cd '/path/to/worktree (new)' && echo main"
+- - unicode
+  - /path/to/🚀/worktree
+  - "cd '/path/to/🚀/worktree' && echo main"

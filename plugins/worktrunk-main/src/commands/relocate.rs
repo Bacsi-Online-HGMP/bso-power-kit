@@ -1,0 +1,753 @@
+//! Worktree relocation logic for `wt step relocate`.
+//!
+//! This module implements the algorithm for moving worktrees to their expected
+//! paths based on the `worktree-path` template. It handles:
+//!
+//! - Simple relocations (target is empty)
+//! - Swap/cycle scenarios (worktrees occupy each other's targets)
+//! - Blocked targets (non-worktree paths, with optional `--clobber`)
+//! - Main worktree special handling (can't use `git worktree move`)
+//!
+//! The algorithm uses explicit types to represent each stage of the pipeline:
+//!
+//! ```text
+//! gather_candidates() → Vec<RelocationCandidate>
+//!         ↓
+//! validate_candidates() → Vec<ValidatedCandidate>
+//!         ↓
+//! RelocationExecutor::new() → executor with dependency graph
+//!         ↓
+//! executor.execute() → performs moves in topological order
+//! ```
+
+use std::collections::{HashMap, HashSet};
+use std::path::{Path, PathBuf};
+
+use anyhow::Context;
+use color_print::cformat;
+use worktrunk::config::UserConfig;
+use worktrunk::git::{ErrorExt, Repository, WorktreeInfo};
+use worktrunk::path::{format_path_for_display, paths_match};
+use worktrunk::styling::{
+    eprintln, format_with_gutter, hint_message, info_message, println, progress_message,
+    success_message, warning_message,
+};
+
+use super::backup;
+use super::commit::{CommitGenerator, StageMode};
+use super::worktree::compute_worktree_path;
+
+// ============================================================================
+// Types representing each stage of the pipeline
+// ============================================================================
+
+/// A worktree that needs relocation (current path != expected path).
+pub struct RelocationCandidate {
+    pub wt: WorktreeInfo,
+    pub expected_path: PathBuf,
+}
+
+impl RelocationCandidate {
+    /// The branch name (guaranteed to exist for relocation candidates).
+    pub fn branch(&self) -> &str {
+        self.wt.branch.as_deref().unwrap()
+    }
+}
+
+/// Result of gathering relocation candidates.
+pub struct GatherResult {
+    pub candidates: Vec<RelocationCandidate>,
+    /// Branches whose `worktree-path` template failed to expand. Counted in
+    /// the human-readable text output and surfaced as `skipped` entries with
+    /// `reason: "template_error"` in JSON output.
+    pub template_error_branches: Vec<String>,
+}
+
+/// A candidate that passed pre-checks (not locked, not dirty or committed).
+pub struct ValidatedCandidate {
+    pub wt: WorktreeInfo,
+    pub expected_path: PathBuf,
+    pub is_main: bool,
+}
+
+impl ValidatedCandidate {
+    pub fn branch(&self) -> &str {
+        self.wt.branch.as_deref().unwrap()
+    }
+}
+
+/// Tracks a worktree temporarily moved to break a cycle.
+struct TempRelocation {
+    index: usize,
+    temp_path: PathBuf,
+    original_path: PathBuf,
+}
+
+/// A worktree that was successfully relocated.
+pub struct RelocatedEntry {
+    pub branch: String,
+    pub from: PathBuf,
+    pub to: PathBuf,
+}
+
+/// A worktree that was skipped during validation or execution. `reason` is a
+/// short stable identifier suitable for JSON / scripting (e.g. `"locked"`,
+/// `"uncommitted"`, `"target_blocked"`).
+pub struct SkippedEntry {
+    pub branch: String,
+    pub reason: &'static str,
+}
+
+/// Executes relocations in dependency order, handling cycles via temp moves.
+///
+/// Git commands route through `repo.worktree_at(path).run_command(...)` rather
+/// than raw `Cmd::new("git").run()`. `Cmd::run()` returns `Ok(Output)` on
+/// non-zero exit — only spawn errors travel through `?` — so raw `.run()`
+/// would silently swallow a failed `git worktree move` / `git checkout` and
+/// let the caller print a false "Relocated ..." success message.
+pub struct RelocationExecutor<'a> {
+    repo: &'a Repository,
+    pending: Vec<ValidatedCandidate>,
+    /// Maps canonical current path → index in pending (for cycle detection)
+    current_locations: HashMap<PathBuf, usize>,
+    /// Indices blocked by external factors
+    blocked: HashSet<usize>,
+    /// Indices already moved (directly or to temp)
+    moved: HashSet<usize>,
+    /// Worktrees moved to temp location, awaiting final move
+    temp_relocated: Vec<TempRelocation>,
+    /// Temp directory for cycle breaking
+    temp_dir: PathBuf,
+    /// Per-branch records (used for JSON output and counting).
+    pub relocated_entries: Vec<RelocatedEntry>,
+    pub skipped_entries: Vec<SkippedEntry>,
+}
+
+impl RelocationExecutor<'_> {
+    pub fn relocated_count(&self) -> usize {
+        self.relocated_entries.len()
+    }
+
+    pub fn skipped_count(&self) -> usize {
+        self.skipped_entries.len()
+    }
+}
+
+// ============================================================================
+// Phase 1: Gather candidates
+// ============================================================================
+
+/// Find worktrees that are not at their expected paths.
+///
+/// Returns candidates for relocation plus a count of template errors encountered.
+pub fn gather_candidates(
+    repo: &Repository,
+    config: &UserConfig,
+    filter_branches: &[String],
+) -> anyhow::Result<GatherResult> {
+    // Get all worktrees, excluding prunable ones
+    let worktrees: Vec<_> = repo
+        .list_worktrees()?
+        .iter()
+        .filter(|wt| wt.prunable.is_none())
+        .cloned()
+        .collect();
+
+    // Filter to requested branches if any were specified
+    let worktrees: Vec<_> = if filter_branches.is_empty() {
+        worktrees
+    } else {
+        worktrees
+            .into_iter()
+            .filter(|wt| {
+                wt.branch
+                    .as_ref()
+                    .is_some_and(|b| filter_branches.iter().any(|arg| arg == b))
+            })
+            .collect()
+    };
+
+    // Find mismatched worktrees
+    let mut candidates = Vec::new();
+    let mut template_error_branches: Vec<String> = Vec::new();
+
+    for wt in worktrees {
+        let Some(branch) = wt.branch.as_deref() else {
+            continue; // Detached HEAD worktrees can't be relocated
+        };
+
+        match compute_worktree_path(repo, branch, config) {
+            Ok(expected) => {
+                // Check if paths differ (canonical comparison)
+                let actual_canonical = wt.path.canonicalize().unwrap_or_else(|_| wt.path.clone());
+                let expected_canonical =
+                    expected.canonicalize().unwrap_or_else(|_| expected.clone());
+
+                if actual_canonical != expected_canonical {
+                    candidates.push(RelocationCandidate {
+                        wt,
+                        expected_path: expected,
+                    });
+                }
+            }
+            Err(e) => {
+                // Template expansion failed - warn user so they can fix config
+                eprintln!(
+                    "{}",
+                    warning_message(cformat!(
+                        "Skipping <bold>{branch}</> due to template error:"
+                    ))
+                );
+                // Render the styled diagnostic block (Display is just the short label).
+                let rendered = e.render_diagnostic().unwrap_or_else(|| e.to_string());
+                eprintln!("{rendered}");
+                template_error_branches.push(branch.to_string());
+            }
+        }
+    }
+
+    Ok(GatherResult {
+        candidates,
+        template_error_branches,
+    })
+}
+
+// ============================================================================
+// Phase 2: Validate candidates
+// ============================================================================
+
+/// Result of validating candidates.
+pub struct ValidationResult {
+    pub validated: Vec<ValidatedCandidate>,
+    pub skipped: Vec<SkippedEntry>,
+}
+
+/// Check each candidate for locked/dirty state and optionally auto-commit.
+///
+/// Returns validated candidates ready for relocation. `project_append` is
+/// the approved project-level append fragment added to each auto-commit
+/// prompt. Resolved once upfront by the caller so per-worktree commits share
+/// the same approved value rather than each running its own approval gate.
+pub fn validate_candidates(
+    repo: &Repository,
+    config: &UserConfig,
+    candidates: Vec<RelocationCandidate>,
+    auto_commit: bool,
+    repo_path: &Path,
+    project_append: Option<&str>,
+) -> anyhow::Result<ValidationResult> {
+    let mut validated = Vec::new();
+    let mut skipped: Vec<SkippedEntry> = Vec::new();
+
+    for candidate in candidates {
+        let branch = candidate.branch();
+
+        // Check locked - always skip (user must unlock manually)
+        if let Some(reason) = &candidate.wt.locked {
+            let reason_text = if reason.is_empty() {
+                String::new()
+            } else {
+                format!(": {reason}")
+            };
+            eprintln!(
+                "{}",
+                warning_message(cformat!("Skipping <bold>{branch}</> (locked{reason_text})"))
+            );
+            skipped.push(SkippedEntry {
+                branch: branch.to_string(),
+                reason: "locked",
+            });
+            continue;
+        }
+
+        let is_main = paths_match(&candidate.wt.path, repo_path);
+
+        // Check dirty.
+        //
+        // `git worktree move` carries modified-tracked and untracked files
+        // along with the worktree, so for linked worktrees we don't need to
+        // require a clean state. The main worktree is different: it can't be
+        // moved with `git worktree move`, and the fallback path runs
+        // `git checkout <default-branch>` which refuses to switch over
+        // uncommitted changes — so we still skip dirty main worktrees unless
+        // `--commit` was passed.
+        let worktree = repo.worktree_at(&candidate.wt.path);
+        if worktree.is_dirty()? && (auto_commit || is_main) {
+            if auto_commit {
+                eprintln!(
+                    "{}",
+                    progress_message(cformat!("Committing changes in <bold>{branch}</>..."))
+                );
+                // Stage all changes
+                worktree
+                    .run_command(&["add", "-A"])
+                    .context("Failed to stage changes")?;
+                // Commit using shared pipeline
+                let project_id = repo.project_identifier().ok();
+                let commit_config = config.commit_generation(project_id.as_deref());
+                CommitGenerator::new(&commit_config, project_append).commit_staged_changes(
+                    &worktree,
+                    false, // show_progress - already showing "Committing changes in..."
+                    false, // show_no_squash_note
+                    StageMode::None, // already staged above
+                )?;
+            } else {
+                // is_main without --commit
+                eprintln!(
+                    "{}",
+                    warning_message(cformat!(
+                        "Skipping <bold>{branch}</> (uncommitted changes in main worktree)"
+                    ))
+                );
+                eprintln!(
+                    "{}",
+                    hint_message(cformat!(
+                        "To auto-commit changes before relocating, use <underline>--commit</>"
+                    ))
+                );
+                skipped.push(SkippedEntry {
+                    branch: branch.to_string(),
+                    reason: "uncommitted",
+                });
+                continue;
+            }
+        }
+
+        validated.push(ValidatedCandidate {
+            wt: candidate.wt,
+            expected_path: candidate.expected_path,
+            is_main,
+        });
+    }
+
+    Ok(ValidationResult { validated, skipped })
+}
+
+// ============================================================================
+// Phase 3 & 4: Execute relocations
+// ============================================================================
+
+impl<'a> RelocationExecutor<'a> {
+    /// Create executor and classify targets (handling blockers with optional clobber).
+    pub fn new(
+        repo: &'a Repository,
+        validated: Vec<ValidatedCandidate>,
+        clobber: bool,
+    ) -> anyhow::Result<Self> {
+        let temp_dir = repo.wt_dir().join("staging/relocate");
+
+        // Build map of current locations for cycle detection
+        let mut current_locations: HashMap<PathBuf, usize> = HashMap::new();
+        for (i, candidate) in validated.iter().enumerate() {
+            let canonical = candidate
+                .wt
+                .path
+                .canonicalize()
+                .unwrap_or_else(|_| candidate.wt.path.clone());
+            current_locations.insert(canonical, i);
+        }
+
+        let mut blocked: HashSet<usize> = HashSet::new();
+        let mut skipped_entries: Vec<SkippedEntry> = Vec::new();
+
+        // Classify targets and handle blockers
+        for (i, candidate) in validated.iter().enumerate() {
+            let expected_path = &candidate.expected_path;
+
+            if !expected_path.exists() {
+                continue; // Target is empty, no blocker
+            }
+
+            let canonical_target = expected_path
+                .canonicalize()
+                .unwrap_or_else(|_| expected_path.clone());
+
+            if current_locations.contains_key(&canonical_target) {
+                // Target is another worktree we're moving - handle via dependency graph
+                continue;
+            }
+
+            // Target exists but is NOT a worktree we're moving
+            let branch = candidate.branch();
+
+            // SAFETY: Never clobber an existing worktree - that would corrupt git metadata
+            if let Some((_, occupant_branch)) = repo.worktree_at_path(expected_path)? {
+                let occupant_name = occupant_branch.as_deref().unwrap_or("(detached)");
+                let msg = cformat!(
+                    "Skipping <bold>{branch}</> (target is worktree for <bold>{occupant_name}</>)"
+                );
+                eprintln!("{}", warning_message(msg));
+                let hint = cformat!("Relocate or remove <underline>{occupant_name}</> first");
+                eprintln!("{}", hint_message(hint));
+                blocked.insert(i);
+                skipped_entries.push(SkippedEntry {
+                    branch: branch.to_string(),
+                    reason: "target_is_worktree",
+                });
+                continue;
+            }
+
+            if clobber {
+                // Atomically move the blocker aside to a timestamped backup.
+                // A backup name already taken is never overwritten — the move
+                // falls back to the next free `-N` name.
+                let src = format_path_for_display(expected_path);
+                let backup_path = backup::back_up_clobbered_path_now(expected_path)?;
+                let dest = format_path_for_display(&backup_path);
+                eprintln!("{}", progress_message(cformat!("Backed up {src} → {dest}")));
+            } else {
+                let blocked_path = format_path_for_display(expected_path);
+                let msg = cformat!("Skipping <bold>{branch}</> (target blocked: {blocked_path})");
+                eprintln!("{}", warning_message(msg));
+                eprintln!(
+                    "{}",
+                    hint_message(cformat!(
+                        "To backup blocking paths, use <underline>--clobber</>"
+                    ))
+                );
+                blocked.insert(i);
+                skipped_entries.push(SkippedEntry {
+                    branch: branch.to_string(),
+                    reason: "target_blocked",
+                });
+            }
+        }
+
+        Ok(Self {
+            repo,
+            pending: validated,
+            current_locations,
+            blocked,
+            moved: HashSet::new(),
+            temp_relocated: Vec::new(),
+            temp_dir,
+            relocated_entries: Vec::new(),
+            skipped_entries,
+        })
+    }
+
+    /// Execute all relocations in dependency order.
+    pub fn execute(&mut self, default_branch: &str, cwd: Option<&Path>) -> anyhow::Result<()> {
+        // Process until all pending are moved or in temp
+        loop {
+            let mut made_progress = false;
+
+            // Find worktrees whose target is now empty
+            for i in 0..self.pending.len() {
+                if self.moved.contains(&i) || self.blocked.contains(&i) {
+                    continue;
+                }
+
+                match self.is_target_empty(i) {
+                    Some(true) => {
+                        self.move_worktree(i, default_branch, cwd)?;
+                        made_progress = true;
+                    }
+                    Some(false) => {
+                        // Target occupied by another pending worktree - wait for it to move
+                    }
+                    None => {
+                        // Target unexpectedly blocked (TOCTOU race or same-target conflict)
+                        let branch = self.pending[i].branch();
+                        let blocked_path = format_path_for_display(&self.pending[i].expected_path);
+                        let msg = cformat!(
+                            "Skipping <bold>{branch}</> (target occupied: {blocked_path})"
+                        );
+                        eprintln!("{}", warning_message(msg));
+                        self.blocked.insert(i);
+                        self.skipped_entries.push(SkippedEntry {
+                            branch: branch.to_string(),
+                            reason: "target_occupied",
+                        });
+                    }
+                }
+            }
+
+            if made_progress {
+                continue;
+            }
+
+            // No progress - break a cycle by moving one worktree to temp
+            if !self.break_cycle()? {
+                break; // All done
+            }
+        }
+
+        // Move temp-relocated worktrees to final destinations
+        self.finalize_temp_relocations()?;
+
+        // Clean up temp directory if empty
+        if self.temp_dir.exists() {
+            let _ = std::fs::remove_dir(&self.temp_dir);
+        }
+
+        Ok(())
+    }
+
+    /// Check if target path is empty (not occupied by a pending worktree).
+    ///
+    /// Returns:
+    /// - `Some(true)` if target doesn't exist or occupant has moved
+    /// - `Some(false)` if target is occupied by another pending worktree
+    /// - `None` if target is unexpectedly blocked (not in our tracking)
+    fn is_target_empty(&self, idx: usize) -> Option<bool> {
+        let expected = &self.pending[idx].expected_path;
+
+        if !expected.exists() {
+            return Some(true);
+        }
+
+        let canonical = expected.canonicalize().unwrap_or_else(|_| expected.clone());
+
+        // Check if it's a worktree we're tracking
+        self.current_locations
+            .get(&canonical)
+            .map(|occupant_idx| self.moved.contains(occupant_idx))
+    }
+
+    /// Move a single worktree to its expected path.
+    fn move_worktree(
+        &mut self,
+        idx: usize,
+        default_branch: &str,
+        cwd: Option<&Path>,
+    ) -> anyhow::Result<()> {
+        // Extract data we need before any mutable borrows
+        let branch = self.pending[idx].branch().to_string();
+        let is_main = self.pending[idx].is_main;
+        let src_path = self.pending[idx].wt.path.clone();
+        let dest_path = self.pending[idx].expected_path.clone();
+
+        let src_display = format_path_for_display(&src_path);
+        let dest_display = format_path_for_display(&dest_path);
+
+        if is_main {
+            self.move_main_worktree(idx, default_branch)?;
+        } else {
+            let src = src_path.to_string_lossy();
+            let dest = dest_path.to_string_lossy();
+            self.repo
+                .worktree_at(self.repo.repo_path()?)
+                .run_command(&["worktree", "move", &src, &dest])
+                .context("Failed to move worktree")?;
+        }
+
+        let msg = cformat!("Relocated <bold>{branch}</>: {src_display} → {dest_display}");
+        eprintln!("{}", success_message(msg));
+
+        // Update shell if user is inside this worktree
+        if let Some(cwd_path) = cwd
+            && cwd_path.starts_with(&src_path)
+        {
+            let relative = cwd_path.strip_prefix(&src_path).unwrap_or(Path::new(""));
+            crate::output::change_directory(dest_path.join(relative))?;
+        }
+
+        self.moved.insert(idx);
+        self.relocated_entries.push(RelocatedEntry {
+            branch,
+            from: src_path,
+            to: dest_path,
+        });
+        Ok(())
+    }
+
+    /// Main worktree can't use `git worktree move`; must create new + switch.
+    ///
+    /// If `worktree add` fails after the initial checkout, the main worktree
+    /// is left on `default_branch` rather than the original branch — the user
+    /// can recover with `git switch -`. Restoring it here would be best-effort
+    /// (no error surface) and the failure modes for `worktree add` (invalid
+    /// path, branch already checked out elsewhere) are clear enough that the
+    /// user knows what to do.
+    fn move_main_worktree(&mut self, idx: usize, default_branch: &str) -> anyhow::Result<()> {
+        let candidate = &self.pending[idx];
+        let branch = candidate.branch();
+
+        let msg = cformat!("Switching main worktree to <bold>{default_branch}</>...");
+        eprintln!("{}", progress_message(msg));
+
+        let main_wt = self.repo.worktree_at(self.repo.repo_path()?);
+
+        main_wt
+            .run_command(&["checkout", "--end-of-options", default_branch])
+            .with_context(|| format!("Failed to checkout default branch '{default_branch}'"))?;
+
+        let dest = candidate.expected_path.to_string_lossy();
+        main_wt
+            .run_command(&["worktree", "add", "--end-of-options", &dest, branch])
+            .context("Failed to create worktree for main relocation")?;
+
+        Ok(())
+    }
+
+    /// Break a cycle by moving one worktree to a temp location.
+    ///
+    /// Returns `true` if a worktree was moved to temp, `false` if no cycles remain.
+    fn break_cycle(&mut self) -> anyhow::Result<bool> {
+        // Find a non-main worktree to temp-move (git worktree move can't move main)
+        let cycle_idx = (0..self.pending.len())
+            .filter(|&i| !self.moved.contains(&i) && !self.blocked.contains(&i))
+            .find(|&i| !self.pending[i].is_main);
+
+        // Fallback to any remaining (shouldn't happen in practice)
+        let cycle_idx = cycle_idx.or_else(|| {
+            (0..self.pending.len())
+                .find(|&i| !self.moved.contains(&i) && !self.blocked.contains(&i))
+        });
+
+        let Some(i) = cycle_idx else {
+            return Ok(false);
+        };
+
+        let candidate = &self.pending[i];
+        let branch = candidate.branch();
+
+        // Create temp directory if needed
+        std::fs::create_dir_all(&self.temp_dir)?;
+
+        // Sanitize branch name for temp path (feature/foo -> feature-foo)
+        let safe_branch = worktrunk::path::sanitize_for_filename(branch);
+        let temp_path = self.temp_dir.join(&safe_branch);
+
+        let msg = cformat!("Moving <bold>{branch}</> to temporary location...");
+        eprintln!("{}", progress_message(msg));
+
+        let src = candidate.wt.path.to_string_lossy();
+        let dest = temp_path.to_string_lossy();
+        self.repo
+            .worktree_at(self.repo.repo_path()?)
+            .run_command(&["worktree", "move", &src, &dest])
+            .context("Failed to move worktree to temp")?;
+
+        // Update current_locations to reflect the move
+        let old_canonical = candidate
+            .wt
+            .path
+            .canonicalize()
+            .unwrap_or_else(|_| candidate.wt.path.clone());
+        self.current_locations.remove(&old_canonical);
+
+        self.temp_relocated.push(TempRelocation {
+            index: i,
+            temp_path,
+            original_path: candidate.wt.path.clone(),
+        });
+        self.moved.insert(i);
+
+        Ok(true)
+    }
+
+    /// Move worktrees from temp locations to their final destinations.
+    fn finalize_temp_relocations(&mut self) -> anyhow::Result<()> {
+        for temp in std::mem::take(&mut self.temp_relocated) {
+            let candidate = &self.pending[temp.index];
+            let branch = candidate.branch();
+
+            let src_display = format_path_for_display(&temp.original_path);
+            let dest_display = format_path_for_display(&candidate.expected_path);
+
+            let src = temp.temp_path.to_string_lossy();
+            let dest = candidate.expected_path.to_string_lossy();
+            self.repo
+                .worktree_at(self.repo.repo_path()?)
+                .run_command(&["worktree", "move", &src, &dest])
+                .context("Failed to move worktree from temp to final location")?;
+
+            let msg = cformat!("Relocated <bold>{branch}</>: {src_display} → {dest_display}");
+            eprintln!("{}", success_message(msg));
+
+            self.relocated_entries.push(RelocatedEntry {
+                branch: branch.to_string(),
+                from: temp.original_path,
+                to: candidate.expected_path.clone(),
+            });
+        }
+
+        Ok(())
+    }
+}
+
+// ============================================================================
+// Display helpers
+// ============================================================================
+
+/// Show dry-run preview of relocations.
+pub fn show_dry_run_preview(candidates: &[RelocationCandidate]) {
+    // Dry-run preview is the command's answer (the relocations that would
+    // happen), so it goes to stdout — see /writing-user-outputs.
+    println!(
+        "{}",
+        info_message(format!(
+            "{} worktree{} would be relocated:",
+            candidates.len(),
+            if candidates.len() == 1 { "" } else { "s" }
+        ))
+    );
+
+    let preview_lines: Vec<String> = candidates
+        .iter()
+        .map(|c| {
+            let branch = c.branch();
+            let src_display = format_path_for_display(&c.wt.path);
+            let dest_display = format_path_for_display(&c.expected_path);
+            cformat!("<bold>{branch}</>: {src_display} → {dest_display}")
+        })
+        .collect();
+    println!("{}", format_with_gutter(&preview_lines.join("\n"), None));
+}
+
+/// Show summary of relocations performed.
+///
+/// Only called after validation produced at least one candidate, so
+/// `relocated + skipped >= 1` always — each candidate either moves or is skipped.
+pub fn show_summary(relocated: usize, skipped: usize) {
+    eprintln!();
+    let plural = |n: usize| if n == 1 { "worktree" } else { "worktrees" };
+    let msg = if skipped == 0 {
+        format!("Relocated {relocated} {}", plural(relocated))
+    } else {
+        format!(
+            "Relocated {relocated} {}, skipped {skipped} {}",
+            plural(relocated),
+            plural(skipped)
+        )
+    };
+    // Success when worktrees moved; info when only skips (no change made).
+    if relocated > 0 {
+        eprintln!("{}", success_message(msg));
+    } else {
+        eprintln!("{}", info_message(msg));
+    }
+}
+
+/// Show message when no relocations are needed.
+pub fn show_no_relocations_needed(template_errors: usize) {
+    if template_errors == 0 {
+        eprintln!("{}", info_message("All worktrees are at expected paths"));
+    } else {
+        eprintln!(
+            "{}",
+            info_message(format!(
+                "No relocations performed; {} skipped due to template error{}",
+                template_errors,
+                if template_errors == 1 { "" } else { "s" }
+            ))
+        );
+    }
+}
+
+/// Show message when all candidates were skipped during validation.
+///
+/// Only called when validation skipped every candidate, and at least one
+/// candidate exists by then, so `skipped >= 1` always.
+pub fn show_all_skipped(skipped: usize) {
+    eprintln!();
+    eprintln!(
+        "{}",
+        info_message(format!(
+            "Skipped {skipped} worktree{}",
+            if skipped == 1 { "" } else { "s" }
+        ))
+    );
+}

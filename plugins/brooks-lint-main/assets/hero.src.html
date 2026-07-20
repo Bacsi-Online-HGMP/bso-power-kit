@@ -1,0 +1,102 @@
+<!DOCTYPE html>
+<!-- Source for assets/hero.png — render headless at 1280x720, then screenshot #card -->
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<style>
+  :root{
+    --paper:#f7f1e4; --card:#fffdf8; --ink:#2a2520; --ink-soft:#5c5347;
+    --rule:#e3d8c2; --blue:#2d4a7c; --green:#2b8a3e; --gold:#b07d2b; --red:#b23b3b;
+    --ink-dark:#211d18;
+    --serif:"Iowan Old Style","Palatino Linotype",Palatino,"Book Antiqua",Georgia,serif;
+    --sans:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    --mono:"SF Mono","JetBrains Mono","Fira Code",Menlo,Consolas,monospace;
+  }
+  *{margin:0;padding:0;box-sizing:border-box;}
+  body{background:#cdbf9f;font-family:var(--sans);}
+  #card{
+    width:1280px;height:720px;background:var(--paper);position:relative;overflow:hidden;
+    padding:46px 54px;display:flex;flex-direction:column;
+  }
+  #card::before{content:"";position:absolute;inset:0;
+    background-image:radial-gradient(rgba(120,90,40,.05) 1px,transparent 1px);background-size:4px 4px;}
+  .top{display:flex;align-items:center;gap:12px;z-index:1;margin-bottom:22px;}
+  .top img{width:38px;height:38px;border-radius:9px;}
+  .top .name{font-family:var(--serif);font-weight:700;font-size:25px;color:var(--ink);}
+  .top .tag{margin-left:auto;font-family:var(--mono);font-size:14px;color:var(--gold);
+    border:1px solid var(--rule);background:var(--card);padding:6px 14px;border-radius:999px;letter-spacing:.04em;}
+  .panels{display:flex;align-items:stretch;gap:0;flex:1;z-index:1;}
+  .panel{flex:1;display:flex;flex-direction:column;}
+  .plabel{font-family:var(--mono);font-size:13px;letter-spacing:.12em;text-transform:uppercase;
+    color:var(--ink-soft);margin-bottom:10px;}
+  /* code panel */
+  .code{background:var(--ink-dark);border-radius:14px;padding:22px 24px;flex:1;white-space:pre-wrap;
+    font-family:var(--mono);font-size:14px;line-height:1.7;color:#cfc7b6;overflow:hidden;tab-size:2;}
+  .code .kw{color:#c98ac9;} .code .fn{color:#7fa8e0;} .code .str{color:#9ccb8a;}
+  .code .cm{color:#7d7565;} .code .warn{background:rgba(178,59,59,.28);border-bottom:2px wavy var(--red);border-radius:2px;}
+  .arrow{display:flex;align-items:center;justify-content:center;width:78px;}
+  .arrow div{font-size:34px;color:var(--gold);font-weight:700;}
+  /* verdict */
+  .verdict{background:var(--card);border:1px solid var(--rule);border-radius:14px;padding:20px 22px;flex:1;
+    box-shadow:0 10px 30px rgba(80,55,15,.10);}
+  .score{display:flex;align-items:baseline;gap:10px;border-bottom:1px solid var(--rule);padding-bottom:12px;margin-bottom:12px;}
+  .score .n{font-family:var(--serif);font-weight:700;font-size:46px;color:var(--red);line-height:1;}
+  .score .lbl{font-family:var(--serif);font-size:16px;color:var(--ink-soft);}
+  .find{margin-bottom:13px;}
+  .find h4{font-family:var(--serif);font-size:15.5px;color:var(--ink);margin-bottom:5px;}
+  .find h4 .d{color:var(--red);}
+  .find .ln{font-size:12.8px;line-height:1.5;color:var(--ink-soft);}
+  .find .ln b{font-weight:700;}
+  .find .ln.sy b{color:var(--ink);} .find .ln.sr b{color:var(--blue);} .find .ln.rx b{color:var(--green);}
+  .foot{z-index:1;text-align:center;margin-top:20px;font-family:var(--serif);font-size:16px;color:var(--ink);}
+  .foot b{color:var(--gold);}
+</style>
+</head>
+<body>
+  <div id="card">
+    <div class="top">
+      <img src="logo.svg" alt="">
+      <span class="name">brooks-lint</span>
+      <span class="tag">grounded in 12 classic engineering books</span>
+    </div>
+    <div class="panels">
+      <div class="panel">
+        <div class="plabel">Your code</div>
+        <div class="code"><span class="kw">class</span> <span class="fn">UserService</span>:
+  <span class="kw">def</span> <span class="fn">update_profile</span>(self, user_id, name, email, avatar):
+    user = self.db.query(<span class="str warn">f"SELECT * FROM users WHERE id = {user_id}"</span>)
+    user[<span class="str">'email'</span>] = email
+    <span class="cm"># ...</span>
+    <span class="kw">if</span> <span class="warn">user[<span class="str">'email'</span>] != email</span>:   <span class="cm"># always False</span>
+      self.smtp.send(...)
+    points = user[<span class="str">'login_count'</span>] * <span class="str">10</span> + <span class="str">500</span>
+    self.db.execute(<span class="str warn">f"UPDATE loyalty SET points={points} ..."</span>)
+    self.cache.invalidate(<span class="str">f"user:{user_id}"</span>)</div>
+      </div>
+      <div class="arrow"><div>&rarr;</div></div>
+      <div class="panel">
+        <div class="plabel">brooks-lint verdict</div>
+        <div class="verdict">
+          <div class="score"><span class="n">28</span><span class="lbl">/ 100 &nbsp;Health Score</span></div>
+          <div class="find">
+            <h4><span class="d">&#128308;</span> R2 — Change Propagation</h4>
+            <div class="ln sy"><b>Symptom:</b> one method does updates, email, loyalty &amp; cache.</div>
+            <div class="ln sr"><b>Source:</b> Fowler — Refactoring — Divergent Change</div>
+            <div class="ln rx"><b>Remedy:</b> extract Notification / Loyalty / CacheInvalidator.</div>
+          </div>
+          <div class="find">
+            <h4><span class="d">&#128308;</span> R6 — Domain Model Distortion</h4>
+            <div class="ln sy"><b>Symptom:</b> email overwritten before the != check — dead branch.</div>
+            <div class="ln sr"><b>Source:</b> McConnell — Code Complete — Ch.17</div>
+            <div class="ln rx"><b>Remedy:</b> capture old_email before any mutation.</div>
+          </div>
+          <div class="find">
+            <h4><span class="d">&#128308;</span> R5 — Dependency Disorder <span style="color:var(--ink-soft);font-weight:400;font-family:var(--sans);font-size:12px;">+ SQL injection ×2</span></h4>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="foot">Every finding: <b>Symptom &rarr; Source &rarr; Consequence &rarr; Remedy</b></div>
+  </div>
+</body>
+</html>

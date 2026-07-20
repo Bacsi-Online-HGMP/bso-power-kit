@@ -1,0 +1,32 @@
+[files]
+extend-exclude = ["docs/demos/vhs-keystrokes/", "*.snap", "vendor/", "*.log"]
+
+[default]
+# Generated `wt list` doc embeds (README, docs/content, skills mirrors) truncate
+# long commit messages with a trailing … . The cut leaves a word fragment glued
+# to the ellipsis (e.g. "authenticat…"), which typos would "correct" to the full
+# word — re-breaking the doc-sync test on every run. A token immediately followed
+# by … is a truncation, not a typo; *.snap is already excluded, this covers the
+# rendered mirrors that embed the same output.
+extend-ignore-re = ['\w+…']
+
+[default.extend-identifiers]
+# "PNGs" is correct (Portable Network Graphics plural). The plural form
+# tokenizes to the word "PN", which typos would otherwise correct to "ON";
+# `extend-words` doesn't suppress it (PNGs isn't a word, it's an identifier).
+PNGs = "PNGs"
+
+[default.extend-words]
+# Git commit hashes that typos flags as potential typos
+ba = "ba"  # Part of commit hashes like e28e0ba
+ede = "ede"  # Part of commit hashes like ede2fd3
+# ANSI escape codes in snapshots make is_main/is_current/is_previous look like "mis"
+mis = "mis"
+# Intentional typos in tests for "did you mean?" suggestions
+deplyo = "deplyo"
+comit = "comit"
+siwtch = "siwtch"
+# Intentional typo in expansion.rs exercising conditional undefined-var validation
+targte = "targte"
+# Intentional typo in CHANGELOG.md illustrating the unreferenced-var warning
+brnach = "brnach"

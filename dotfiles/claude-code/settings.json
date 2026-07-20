@@ -1,0 +1,127 @@
+{
+  "enableWorkflows": true,
+  "enabledPlugins": {
+    "superpowers@claude-plugins-official": true,
+    "frontend-design@claude-plugins-official": true,
+    "hf-cli@huggingface-skills": true,
+    "hf-mem@huggingface-skills": true,
+    "huggingface-best@huggingface-skills": true,
+    "huggingface-community-evals@huggingface-skills": true,
+    "huggingface-datasets@huggingface-skills": true,
+    "huggingface-gradio@huggingface-skills": true,
+    "huggingface-llm-trainer@huggingface-skills": true,
+    "huggingface-local-models@huggingface-skills": true,
+    "huggingface-lora-space-builder@huggingface-skills": true,
+    "huggingface-paper-publisher@huggingface-skills": true,
+    "huggingface-papers@huggingface-skills": true,
+    "huggingface-spaces@huggingface-skills": true,
+    "huggingface-tool-builder@huggingface-skills": true,
+    "huggingface-trackio@huggingface-skills": true,
+    "huggingface-vision-trainer@huggingface-skills": true,
+    "huggingface-zerogpu@huggingface-skills": true,
+    "train-sentence-transformers@huggingface-skills": true,
+    "transformers-js@huggingface-skills": true,
+    "trl-training@huggingface-skills": true,
+    "code-review@claude-plugins-official": true,
+    "skill-creator@claude-plugins-official": true,
+    "code-simplifier@claude-plugins-official": true,
+    "github@claude-plugins-official": true,
+    "playwright@claude-plugins-official": true,
+    "claude-md-management@claude-plugins-official": true,
+    "feature-dev@claude-plugins-official": true,
+    "security-guidance@claude-plugins-official": true,
+    "typescript-lsp@claude-plugins-official": true,
+    "vercel@claude-plugins-official": true,
+    "ralph-loop@claude-plugins-official": true,
+    "claude-code-setup@claude-plugins-official": true,
+    "commit-commands@claude-plugins-official": true,
+    "supabase@claude-plugins-official": true,
+    "pr-review-toolkit@claude-plugins-official": true,
+    "pyright-lsp@claude-plugins-official": true,
+    "telegram@claude-plugins-official": true,
+    "chrome-devtools-mcp@claude-plugins-official": true,
+    "plugin-dev@claude-plugins-official": true,
+    "agent-sdk-dev@claude-plugins-official": true,
+    "explanatory-output-style@claude-plugins-official": true,
+    "playground@claude-plugins-official": true,
+    "hookify@claude-plugins-official": true,
+    "greptile@claude-plugins-official": true,
+    "remember@claude-plugins-official": true,
+    "csharp-lsp@claude-plugins-official": true,
+    "learning-output-style@claude-plugins-official": true,
+    "firecrawl@claude-plugins-official": true,
+    "huggingface-skills@claude-plugins-official": true,
+    "jdtls-lsp@claude-plugins-official": true,
+    "php-lsp@claude-plugins-official": true,
+    "coderabbit@claude-plugins-official": true,
+    "discord@claude-plugins-official": true,
+    "mcp-server-dev@claude-plugins-official": true,
+    "clangd-lsp@claude-plugins-official": true,
+    "firebase@claude-plugins-official": true,
+    "microsoft-docs@claude-plugins-official": true,
+    "atomic-agents@claude-plugins-official": true,
+    "data-engineering@claude-plugins-official": true,
+    "imessage@claude-plugins-official": true,
+    "expo@claude-plugins-official": true,
+    "circleback@claude-plugins-official": true,
+    "session-report@claude-plugins-official": true,
+    "fakechat@claude-plugins-official": true,
+    "data@claude-plugins-official": true,
+    "mintlify@claude-plugins-official": true,
+    "desktop-commander@claude-plugins-official": true,
+    "code-modernization@claude-plugins-official": true,
+    "ai-plugins@claude-plugins-official": true,
+    "auth0@claude-plugins-official": true,
+    "math-olympiad@claude-plugins-official": true,
+    "fiftyone@claude-plugins-official": true,
+    "dataverse@claude-plugins-official": true,
+    "mcp-apps@claude-plugins-official": true,
+    "datarobot-agent-skills@claude-plugins-official": true,
+    "mcp-tunnels@claude-plugins-official": true,
+    "ponytail@ponytail": true,
+    "andrej-karpathy-skills@karpathy-skills": true,
+    "ecc@ecc": true,
+    "caveman@caveman": true
+  },
+  "extraKnownMarketplaces": {
+    "huggingface-skills": {
+      "source": {
+        "source": "github",
+        "repo": "huggingface/skills"
+      },
+      "autoUpdate": true
+    },
+    "ponytail": {
+      "source": {
+        "source": "github",
+        "repo": "DietrichGebert/ponytail"
+      },
+      "autoUpdate": true
+    },
+    "karpathy-skills": {
+      "source": {
+        "source": "github",
+        "repo": "forrestchang/andrej-karpathy-skills"
+      },
+      "autoUpdate": true
+    },
+    "ecc": {
+      "source": {
+        "source": "git",
+        "url": "https://github.com/affaan-m/ECC.git"
+      },
+      "autoUpdate": true
+    },
+    "caveman": {
+      "source": {
+        "source": "github",
+        "repo": "JuliusBrussee/caveman"
+      }
+    }
+  },
+  "effortLevel": "high",
+  "tui": "fullscreen",
+  "theme": "auto",
+  "inputNeededNotifEnabled": true,
+  "agentPushNotifEnabled": true
+}

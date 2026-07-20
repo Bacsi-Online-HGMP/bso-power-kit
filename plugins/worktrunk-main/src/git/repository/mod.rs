@@ -1,0 +1,1699 @@
+//! Repository - git repository operations.
+//!
+//! This module provides the [`Repository`] type for interacting with git repositories,
+//! [`WorkingTree`] for worktree-specific operations, and [`Branch`] for branch-specific
+//! operations.
+//!
+//! # Module organization
+//!
+//! - `mod.rs` - Core types and construction
+//! - `working_tree.rs` - WorkingTree struct and worktree-specific operations
+//! - `branch.rs` - Branch struct and single-branch operations (exists, upstream, remotes)
+//! - `branches.rs` - Multi-branch operations (listing, filtering, completions)
+//! - `worktrees.rs` - Worktree management (list, resolve, remove)
+//! - `remotes.rs` - Remote and URL operations
+//! - `diff.rs` - Diff, history, and commit operations
+//! - `config.rs` - Git config, hints, markers, and default branch detection
+//! - `integration.rs` - Integration detection (same commit, ancestor, trees match)
+//!
+//! # Caching
+//!
+//! Most repository data — remote URLs, config, default branch, merge-bases — is stable
+//! for the duration of a single CLI command. [`RepoCache`] exploits this by caching
+//! read-only values so repeated queries hit memory instead of spawning git processes.
+//!
+//! **Two layers, two scopes.** Cached state lives in either of:
+//! - `RepoCache` — per-`Repository::at()` instance. Most repo-wide values
+//!   (config, branches, worktree inventory) live here.
+//! - Process-wide `LazyLock<DashMap>` statics — `GIT_COMMON_DIR_CACHE`,
+//!   `WORKTREE_ROOTS`, `GIT_DIRS`, `CURRENT_BRANCHES`. The git-discovery
+//!   data they hold is keyed by canonicalized filesystem path, so two
+//!   `Repository` instances pointed at the same path see the same answer.
+//!   This lets [`Repository::prewarm`] populate the maps once at the start
+//!   of `main` and have every later `Repository::current()` (each builds a
+//!   fresh `RepoCache`) reuse the result.
+//!
+//! **Persistence: in-memory vs on-disk.** Both layers above are in-memory and
+//! die with the process. A third store — the persistent on-disk [`sha_cache`]
+//! (SHA-keyed JSON under `.git/wt/cache/`) — survives across invocations.
+//! Which store a git result belongs in turns on recompute cost and parallelism:
+//! - *Cheap per call, but primeable in bulk* (commit→tree) → in-memory
+//!   `RepoCache` `DashMap`, get-or-create. The `Entry` match holds the shard
+//!   lock across check-and-insert, so parallel `wt list` rows sharing a key
+//!   spawn one git process, not one each. On the `wt list` path the per-row
+//!   lookups never fork at all: the pre-skeleton commit-details `git log`
+//!   batch reads `%T` and primes this map in one round trip
+//!   ([`Repository::commit_details_many`]), so cross-run disk persistence
+//!   would save only the rare off-batch miss. Exemplar:
+//!   [`Repository::commit_to_tree_sha`].
+//! - *Expensive, worth persisting across invocations* (merge-tree, patch-id,
+//!   diff stats, ahead/behind) → the disk [`sha_cache`]; content-addressed by
+//!   SHA, so never stale.
+//! - *Both expensive and hot-in-parallel* → an in-memory `DashMap` front over
+//!   the disk back, so parallel tasks don't race through the file cache for the
+//!   same key (the in-memory layer pays the first miss once; the disk layer
+//!   persists it). Exemplars: the `diff_stats` field below, and
+//!   [`Repository::merge_base_by_sha`] — `wt list`'s orphan check forks
+//!   `merge-base` once per row even when the ahead/behind counts are already
+//!   cache-warm, so without the disk back every re-run re-pays N forks; per-row
+//!   recompute also runs 10–25 ms on macOS, not the ~1 ms a fast Linux box
+//!   sees.
+//!
+//! **Lifetime.** Neither in-memory layer is ever invalidated. `RepoCache` lives as
+//! long as the `Repository` it's attached to (typically the command).
+//! Process-wide statics live for the process. For the CLI that's the same
+//! thing — one command per process — but tests run many commands in one
+//! process, so they may observe state from prior test cases (in practice
+//! safe: tests use unique tempdir paths, and the maps are filesystem-keyed).
+//!
+//! **Sharing.** `Repository` holds an `Arc<RepoCache>`, so cloning a `Repository`
+//! (e.g., to pass into parallel worktree operations in `wt list`) shares the same
+//! cache. Callers that need a *separate* cache must call `Repository::at()` again
+//! — but the process-wide maps are still shared in either case.
+//!
+//! **What is NOT cached.** Values that change during command execution are intentionally
+//! excluded:
+//! - `WorkingTree::is_dirty()` — changes as we stage and commit
+//! - `WorkingTree::head_sha()` — HEAD moves on commit, rebase, or merge; a stale SHA
+//!   would surface in template variables (`{{ commit }}`) for hooks that fire after the move
+//!
+//! [`Repository::list_worktrees`] is cached despite mutating commands adding or
+//! removing worktrees. The cache is safe because no caller reads the list
+//! through the same `Repository` after its own mutation — mutating paths
+//! either read once up front and thread the slice through, or rebuild a
+//! fresh `Repository::at(...)` before any post-mutation probe. This mirrors
+//! the invariant the branch inventories already rely on.
+//!
+//! **Access patterns.** See the [`RepoCache`] doc comment for the two storage patterns
+//! (repo-wide `OnceCell` vs per-key `DashMap`) and their infallible/fallible variants.
+//!
+//! **Invariants:**
+//! - A cached value, once written, is never updated within the same command.
+//! - All cache access is lock-free at the call site — `OnceCell` and `DashMap` handle
+//!   synchronization internally.
+//! - Code that mutates repository state (committing, creating worktrees) must not read
+//!   its own mutations through the cache. Use direct git commands for post-mutation
+//!   state.
+//!
+//! **Other process-level singletons.** Outside `RepoCache` and the
+//! git-discovery caches above, several modules use `OnceLock`/`LazyLock` for
+//! process-global singletons that are *lazy initialization, not caches* —
+//! the container is initialized once and never replaced, with no underlying
+//! external state that could go stale:
+//! - Resource limiters: `CMD_SEMAPHORE` (shell_exec), `HEAVY_OPS_SEMAPHORE` (git),
+//!   `LLM_SEMAPHORE` (summary), `COPY_POOL` (copy)
+//! - Global state: `OUTPUT_STATE` (output), `TRACE` and `SUBPROCESS` (log_files), `COMMAND_LOG`
+//! - Config: `CONFIG_PATH` (config/user/path), `SHELL_CONFIG`, `GIT_ENV_OVERRIDES` (shell_exec)
+//!
+//! The picker also maintains a `PreviewCache` (`Arc<DashMap>` in `commands/picker/items.rs`)
+//! for rendered preview output, scoped to a single picker session.
+
+use std::path::{Path, PathBuf};
+use std::process::Stdio;
+use std::sync::{Arc, LazyLock, OnceLock};
+
+use crate::shell_exec::Cmd;
+
+use color_print::cformat;
+use dashmap::DashMap;
+use once_cell::sync::OnceCell;
+
+use anyhow::{Context, bail};
+use dunce::canonicalize;
+
+use crate::config::{LoadError, ProjectConfig, ResolvedConfig, UserConfig};
+
+// Import types from parent module
+use super::{CiPlatform, CommandError, DefaultBranchName, GitError, LineDiff, WorktreeInfo};
+
+// Re-export types needed by submodules
+pub(super) use super::{
+    BranchCategory, CompletionBranch, DiffStats, GitRemoteUrl, GitRepoInfo, LocalBranch,
+    RemoteBranch,
+};
+
+// Submodules with impl blocks
+mod branch;
+mod branches;
+mod config;
+mod diff;
+mod integration;
+mod ref_snapshot;
+mod remotes;
+pub mod sha_cache;
+mod working_tree;
+mod worktrees;
+
+// Re-export WorkingTree, Branch, IntegrationTargets, and RefSnapshot
+pub use branch::Branch;
+pub use diff::CommitMessageDetail;
+pub use integration::{BranchDiffSpec, IntegrationTargets, select_comparison_base};
+pub use ref_snapshot::RefSnapshot;
+pub(super) use working_tree::path_to_logging_context;
+pub use working_tree::{TempIndex, WorkingTree};
+
+// ============================================================================
+// Repository Cache
+// ============================================================================
+
+/// Cached data for a single repository.
+///
+/// Contains:
+/// - Repo-wide values (same for all worktrees): is_bare, default_branch, etc.
+/// - Per-worktree values keyed by path: status_porcelain
+///
+/// Per-worktree git-discovery values that used to live here
+/// (`worktree_roots`, `git_dirs`, `current_branches`) are now process-wide
+/// statics ([`WORKTREE_ROOTS`], [`GIT_DIRS`], [`CURRENT_BRANCHES`]) next to
+/// [`GIT_COMMON_DIR_CACHE`]. Same staleness contract — populated once, never
+/// invalidated — but they survive across `Repository::current()` calls so a
+/// single eager [`Repository::prewarm`] in `main` warms every later instance.
+///
+/// Wrapped in Arc to allow releasing the outer HashMap lock before accessing
+/// cached values, avoiding deadlocks when cached methods call each other.
+///
+/// # Cache access patterns
+///
+/// Repo-wide values use `OnceCell::get_or_init` / `get_or_try_init` — single
+/// initialization, no key.
+///
+/// Keyed values use `DashMap`. Both patterns hold the shard lock across
+/// check-and-insert (no TOCTOU gap). Choose based on whether computation
+/// is fallible:
+///
+/// **Infallible** — use `entry().or_insert_with()`:
+///
+/// ```rust,ignore
+/// self.cache.some_map
+///     .entry(key)
+///     .or_insert_with(|| compute())
+///     .clone()
+/// ```
+///
+/// **Fallible** — use explicit `Entry` matching to propagate errors:
+///
+/// ```rust,ignore
+/// match self.cache.some_map.entry(key) {
+///     Entry::Occupied(e) => Ok(e.get().clone()),
+///     Entry::Vacant(e) => {
+///         let value = compute()?;
+///         Ok(e.insert(value).clone())
+///     }
+/// }
+/// ```
+#[derive(Debug, Default)]
+pub(super) struct RepoCache {
+    // ========== Repo-wide values (same for all worktrees) ==========
+    /// Every git config key in the merged config (system + global + repo),
+    /// populated by one `git config --list -z` read on first access.
+    ///
+    /// All the single-key config accessors (`is_bare`, `primary_remote`,
+    /// `remote_url`, `default_branch` fast path, hint/marker readers)
+    /// consult this map instead of spawning their own subprocess. Multivars
+    /// (e.g., multiple `remote.origin.url` entries) accumulate in the Vec.
+    /// `RwLock` rather than `OnceCell` so in-process writes via
+    /// [`Repository::set_config_value`] stay coherent after population.
+    ///
+    /// `IndexMap` preserves insertion order, matching git's own `--list -z`
+    /// output order — so accessors that iterate the map (e.g.,
+    /// `primary_remote` picking "first remote with a URL") follow config
+    /// file order the same way the old `--get-regexp` calls did.
+    pub(super) all_config: OnceCell<std::sync::RwLock<indexmap::IndexMap<String, Vec<String>>>>,
+    /// Repository root path (main worktree for normal repos, bare directory for bare repos)
+    pub(super) repo_path: OnceCell<PathBuf>,
+    /// Default branch (main, master, etc.)
+    pub(super) default_branch: OnceCell<Option<String>>,
+    /// Upstream-aware comparison base for the diff/summary preview panes —
+    /// [`integration::IntegrationTargets::primary`], resolved once. Repo-wide
+    /// like `default_branch`; captures a [`RefSnapshot`] on first access via
+    /// [`Repository::branch_diff_spec`]. `None` when no default branch resolves.
+    pub(super) comparison_base: OnceCell<Option<integration::ComparisonBase>>,
+    /// Project identifier derived from remote URL
+    pub(super) project_identifier: OnceCell<String>,
+    /// Project config (loaded from .config/wt.toml in main worktree)
+    pub(super) project_config: OnceCell<Option<ProjectConfig>>,
+    /// CI platform from project config (`forge.platform` / `ci.platform`).
+    /// `None` when unset or unrecognized; an unrecognized value warns once,
+    /// deduplicating the warning across the many branches `wt list` probes.
+    /// Resolved via [`Repository::ci_platform`].
+    pub(super) configured_ci_platform: OnceCell<Option<CiPlatform>>,
+    /// User config (raw, as loaded from disk).
+    /// Populated by [`Repository::at`] from the
+    /// [`WORKTRUNK_USER_CONFIG_PRELOAD`] preload when prewarm ran; otherwise
+    /// loaded on first access via [`Repository::user_config`].
+    pub(super) user_config: OnceCell<UserConfig>,
+    /// Resolved user config (global merged with per-project overrides, defaults applied).
+    /// Lazily loaded on first access via `Repository::config()`.
+    pub(super) resolved_config: OnceCell<ResolvedConfig>,
+    /// Sparse checkout paths (empty if not a sparse checkout)
+    pub(super) sparse_checkout_paths: OnceCell<Vec<String>>,
+    /// Merge-base cache: (sha1, sha2) -> merge_base_sha (None = no common ancestor).
+    /// Keys are commit SHAs by contract — callers must resolve refs through
+    /// a [`RefSnapshot`] before consulting. The key order is normalized
+    /// (`(min, max)`) since merge-base is symmetric. This is the in-memory
+    /// front over the persistent `merge-base/` [`sha_cache`] back; see
+    /// [`Repository::merge_base_by_sha`].
+    pub(super) merge_base: DashMap<(String, String), Option<String>>,
+    /// Commit→tree cache: commit_sha -> tree_sha. Keys are commit SHAs by
+    /// contract; a commit's tree is immutable, so the mapping is never stale
+    /// within a process. Dedups the `wt list` integration probe, where every
+    /// branch row peels the same default-branch tip to its tree. Resolved via
+    /// [`Repository::commit_to_tree_sha`].
+    pub(super) commit_tree: DashMap<String, String>,
+    /// In-memory merge-tree outcome cache: (a_sha, b_sha) -> outcome.
+    /// `git merge-tree --write-tree` is the costliest op in `wt list`, and the
+    /// conflict probe (`has_merge_conflicts_by_sha`) and the integration probe
+    /// (`merge_integration_probe_by_sha` via `would_merge_add_to_target`) run
+    /// the identical `(target, branch)` merge per row for two different
+    /// answers. Their persistent caches (`merge-tree-conflicts` vs
+    /// `merge-add-probe`) are keyed separately, so a cold run would spawn the
+    /// subprocess twice; this front collapses both to one via the entry-lock
+    /// pattern (same as [`Self::merge_base`]). Keys are commit SHAs in call
+    /// order — see `Repository::merge_tree_outcome`.
+    pub(super) merge_tree: DashMap<(String, String), integration::MergeTreeOutcome>,
+    /// Effective remote URLs: remote_name -> effective URL (with `url.insteadOf` applied).
+    /// Separate from `all_config` because `git remote get-url` applies
+    /// `url.insteadOf` rewrites that aren't visible in raw config.
+    pub(super) effective_remote_urls: DashMap<String, Option<String>>,
+    /// Per-branch effective push URL: branch_name -> push URL (or None if
+    /// no push remote is configured). One `for-each-ref %(push:remotename)`
+    /// per branch, then `effective_remote_url` for the resolved remote name.
+    /// `wt list`'s CI-status detection calls `push_remote_url` from both the
+    /// PR-based path and the branch fallback (via `branch_remote_url`), so
+    /// the same branch is queried twice on the no-PR path — this cache
+    /// collapses that to one subprocess.
+    pub(super) push_remote_urls: DashMap<String, Option<String>>,
+
+    /// Local branch inventory: one `git for-each-ref refs/heads/` scan, cached
+    /// for the lifetime of the repository. Entries are sorted by most recent
+    /// commit first; the inventory also holds a name → index map for O(1)
+    /// single-branch lookups. Populated lazily via
+    /// [`Repository::local_branches`].
+    ///
+    /// **The `commit_sha` field on each entry is a snapshot at scan time.**
+    /// Code that needs a current SHA must resolve through a [`RefSnapshot`]
+    /// captured at the moment the read happens — not through this inventory.
+    /// The inventory is used for branch-name listing and upstream-tracking
+    /// metadata, both of which are stable for the duration of a command.
+    pub(super) local_branches: OnceCell<branches::LocalBranchInventory>,
+    /// Remote-tracking branch inventory: one `git for-each-ref refs/remotes/`
+    /// scan, cached for the lifetime of the repository. Sorted by most recent
+    /// commit first. Populated lazily via [`Repository::remote_branches`].
+    /// Excludes `<remote>/HEAD` symrefs. Same snapshot-at-scan-time contract
+    /// as [`Self::local_branches`] applies to `commit_sha`.
+    pub(super) remote_branches: OnceCell<Vec<RemoteBranch>>,
+    /// Worktree inventory: one `git worktree list --porcelain` scan, cached
+    /// for the lifetime of the repository. Populated lazily via
+    /// [`Repository::list_worktrees`]. The picker warms this on the main
+    /// thread (for its preview-window sizing estimate) so the background
+    /// `collect::collect` pass hits memory instead of respawning the
+    /// subprocess on the critical path to skeleton.
+    pub(super) worktrees: OnceCell<Vec<WorktreeInfo>>,
+    /// In-memory branch diff stats cache: (base_sha, head_sha) -> LineDiff.
+    /// Sits in front of the persistent `sha_cache` to prevent parallel tasks
+    /// from racing through the file-based cache for the same SHA pair.
+    pub(super) diff_stats: DashMap<(String, String), LineDiff>,
+
+    // ========== Per-worktree values (keyed by path) ==========
+    //
+    // Earlier per-worktree git-discovery maps (`worktree_roots`, `git_dirs`,
+    // `current_branches`) lived here too. They moved out to the process-wide
+    // statics next to [`GIT_COMMON_DIR_CACHE`] so [`Repository::prewarm`] can
+    // populate them once for the cold path and have every later
+    // `Repository::current()` (which builds a fresh `RepoCache`) reuse the
+    // result. The data is filesystem-keyed and process-invariant, so per-Repo
+    // scoping never bought anything.
+    //
+    /// Cached `git status --porcelain` output per worktree: worktree_path -> raw porcelain.
+    /// Populated by `WorkingTree::status_porcelain_cached()` so parallel tasks
+    /// (working-tree diff + conflict detection) share one subprocess per worktree
+    /// instead of spawning `git status` twice.
+    pub(super) status_porcelain: DashMap<PathBuf, String>,
+}
+
+/// Result of resolving a worktree name.
+///
+/// Used by `resolve_worktree` to handle different resolution outcomes:
+/// - A worktree exists (with optional branch for detached HEAD)
+/// - Only a branch exists (no worktree)
+#[derive(Debug, Clone)]
+pub enum ResolvedWorktree {
+    /// A worktree was found
+    Worktree {
+        /// The filesystem path to the worktree
+        path: PathBuf,
+        /// The branch name, if known (None for detached HEAD)
+        branch: Option<String>,
+    },
+    /// Only a branch exists (no worktree)
+    BranchOnly {
+        /// The branch name
+        branch: String,
+    },
+}
+
+/// Global base path for repository operations, set by -C flag.
+static BASE_PATH: OnceLock<PathBuf> = OnceLock::new();
+
+/// Default base path when -C flag is not provided.
+static DEFAULT_BASE_PATH: LazyLock<PathBuf> = LazyLock::new(|| PathBuf::from("."));
+
+/// Process-wide cache for `git rev-parse --git-common-dir` resolution,
+/// keyed by the discovery path passed to [`Repository::at`].
+///
+/// Unlike per-Repository caches, this lives for the whole process so that
+/// multiple Repository instances pointed at the same path (e.g.
+/// `init_command_log` early in `main`, then a command handler later) skip
+/// the duplicate `git rev-parse` subprocess. The value (a canonicalized
+/// `.git` directory) is invariant for the lifetime of the process.
+///
+/// Keys are stored as-is (not canonicalized) — the goal is only to dedupe
+/// repeated calls with the same path. The duplicate case we care about (both
+/// callers go through `base_path()`) always passes the same `PathBuf`, so
+/// equality on the raw path is sufficient.
+static GIT_COMMON_DIR_CACHE: LazyLock<DashMap<PathBuf, PathBuf>> = LazyLock::new(DashMap::new);
+
+/// Process-wide map of `worktree_path -> canonicalized worktree root`,
+/// keyed by the canonicalized path used as the cache key (same convention as
+/// [`Repository::worktree_at`] / [`WorkingTree`]).
+///
+/// **Invariant:** `WORKTREE_ROOTS.contains_key(path)` ⇔ `path` is inside a git
+/// work tree. The fallback path `WorkingTree::root` returns when `rev-parse
+/// --show-toplevel` fails (deleted CWD, bare repo root, non-repo dir) is
+/// **not** persisted, which keeps the membership check usable as a
+/// "is-inside-worktree" signal — see [`WorkingTree::prewarm_info`]'s fast path.
+///
+/// Populated by [`Repository::prewarm`] (eager, one fork on the cold path),
+/// [`WorkingTree::prewarm_info`] (lazy via the `rev-parse` batch), and
+/// [`WorkingTree::root`] (per-field on demand).
+pub(super) static WORKTREE_ROOTS: LazyLock<DashMap<PathBuf, PathBuf>> = LazyLock::new(DashMap::new);
+
+/// Process-wide map of `worktree_path -> canonicalized git directory` (e.g.
+/// `.git/worktrees/<name>` for linked worktrees, `.git` for the main worktree).
+///
+/// Populated by [`Repository::prewarm`], [`WorkingTree::prewarm_info`], and
+/// [`WorkingTree::git_dir`].
+pub(super) static GIT_DIRS: LazyLock<DashMap<PathBuf, PathBuf>> = LazyLock::new(DashMap::new);
+
+/// Process-wide map of `worktree_path -> current branch` (`None` = detached
+/// HEAD; missing entry = unborn HEAD or never resolved).
+///
+/// Populated by [`Repository::prewarm`], [`WorkingTree::prewarm_info`], and
+/// [`WorkingTree::branch`]. The cached value is a snapshot at first read; if a
+/// hook checks out a different branch mid-command, the entry stays stale —
+/// same contract that the per-`RepoCache` map carried before consolidation.
+pub(super) static CURRENT_BRANCHES: LazyLock<DashMap<PathBuf, Option<String>>> =
+    LazyLock::new(DashMap::new);
+
+/// Process-wide pre-parsed `git config --list -z` output, keyed by the
+/// discovery path passed to [`Repository::prewarm`].
+///
+/// Populated on the cold path by the `git config --list -z` thread spawned
+/// from [`Repository::prewarm_at`]; consumed by [`Repository::at`] when it
+/// builds a fresh `RepoCache` for that discovery path. The point is to
+/// overlap the rev-parse and config reads — the two big git invocations on
+/// the alias-dispatch critical path — so a plain `wt <alias>` pays for one
+/// git startup instead of two in series.
+///
+/// Best-effort, like the rest of `prewarm`. A failed read leaves the entry
+/// empty and the on-demand path inside [`Repository::all_config`] re-forks
+/// `git config --list -z` exactly as before.
+///
+/// Keyed by raw discovery path (no canonicalization) because the consumer in
+/// [`Repository::at`] holds the same `PathBuf` value the prewarm thread
+/// stored — both originate from `base_path()`. Test paths (`Repository::at`
+/// against tempdirs) bypass prewarm and never collide with this map.
+pub(super) static GIT_CONFIG_PRELOAD: LazyLock<
+    DashMap<PathBuf, indexmap::IndexMap<String, Vec<String>>>,
+> = LazyLock::new(DashMap::new);
+
+/// Process-wide preloaded `UserConfig` (worktrunk's user `wt.toml`),
+/// populated by [`Repository::prewarm_user_config`] from `main`.
+///
+/// [`Repository::at`] clones it into `cache.user_config` so the first
+/// `repo.user_config()` call is a memory hit, removing the ~4 ms TOML parse
+/// from the alias-dispatch critical path.
+///
+/// `OnceLock` (not `DashMap`) because `UserConfig` is process-scoped, not
+/// path-scoped: the path-derivation rule (XDG / `$WORKTRUNK_CONFIG_PATH`)
+/// doesn't change during a process lifetime.
+///
+/// Best-effort: a failed prewarm leaves the lock empty and the on-demand
+/// path inside [`Repository::user_config`] reloads from disk exactly as
+/// before.
+pub(super) static WORKTRUNK_USER_CONFIG_PRELOAD: OnceLock<UserConfig> = OnceLock::new();
+
+/// Initialize the global base path for repository operations.
+///
+/// This should be called once at program startup from main().
+/// If not called, defaults to "." (current directory).
+pub fn set_base_path(path: PathBuf) {
+    BASE_PATH.set(path).ok();
+}
+
+/// Get the base path for repository operations.
+fn base_path() -> &'static PathBuf {
+    BASE_PATH.get().unwrap_or(&DEFAULT_BASE_PATH)
+}
+
+/// Repository state for git operations.
+///
+/// Represents the shared state of a git repository (the `.git` directory).
+/// For worktree-specific operations, use [`WorkingTree`] obtained via
+/// [`current_worktree()`](Self::current_worktree) or [`worktree_at()`](Self::worktree_at).
+///
+/// # Examples
+///
+/// ```no_run
+/// use worktrunk::git::Repository;
+///
+/// let repo = Repository::current()?;
+/// let wt = repo.current_worktree();
+///
+/// // Repo-wide operations
+/// if let Some(default) = repo.default_branch() {
+///     println!("Default branch: {}", default);
+/// }
+///
+/// // Worktree-specific operations
+/// let branch = wt.branch()?;
+/// let dirty = wt.is_dirty()?;
+/// # Ok::<(), anyhow::Error>(())
+/// ```
+#[derive(Debug, Clone)]
+pub struct Repository {
+    /// Path used for discovering the repository and running git commands.
+    /// For repo-wide operations, any path within the repo works.
+    discovery_path: PathBuf,
+    /// The shared .git directory, computed at construction time.
+    git_common_dir: PathBuf,
+    /// Cached data for this repository. Shared across clones via Arc.
+    pub(super) cache: Arc<RepoCache>,
+}
+
+impl Repository {
+    /// Discover the repository from the current directory.
+    ///
+    /// This is the primary way to create a Repository. If the -C flag was used,
+    /// this uses that path instead of the actual current directory.
+    ///
+    /// For worktree-specific operations on paths other than cwd, use
+    /// `repo.worktree_at(path)` to get a [`WorkingTree`].
+    pub fn current() -> anyhow::Result<Self> {
+        Self::at(base_path().clone())
+    }
+
+    /// Discover the repository from the specified path.
+    ///
+    /// Creates a new Repository with its own cache. For sharing cache across
+    /// operations (e.g., parallel tasks in `wt list`), clone an existing
+    /// Repository instead of calling `at()` multiple times.
+    ///
+    /// Use cases:
+    /// - **Command entry points**: Starting a new command that needs a Repository
+    /// - **Tests**: Tests that need to operate on test repositories
+    ///
+    /// For worktree-specific operations within an existing Repository context,
+    /// use [`Repository::worktree_at()`] instead.
+    pub fn at(path: impl Into<PathBuf>) -> anyhow::Result<Self> {
+        let discovery_path = path.into();
+        let git_common_dir = Self::resolve_git_common_dir(&discovery_path)?;
+
+        let cache = RepoCache::default();
+        // Consume any `git config --list -z` map preloaded by
+        // `Repository::prewarm` so the first `all_config()` call is a memory
+        // hit. The preload is keyed by the same `discovery_path` value that
+        // prewarm stashed under (both originate from `base_path()`); a miss
+        // (different path, no prewarm, test repo) leaves the OnceCell empty
+        // and the on-demand fork inside `all_config` runs as before.
+        if let Some(entry) = GIT_CONFIG_PRELOAD.get(&discovery_path) {
+            let _ = cache
+                .all_config
+                .set(std::sync::RwLock::new(entry.value().clone()));
+        }
+
+        // Same idea for the worktrunk-side `UserConfig`: if the prewarm
+        // thread loaded it already, clone it into the per-Repository cache so
+        // the first `repo.user_config()` call is a memory hit. A miss (no
+        // prewarm, test repo) leaves the OnceCell empty and the on-demand
+        // path in `user_config()` reloads from disk.
+        if let Some(preloaded) = WORKTRUNK_USER_CONFIG_PRELOAD.get() {
+            let _ = cache.user_config.set(preloaded.clone());
+        }
+
+        Ok(Self {
+            discovery_path,
+            git_common_dir,
+            cache: Arc::new(cache),
+        })
+    }
+
+    /// Eagerly populate the process-wide git-discovery caches
+    /// (`GIT_COMMON_DIR_CACHE`, `WORKTREE_ROOTS`, `GIT_DIRS`,
+    /// `CURRENT_BRANCHES`), the git bulk-config preload
+    /// (`GIT_CONFIG_PRELOAD`), and the worktrunk user-config preload
+    /// (`WORKTRUNK_USER_CONFIG_PRELOAD`) for the configured base path.
+    ///
+    /// Called once from `main` after the logger is registered, before
+    /// `init_command_log` and alias dispatch. Three threads run concurrently:
+    ///
+    /// - **rev-parse thread**: a single `git rev-parse` fork that folds the
+    ///   two cold-path rev-parses (`--git-common-dir` from
+    ///   [`Repository::at`] and the `prewarm_info` batch from
+    ///   [`Repository::project_config_path`]) into one.
+    /// - **git-config thread**: a single `git config --list -z` fork that the
+    ///   bulk config map (`Repository::all_config`) would otherwise spawn
+    ///   on first read.
+    /// - **user-config thread**: pure file I/O on `$WORKTRUNK_CONFIG_PATH` /
+    ///   XDG paths, parsing worktrunk's user `wt.toml`. No git or
+    ///   `Repository` involvement, so it overlaps cleanly with both git
+    ///   forks and removes the ~4 ms TOML parse from the alias-dispatch
+    ///   critical path.
+    ///
+    /// The three reads are independent: the git threads start from
+    /// `discovery_path` and let git auto-discover the repo; the user-config
+    /// thread depends only on env vars and XDG paths. Running them in
+    /// parallel saves both the second git startup (~7 ms warm, ~10 ms cold)
+    /// and the user-config TOML parse (~4 ms cold) on the alias-dispatch
+    /// critical path.
+    ///
+    /// **Best-effort.** All three threads reuse the existing fallbacks: a
+    /// failed rev-parse leaves the discovery caches empty (later
+    /// `Repository::resolve_git_common_dir` and `WorkingTree::prewarm_info`
+    /// reforks restore behaviour); a failed git-config read leaves the
+    /// preload empty (later `Repository::all_config` reforks); a failed
+    /// user-config read leaves the preload empty (later `Repository::user_config`
+    /// reloads from disk). We never propagate errors from here.
+    ///
+    /// Two partial-success modes the rev-parse batch handles:
+    /// - **Bare repo at the bare root**: `--show-toplevel` errors but
+    ///   `--git-common-dir` prints first, so `GIT_COMMON_DIR_CACHE` still
+    ///   lands. Per-worktree maps stay empty for that path — same as the
+    ///   existing `WorkingTree::root` fallback contract — so `prewarm_info`
+    ///   reforks once for the not-inside-a-worktree determination. That edge
+    ///   case loses the prewarm benefit but matches the unoptimized baseline.
+    /// - **Unborn HEAD**: every selector emits a line but rev-parse exits
+    ///   non-zero. We populate `WORKTREE_ROOTS` and `GIT_DIRS` but leave
+    ///   `CURRENT_BRANCHES` to the `symbolic-ref` fallback in
+    ///   [`WorkingTree::branch`], matching the existing `prewarm_info`
+    ///   behaviour.
+    ///
+    /// Outside any work tree (`wt` invoked from a non-repo directory) the
+    /// rev-parse batch and the git-config read both fail and we cache
+    /// nothing for them — [`Repository::at`] later runs its own rev-parse
+    /// and surfaces the discovery error. The user-config preload still
+    /// succeeds (it doesn't depend on the repo).
+    pub fn prewarm() {
+        Self::prewarm_at(base_path());
+    }
+
+    /// Path-explicit form of [`Self::prewarm`], factored out so tests can
+    /// drive prewarm against a specific repo without mutating the global
+    /// `BASE_PATH` `OnceLock`.
+    pub(super) fn prewarm_at(discovery_path: &Path) {
+        // Fast path: another caller already ran prewarm (or `Repository::at`
+        // populated GIT_COMMON_DIR_CACHE via the on-demand path). Skip the
+        // fork — the per-worktree maps either have what we need from a prior
+        // prewarm/prewarm_info run, or `prewarm_info` will refork on first use.
+        // The config preloads are gated on the same key: if the rev-parse
+        // result is already cached, the git-config read either ran in a prior
+        // prewarm or will be re-forked on first `all_config` access, and the
+        // user-config preload either landed in a prior prewarm or
+        // `Repository::user_config` will reload it on demand.
+        if GIT_COMMON_DIR_CACHE.contains_key(discovery_path) {
+            return;
+        }
+
+        let _span = crate::trace::Span::new("prewarm");
+
+        // Run the rev-parse, git-config, and user-config reads concurrently
+        // on scoped threads. The two git threads target the same repo and
+        // don't depend on each other's output; the user-config thread is
+        // pure file I/O on XDG paths and doesn't touch git at all.
+        // Overlapping them removes ~one git startup (~7 ms warm, ~10 ms
+        // cold) plus the ~4 ms user-config TOML parse from the
+        // alias-dispatch critical path. Failures in any branch leave the
+        // caches empty and the on-demand callers re-fork — same
+        // best-effort contract `prewarm` always had.
+        std::thread::scope(|s| {
+            s.spawn(|| {
+                let _span = crate::trace::Span::new("prewarm_rev_parse");
+                Self::prewarm_rev_parse(discovery_path);
+            });
+            s.spawn(|| {
+                let _span = crate::trace::Span::new("prewarm_git_config");
+                Self::prewarm_git_config(discovery_path);
+            });
+            s.spawn(|| {
+                let _span = crate::trace::Span::new("prewarm_user_config");
+                Self::prewarm_user_config();
+            });
+        });
+    }
+
+    /// Rev-parse half of [`Self::prewarm_at`] — populates
+    /// `GIT_COMMON_DIR_CACHE`, `WORKTREE_ROOTS`, `GIT_DIRS`, and
+    /// `CURRENT_BRANCHES` from a single `git rev-parse` fork. See
+    /// [`Self::prewarm`] for the partial-success contract.
+    fn prewarm_rev_parse(discovery_path: &Path) {
+        // Order matters: `git rev-parse` emits one stdout line per selector in
+        // argument order, and we parse positionally. `--git-common-dir` first
+        // so even when later selectors fail (bare repo at the bare root, no
+        // worktree, …) the common dir still lands.
+        let Ok(output) = Cmd::new("git")
+            .args([
+                "rev-parse",
+                "--git-common-dir",
+                "--is-inside-work-tree",
+                "--show-toplevel",
+                "--git-dir",
+                "--symbolic-full-name",
+                "HEAD",
+            ])
+            .current_dir(discovery_path)
+            .context(path_to_logging_context(discovery_path))
+            .run()
+        else {
+            return;
+        };
+
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let mut lines = stdout.lines();
+
+        // Line 1: --git-common-dir. Cache even on non-zero exit — git emits
+        // this line before bailing out of `--show-toplevel` in a bare repo.
+        let Some(common_raw) = lines.next() else {
+            return;
+        };
+        let common_path = PathBuf::from(common_raw.trim());
+        let common_absolute = if common_path.is_relative() {
+            discovery_path.join(&common_path)
+        } else {
+            common_path
+        };
+        let Ok(common_resolved) = canonicalize(&common_absolute) else {
+            return;
+        };
+        GIT_COMMON_DIR_CACHE.insert(discovery_path.to_path_buf(), common_resolved);
+
+        // Per-worktree maps key on the canonicalized form of `discovery_path`,
+        // matching what `worktree_at` derives. Use the same fallback as
+        // `worktree_at` so the keys line up (canonicalize when the path
+        // exists, raw otherwise).
+        let worktree_key =
+            canonicalize(discovery_path).unwrap_or_else(|_| discovery_path.to_path_buf());
+
+        // Line 2: --is-inside-work-tree. "false" or missing → leave the
+        // per-worktree maps untouched. The membership invariant on
+        // `WORKTREE_ROOTS` ("contains_key ⇔ inside a worktree") forbids
+        // recording a sentinel here; `WorkingTree::root` and `prewarm_info`
+        // would misclassify the path as inside a worktree on the next call.
+        let is_inside = lines.next().is_some_and(|s| s.trim() == "true");
+        if !is_inside {
+            return;
+        }
+
+        // Line 3: --show-toplevel. Always emits when is_inside=true; mirror
+        // `prewarm_info`'s `self.path` fallback when canonicalize fails.
+        let raw_toplevel = lines.next().unwrap_or("").trim();
+        let canonical_root =
+            canonicalize(PathBuf::from(raw_toplevel)).unwrap_or_else(|_| worktree_key.clone());
+        WORKTREE_ROOTS
+            .entry(worktree_key.clone())
+            .or_insert(canonical_root);
+
+        // Line 4: --git-dir. Resolve relative-to-discovery and canonicalize;
+        // only land it when canonicalize succeeds, matching `prewarm_info`.
+        if let Some(git_dir) = lines.next().and_then(|raw| {
+            let path = PathBuf::from(raw.trim());
+            let absolute = if path.is_relative() {
+                discovery_path.join(&path)
+            } else {
+                path
+            };
+            canonicalize(&absolute).ok()
+        }) {
+            GIT_DIRS.entry(worktree_key.clone()).or_insert(git_dir);
+        }
+
+        // Line 5: --symbolic-full-name HEAD. Only trustworthy when the whole
+        // batch succeeded — on unborn HEAD this lands as the literal string
+        // "HEAD" (indistinguishable from detached HEAD without exit status).
+        // On unborn HEAD we leave `CURRENT_BRANCHES` empty so the
+        // `symbolic-ref --short HEAD` fallback in `WorkingTree::branch`
+        // resolves the unborn branch name.
+        if output.status.success()
+            && let Some(raw) = lines.next()
+        {
+            let branch = raw.trim().strip_prefix("refs/heads/").map(str::to_owned);
+            CURRENT_BRANCHES.entry(worktree_key).or_insert(branch);
+        }
+    }
+
+    /// Git-config half of [`Self::prewarm_at`] — runs `git config --list -z`
+    /// from `discovery_path` and stashes the parsed map in
+    /// [`GIT_CONFIG_PRELOAD`] for [`Repository::at`] to consume.
+    ///
+    /// Runs from `discovery_path` rather than `git_common_dir` (which we
+    /// don't know yet — the rev-parse thread is racing in parallel). Git's
+    /// `config --list` normally emits the same merged system + global + local
+    /// config from any path inside the repo, including linked worktrees of
+    /// bare repos: linked worktrees and the common dir share one config file,
+    /// so the merged output is identical to the existing `git_common_dir`
+    /// invocation in [`Repository::all_config`].
+    ///
+    /// **`extensions.worktreeConfig` exception** ([#2779]): when the
+    /// extension is enabled, each worktree gets its own `config.worktree`
+    /// file (the main worktree at `.git/config.worktree`, linked worktrees
+    /// at `.git/worktrees/<name>/config.worktree`). From a linked worktree
+    /// `git config --list` merges only that linked worktree's
+    /// `config.worktree`, missing values set on the main worktree's
+    /// `config.worktree` — most importantly `core.bare = true` for the
+    /// bare-style `myproject/.git + sibling worktrees` layout. Caching that
+    /// incomplete map would cause `is_bare()` to read `false`, and the
+    /// `repo_path()` fallback would walk one level too high. So when the
+    /// parsed map contains `extensions.worktreeconfig=true`, we skip the
+    /// preload entirely — [`Repository::all_config`] re-forks from
+    /// `git_common_dir`, which sees the full merged set (one extra
+    /// subprocess in this layout; the prewarm benefit is preserved for all
+    /// other repos).
+    ///
+    /// Failures (non-repo directory, corrupted config) are swallowed; the
+    /// on-demand path inside `all_config` re-forks the same subprocess and
+    /// surfaces the error there.
+    ///
+    /// [#2779]: https://github.com/max-sixty/worktrunk/issues/2779
+    fn prewarm_git_config(discovery_path: &Path) {
+        let Ok(output) = Cmd::new("git")
+            .args(["config", "--list", "-z"])
+            .current_dir(discovery_path)
+            .context(path_to_logging_context(discovery_path))
+            .run()
+        else {
+            return;
+        };
+        if !output.status.success() {
+            return;
+        }
+        let parsed = parse_config_list_z(&output.stdout);
+        if worktree_config_enabled(&parsed) {
+            return;
+        }
+        GIT_CONFIG_PRELOAD.insert(discovery_path.to_path_buf(), parsed);
+    }
+
+    /// User-config half of [`Self::prewarm_at`] — loads worktrunk's user
+    /// `wt.toml` (and system + env-var layers) and stashes the result in
+    /// [`WORKTRUNK_USER_CONFIG_PRELOAD`] for [`Repository::at`] to clone
+    /// into per-Repository caches.
+    ///
+    /// Pure file I/O on `$WORKTRUNK_CONFIG_PATH` / XDG paths — no git, no
+    /// `Repository`, no dependence on `discovery_path`. Runs as a sibling
+    /// thread to the two git forks so the ~4 ms TOML parse overlaps with
+    /// them instead of falling on the alias-dispatch critical path.
+    ///
+    /// Warnings (parse failures, env-var rejections, validation issues) are
+    /// emitted to stderr inline by [`emit_user_config_warnings`], matching
+    /// the on-demand path in [`Repository::user_config`]. Prewarm runs in
+    /// `main` before alias dispatch, so these warnings emerge before any
+    /// command-specific output and before the per-handler
+    /// [`Repository::project_config`] reads that surface project-config
+    /// warnings.
+    ///
+    /// Best-effort: if `OnceLock::set` races (a second prewarm reentry, or
+    /// a test that already populated the lock) we drop the second value.
+    fn prewarm_user_config() {
+        let (config, warnings) = UserConfig::load_with_warnings();
+        emit_user_config_warnings(&warnings);
+        let _ = WORKTRUNK_USER_CONFIG_PRELOAD.set(config);
+    }
+
+    /// Resolved user config (global merged with per-project overrides, defaults applied).
+    ///
+    /// Lazily loads `UserConfig` and resolves it using this repository's project identifier.
+    /// Cached for the lifetime of the repository (shared across clones via Arc).
+    ///
+    /// Falls back to default config if loading fails (e.g., no config file).
+    pub fn config(&self) -> &ResolvedConfig {
+        self.cache.resolved_config.get_or_init(|| {
+            let project_id = self.project_identifier().ok();
+            self.user_config().resolved(project_id.as_deref())
+        })
+    }
+
+    /// Raw user config (as loaded from disk, before project-specific resolution).
+    ///
+    /// Prefer [`config()`](Self::config) for behavior settings. This is only needed
+    /// for operations that require the full `UserConfig` (e.g., path template formatting,
+    /// approval state, hook resolution).
+    ///
+    /// Each config layer (system file, user file, env vars) degrades
+    /// independently — a failure in one preserves data from earlier layers.
+    /// Issues are surfaced on stderr so they're visible without `RUST_LOG`.
+    ///
+    /// Typically a memory hit: [`Repository::prewarm`] populates the cache
+    /// from `main` before any command runs. Tests and other callers that
+    /// bypass prewarm fall through to a fresh `UserConfig::load_with_warnings`
+    /// here.
+    pub fn user_config(&self) -> &UserConfig {
+        self.cache.user_config.get_or_init(|| {
+            let (config, warnings) = UserConfig::load_with_warnings();
+            emit_user_config_warnings(&warnings);
+            config
+        })
+    }
+
+    /// Check if this repository shares its cache with another.
+    ///
+    /// Returns true if both repositories point to the same underlying cache.
+    /// This is primarily useful for testing that cloned repositories share
+    /// cached data.
+    #[doc(hidden)]
+    pub fn shares_cache_with(&self, other: &Repository) -> bool {
+        Arc::ptr_eq(&self.cache, &other.cache)
+    }
+
+    /// Resolve the git common directory for a path.
+    ///
+    /// Always returns a canonicalized absolute path to ensure consistent
+    /// comparison with `WorkingTree::git_dir()`.
+    ///
+    /// Result is cached process-wide in [`GIT_COMMON_DIR_CACHE`] so multiple
+    /// `Repository::at()` calls for the same discovery path don't each spawn
+    /// `git rev-parse --git-common-dir`.
+    fn resolve_git_common_dir(discovery_path: &Path) -> anyhow::Result<PathBuf> {
+        if let Some(cached) = GIT_COMMON_DIR_CACHE.get(discovery_path) {
+            return Ok(cached.clone());
+        }
+
+        // Span attribution for the cold path: the rev-parse subprocess gets
+        // its own `[wt-trace] cmd=` record from `Cmd::run`, and this span
+        // captures the surrounding canonicalize + cache-insert work too.
+        let _span = crate::trace::Span::new("resolve_git_common_dir");
+
+        let output = Cmd::new("git")
+            .args(["rev-parse", "--git-common-dir"])
+            .current_dir(discovery_path)
+            .context(path_to_logging_context(discovery_path))
+            .run()
+            .context("Failed to execute: git rev-parse --git-common-dir")?;
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            bail!("{}", stderr.trim());
+        }
+
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let path = PathBuf::from(stdout.trim());
+        // Always canonicalize to resolve symlinks (e.g., /var -> /private/var on macOS)
+        let absolute_path = if path.is_relative() {
+            discovery_path.join(&path)
+        } else {
+            path
+        };
+        let resolved =
+            canonicalize(&absolute_path).context("Failed to resolve git common directory")?;
+        GIT_COMMON_DIR_CACHE.insert(discovery_path.to_path_buf(), resolved.clone());
+        Ok(resolved)
+    }
+
+    /// Get the path this repository was discovered from.
+    ///
+    /// This is primarily for internal use. For worktree operations,
+    /// use [`current_worktree()`](Self::current_worktree) or [`worktree_at()`](Self::worktree_at).
+    pub fn discovery_path(&self) -> &Path {
+        &self.discovery_path
+    }
+
+    /// Get a worktree view at this Repository's discovery path.
+    ///
+    /// This is the primary way to get a [`WorkingTree`] for worktree-specific
+    /// operations. For [`Repository::current`] the discovery path is the
+    /// process CWD (or `-C` value), so "current" matches its colloquial
+    /// meaning. For [`Repository::at`], the discovery path is the path passed
+    /// in, and this returns a worktree there rather than at the process CWD —
+    /// see #2625 for the bug class that motivated anchoring this to `self`.
+    pub fn current_worktree(&self) -> WorkingTree<'_> {
+        self.worktree_at(self.discovery_path.clone())
+    }
+
+    /// Get a worktree view at a specific path.
+    ///
+    /// Use this when you need to operate on a worktree other than the current one.
+    ///
+    /// The path is canonicalized when it exists so that callers passing
+    /// equivalent forms (e.g., cwd from JSON vs path from `git worktree list
+    /// --porcelain`) hit the same per-worktree cache entries in `RepoCache`.
+    /// Falls back to the raw path if canonicalization fails (e.g., path does
+    /// not yet exist for a worktree about to be created).
+    pub fn worktree_at(&self, path: impl Into<PathBuf>) -> WorkingTree<'_> {
+        let raw = path.into();
+        let path = canonicalize(&raw).unwrap_or(raw);
+        WorkingTree { repo: self, path }
+    }
+
+    /// Prime the per-worktree path caches (`WORKTREE_ROOTS` and `GIT_DIRS`)
+    /// for every worktree in `worktrees`, from data already in hand.
+    ///
+    /// `git worktree list` already gives each worktree's top-level path, so
+    /// `root()` is just its canonical form, and each worktree's `.git` entry
+    /// gives its git dir without a fork. On the `wt list` path this elides the
+    /// per-worktree `git rev-parse --show-toplevel` / `--git-dir` subprocesses
+    /// (one each per linked worktree, both on the dirty-worktree
+    /// `WorkingTreeConflicts` / `GitOperation` critical chain) in favor of
+    /// cheap local fs reads — the same facts [`Self::prewarm`] caches for the
+    /// discovery worktree, generalized to all of them.
+    ///
+    /// Seeds via `or_insert`, so an entry the prewarm or a prior call already
+    /// resolved is left untouched. A worktree whose git dir can't be derived
+    /// cleanly (missing/odd `.git`, un-canonicalizable path) is left for the
+    /// `git rev-parse` fallback in [`WorkingTree::git_dir`] — seeding is an
+    /// optimization, never a correctness dependency. Prunable worktrees (gone
+    /// from disk) are skipped: nothing on disk to read, and their tasks don't
+    /// run.
+    pub fn prime_worktree_path_caches(&self, worktrees: &[WorktreeInfo]) {
+        for wt in worktrees {
+            if wt.is_prunable() {
+                continue;
+            }
+            // Key on the canonical path, matching `worktree_at` (and the
+            // membership invariant on `WORKTREE_ROOTS`). Skip when the path
+            // can't be canonicalized — same guard as `worktree_at`'s callers.
+            let Ok(key) = canonicalize(&wt.path) else {
+                continue;
+            };
+            // A worktree's top-level path is its own `root()`.
+            WORKTREE_ROOTS.entry(key.clone()).or_insert(key.clone());
+
+            if let Some(git_dir) = self.derive_worktree_git_dir(&key) {
+                GIT_DIRS.entry(key).or_insert(git_dir);
+            }
+        }
+    }
+
+    /// Resolve a worktree's git dir from its `.git` entry without forking
+    /// `git rev-parse --git-dir`. A `.git` directory *is* the git dir (the main
+    /// worktree, whose common dir we already hold); a `.git` file holds
+    /// `gitdir: <path>` pointing at `<common>/worktrees/<id>` (a linked
+    /// worktree). Returns the canonicalized git dir, or `None` when the entry
+    /// is missing, unreadable, or in a form not worth second-guessing — the
+    /// caller then leaves it to the subprocess. Mirrors the `--git-dir`
+    /// canonicalization in [`Self::prewarm`] (`prewarm_rev_parse`).
+    fn derive_worktree_git_dir(&self, worktree: &Path) -> Option<PathBuf> {
+        let dot_git = worktree.join(".git");
+        let file_type = std::fs::symlink_metadata(&dot_git).ok()?.file_type();
+        if file_type.is_dir() {
+            // Main worktree: git dir is the common dir (already canonicalized).
+            return Some(self.git_common_dir().to_path_buf());
+        }
+        if !file_type.is_file() {
+            return None;
+        }
+        // `.git` file: `gitdir: <path>` (git writes it absolute; resolve a
+        // relative form against the worktree, as `prewarm_rev_parse` does).
+        let content = std::fs::read_to_string(&dot_git).ok()?;
+        let gitdir = content.lines().find_map(|l| l.strip_prefix("gitdir: "))?;
+        let path = PathBuf::from(gitdir.trim());
+        let absolute = if path.is_relative() {
+            worktree.join(path)
+        } else {
+            path
+        };
+        canonicalize(&absolute).ok()
+    }
+
+    /// Get a branch handle for branch-specific operations.
+    ///
+    /// Use this when you need to query properties of a specific branch.
+    pub fn branch(&self, name: &str) -> Branch<'_> {
+        Branch {
+            repo: self,
+            name: name.to_string(),
+        }
+    }
+
+    /// Get the current branch name, or error if in detached HEAD state.
+    ///
+    /// `action` describes what requires being on a branch (e.g., "merge").
+    pub fn require_current_branch(&self, action: &str) -> anyhow::Result<String> {
+        self.current_worktree().branch()?.ok_or_else(|| {
+            GitError::DetachedHead {
+                action: Some(action.into()),
+            }
+            .into()
+        })
+    }
+
+    // =========================================================================
+    // Core repository properties
+    // =========================================================================
+
+    /// Get the git common directory (the actual .git directory for the repository).
+    ///
+    /// For linked worktrees, this returns the shared `.git` directory in the main
+    /// worktree, not the per-worktree `.git/worktrees/<name>` directory.
+    /// See [`--git-common-dir`][1] for details.
+    ///
+    /// Always returns an absolute path, resolving any relative paths returned by git.
+    /// Result is cached per Repository instance (also used as key for global cache).
+    ///
+    /// [1]: https://git-scm.com/docs/git-rev-parse#Documentation/git-rev-parse.txt---git-common-dir
+    pub fn git_common_dir(&self) -> &Path {
+        &self.git_common_dir
+    }
+
+    /// Get the epoch timestamp of the last `git fetch`, if available.
+    ///
+    /// Checks the modification time of `FETCH_HEAD` in the git common directory.
+    /// Returns `None` if the file doesn't exist (never fetched) or on any I/O error.
+    pub fn last_fetch_epoch(&self) -> Option<u64> {
+        let fetch_head = self.git_common_dir().join("FETCH_HEAD");
+        let metadata = std::fs::metadata(fetch_head).ok()?;
+        let modified = metadata.modified().ok()?;
+        modified
+            .duration_since(std::time::UNIX_EPOCH)
+            .ok()
+            .map(|d| d.as_secs())
+    }
+
+    /// Get the worktrunk data directory inside the git directory.
+    ///
+    /// Returns `<git-common-dir>/wt/` (typically `.git/wt/`).
+    /// All worktrunk-managed state lives under this single directory.
+    pub fn wt_dir(&self) -> PathBuf {
+        self.git_common_dir().join("wt")
+    }
+
+    /// Get the directory where worktrunk background logs are stored.
+    ///
+    /// Returns `<git-common-dir>/wt/logs/` (typically `.git/wt/logs/`).
+    pub fn wt_logs_dir(&self) -> PathBuf {
+        self.wt_dir().join("logs")
+    }
+
+    /// Get the directory where worktrees are staged for background deletion.
+    ///
+    /// Returns `<git-common-dir>/wt/trash/` (typically `.git/wt/trash/`).
+    /// Worktrees are renamed here (instant same-filesystem rename) before
+    /// being deleted by a background process.
+    pub fn wt_trash_dir(&self) -> PathBuf {
+        self.wt_dir().join("trash")
+    }
+
+    /// The repository root path (the main worktree directory).
+    ///
+    /// - Normal repositories: the main worktree directory (parent of .git)
+    /// - Bare repositories: the bare repository directory itself
+    /// - Submodules: the submodule's worktree (e.g., `/parent/sub`, not `/parent/.git/modules/sub`)
+    ///
+    /// This is the base for template expansion (`{{ repo }}`, `{{ repo_path }}`).
+    /// NOT necessarily where established files live — use `primary_worktree()` for that.
+    ///
+    /// Result is cached in the repository's shared cache (same for all clones).
+    ///
+    /// # Resolution strategy
+    ///
+    /// We anchor on `git_common_dir` so that linked worktrees return the
+    /// *main* worktree regardless of which worktree we were discovered
+    /// from — `git_common_dir` is the stable reference shared across all
+    /// worktrees (e.g., `/myapp/.git` whether you're in `/myapp` or
+    /// `/myapp.feature`).
+    ///
+    /// | git_common_dir location    | Signal                     | Resolution                    |
+    /// |----------------------------|----------------------------|-------------------------------|
+    /// | Bare `.git`                | `core.bare = true`         | `git_common_dir` is the repo  |
+    /// | Submodule `.git/modules/X` | `core.worktree` set by git | `rev-parse --show-toplevel`   |
+    /// | Normal `.git`              | neither set                | `parent(git_common_dir)`      |
+    ///
+    /// Submodules need `core.worktree` because their git data lives in the
+    /// parent's `.git/modules/` — the `parent(.git)` rule would point at
+    /// `.git/modules`, which is wrong. Git writes `core.worktree`
+    /// explicitly to compensate.
+    ///
+    /// We can't read `core.worktree` straight from the bulk config map:
+    /// `git config --list -z` merges system/global/local scope, but git
+    /// only honors `core.worktree` from **local** config for worktree
+    /// discovery. So when the bulk map reports it, we delegate to
+    /// `rev-parse --show-toplevel` and let git apply its scope rules; if
+    /// the probe fails (non-local value, git ignored it) we fall through
+    /// to the normal-repo path. The common case — no `core.worktree`
+    /// anywhere — skips the subprocess, which is the point.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the bulk config read fails (e.g., git timeout). This
+    /// surfaces the failure early rather than caching a potentially wrong path.
+    pub fn repo_path(&self) -> anyhow::Result<&Path> {
+        self.cache
+            .repo_path
+            .get_or_try_init(|| {
+                if self.is_bare()? {
+                    return Ok(self.git_common_dir.clone());
+                }
+
+                // `core.worktree` in the bulk map could come from any scope,
+                // but git only honors the local one. Let git resolve scope
+                // via `rev-parse --show-toplevel` rather than trusting the
+                // merged value ourselves.
+                if self.config_last("core.worktree")?.is_some()
+                    && let Ok(out) = Cmd::new("git")
+                        .args(["rev-parse", "--show-toplevel"])
+                        .current_dir(&self.git_common_dir)
+                        .context(path_to_logging_context(&self.git_common_dir))
+                        .run()
+                    && out.status.success()
+                {
+                    return Ok(PathBuf::from(String::from_utf8_lossy(&out.stdout).trim()));
+                }
+
+                Ok(self
+                    .git_common_dir
+                    .parent()
+                    .expect("Git directory has no parent")
+                    .to_path_buf())
+            })
+            .map(|p| p.as_path())
+    }
+
+    /// Access the bulk git config map, populating on first call.
+    ///
+    /// Reads every key from the merged git config (system + global + repo)
+    /// via a single `git config --list -z` subprocess. The NUL-delimited
+    /// `-z` format handles values containing newlines or `=`. Populated
+    /// lazily on first access; every config-reading accessor consults this
+    /// map rather than spawning its own subprocess.
+    ///
+    /// Run from `git_common_dir` so linked worktrees of bare repos correctly
+    /// read the bare repo's config.
+    pub(super) fn all_config(
+        &self,
+    ) -> anyhow::Result<&std::sync::RwLock<indexmap::IndexMap<String, Vec<String>>>> {
+        self.cache.all_config.get_or_try_init(|| {
+            let output = Cmd::new("git")
+                .args(["config", "--list", "-z"])
+                .current_dir(&self.git_common_dir)
+                .context(path_to_logging_context(&self.git_common_dir))
+                .run()
+                .context("failed to read git config")?;
+            if !output.status.success() {
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                bail!("git config --list failed: {}", stderr.trim());
+            }
+            Ok(std::sync::RwLock::new(parse_config_list_z(&output.stdout)))
+        })
+    }
+
+    /// Read the last value for a config key from the bulk map.
+    ///
+    /// Convenience wrapper for the common "single-value" accessor pattern.
+    /// Git treats the last value as authoritative when a key is set multiple
+    /// times; callers that need multivars read through `all_config()` directly.
+    ///
+    /// Keys are normalized to git's canonical form (section and variable
+    /// names lowercased, subsection preserved) so callers may pass the
+    /// mixed-case form from git docs (e.g., `init.defaultBranch`) without
+    /// missing the lookup.
+    pub(super) fn config_last(&self, key: &str) -> anyhow::Result<Option<String>> {
+        let canonical = canonical_config_key(key);
+        let guard = self.all_config()?.read().unwrap();
+        Ok(guard.get(&canonical).and_then(|v| v.last().cloned()))
+    }
+
+    /// Read a git-bool config value, defaulting to `false` when the key is
+    /// unset or absent.
+    ///
+    /// Returns `Err` only when the bulk config read itself fails. A missing
+    /// key is `Ok(false)`, matching git's own behaviour for unset booleans.
+    pub(super) fn config_bool(&self, key: &str) -> anyhow::Result<bool> {
+        Ok(self
+            .config_last(key)?
+            .as_deref()
+            .map(parse_git_bool)
+            .unwrap_or(false))
+    }
+
+    /// Check if this is a bare repository (no working tree).
+    ///
+    /// Bare repositories have no main worktree — all worktrees are linked
+    /// worktrees at templated paths, including the default branch.
+    ///
+    /// Reads `core.bare` from the bulk config map rather than using `git
+    /// rev-parse --is-bare-repository`. The rev-parse approach is unreliable
+    /// when run from inside a `.git` directory — when `core.bare` is unset,
+    /// git infers based on directory context, and from inside `.git/` there's
+    /// no working tree so it returns `true` even for normal repos. This
+    /// affects repos where `core.bare` was never written (e.g., repos cloned
+    /// by Eclipse/EGit). Reading the config value directly avoids this false
+    /// positive.
+    ///
+    /// When `core.bare` is unset, defaults to non-bare — matching libgit2's
+    /// behavior.
+    ///
+    /// See <https://github.com/max-sixty/worktrunk/issues/1939>.
+    pub fn is_bare(&self) -> anyhow::Result<bool> {
+        self.config_bool("core.bare")
+    }
+
+    /// Get the sparse checkout paths for this repository.
+    ///
+    /// Returns the list of paths from `git sparse-checkout list`. For non-sparse
+    /// repos, returns an empty slice (the command exits with code 128).
+    ///
+    /// Assumes cone mode (the git default). Cached using `discovery_path` —
+    /// scoped to the worktree the user is running from, not per-listed-worktree.
+    pub fn sparse_checkout_paths(&self) -> &[String] {
+        self.cache.sparse_checkout_paths.get_or_init(|| {
+            let output = match self.run_command_output(&["sparse-checkout", "list"]) {
+                Ok(out) => out,
+                Err(_) => return Vec::new(),
+            };
+
+            if output.status.success() {
+                let stdout = String::from_utf8_lossy(&output.stdout);
+                stdout.lines().map(String::from).collect()
+            } else {
+                // Exit 128 = not a sparse checkout (expected, not an error)
+                Vec::new()
+            }
+        })
+    }
+
+    /// Check if git's builtin fsmonitor daemon is enabled.
+    ///
+    /// Returns true for any git-bool truthy value (`true/1/yes/on`), which
+    /// matches how git itself routes the bool-or-string `core.fsmonitor`
+    /// config to the builtin daemon. Returns false for Watchman hook paths,
+    /// disabled, or unset.
+    pub fn is_builtin_fsmonitor_enabled(&self) -> bool {
+        self.config_bool("core.fsmonitor").unwrap_or(false)
+    }
+
+    /// Start the fsmonitor daemon at a worktree path.
+    ///
+    /// Idempotent — if the daemon is already running, this is a no-op.
+    /// Used to avoid auto-start races when running many parallel git commands.
+    ///
+    /// Uses `Command::status()` with null stdio instead of `Cmd::run()` to avoid
+    /// pipe inheritance: the daemon process (`git fsmonitor--daemon run --detach`)
+    /// inherits pipe file descriptors from its parent, keeping them open
+    /// indefinitely. `read_to_end()` in `Command::output()` then blocks forever
+    /// waiting for EOF that never comes.
+    pub fn start_fsmonitor_daemon_at(&self, path: &Path) {
+        let context = path_to_logging_context(path);
+        let cmd_str = "git fsmonitor--daemon start";
+        tracing::debug!(cmd = cmd_str, context = %context, "$ {cmd_str} [{context}]");
+        let mut cmd = std::process::Command::new("git");
+        cmd.args(["fsmonitor--daemon", "start"])
+            .current_dir(path)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null());
+        crate::shell_exec::scrub_directive_env_vars(&mut cmd);
+        // Trace the daemon launch so it's attributed in the timeline rather than
+        // appearing as a gap on the switch hot path. Uses `status()` (not
+        // `Cmd::run`) deliberately — see the doc comment.
+        let mut trace = crate::trace::CommandTrace::new(Some(&context), cmd_str);
+        let result = cmd.status();
+        match result {
+            Ok(status) => {
+                trace.complete(status.success());
+                if !status.success() {
+                    tracing::debug!(status = %status, "fsmonitor daemon start exited {status} (usually fine)");
+                }
+            }
+            Err(e) => {
+                trace.fail(&e);
+                tracing::debug!(error = %e, "fsmonitor daemon start failed (usually fine): {e}");
+            }
+        }
+    }
+
+    /// Get merge/rebase status for the worktree at this repository's discovery path.
+    pub fn worktree_state(&self) -> anyhow::Result<Option<String>> {
+        let git_dir = self.worktree_at(self.discovery_path()).git_dir()?;
+
+        // Check for merge
+        if git_dir.join("MERGE_HEAD").exists() {
+            return Ok(Some("MERGING".to_string()));
+        }
+
+        // Check for rebase. `rebase-merge` (interactive/merge backend) and
+        // `rebase-apply` (am backend) are mutually exclusive; probe each once.
+        let rebase_merge = git_dir.join("rebase-merge");
+        let rebase_apply = git_dir.join("rebase-apply");
+        if let Some(rebase_dir) = rebase_merge
+            .exists()
+            .then_some(rebase_merge)
+            .or_else(|| rebase_apply.exists().then_some(rebase_apply))
+        {
+            if let (Ok(msgnum), Ok(end)) = (
+                std::fs::read_to_string(rebase_dir.join("msgnum")),
+                std::fs::read_to_string(rebase_dir.join("end")),
+            ) {
+                let current = msgnum.trim();
+                let total = end.trim();
+                return Ok(Some(format!("REBASING {}/{}", current, total)));
+            }
+
+            return Ok(Some("REBASING".to_string()));
+        }
+
+        // Check for cherry-pick
+        if git_dir.join("CHERRY_PICK_HEAD").exists() {
+            return Ok(Some("CHERRY-PICKING".to_string()));
+        }
+
+        // Check for revert
+        if git_dir.join("REVERT_HEAD").exists() {
+            return Ok(Some("REVERTING".to_string()));
+        }
+
+        // Check for bisect
+        if git_dir.join("BISECT_LOG").exists() {
+            return Ok(Some("BISECTING".to_string()));
+        }
+
+        Ok(None)
+    }
+
+    // =========================================================================
+    // Command execution
+    // =========================================================================
+
+    /// Get a short display name for this repository, used in logging context.
+    ///
+    /// Returns "." for the current directory, or the directory name otherwise.
+    fn logging_context(&self) -> String {
+        path_to_logging_context(&self.discovery_path)
+    }
+
+    /// Run a git command in this repository's context.
+    ///
+    /// Executes the git command with this repository's discovery path as the working directory.
+    /// For repo-wide operations, any path within the repo works.
+    ///
+    /// # Passing refs
+    ///
+    /// A ref that starts with `-` (e.g. a branch literally named `-foo`,
+    /// which `git update-ref refs/heads/-foo HEAD` will write) is parsed as a
+    /// flag. When the ref's value isn't provably safe — a SHA, a
+    /// `refs/heads/{}` wrap, a hardcoded `HEAD` — put `--end-of-options`
+    /// before it, *after* every other flag (everything following becomes
+    /// positional, so `git log` rejects later flags). For `git rev-parse`,
+    /// use `--verify --end-of-options`: plain `--end-of-options` makes
+    /// rev-parse echo the literal marker to stdout ahead of the SHA, and
+    /// `--verify` forces single-revision strict mode — so it can't cover the
+    /// two-ref `rev-parse <a> <b>` form, which stays unguarded.
+    ///
+    /// # Examples
+    /// ```no_run
+    /// use worktrunk::git::Repository;
+    ///
+    /// let repo = Repository::current()?;
+    /// let branches = repo.run_command(&["branch", "--list"])?;
+    /// # Ok::<(), anyhow::Error>(())
+    /// ```
+    pub fn run_command(&self, args: &[&str]) -> anyhow::Result<String> {
+        let output = Cmd::new("git")
+            .args(args.iter().copied())
+            .current_dir(&self.discovery_path)
+            .context(self.logging_context())
+            .run()
+            .with_context(|| format!("Failed to execute: git {}", args.join(" ")))?;
+
+        if !output.status.success() {
+            return Err(
+                super::error::CommandError::from_failed_output("git", args, &output).into(),
+            );
+        }
+
+        let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
+        Ok(stdout)
+    }
+
+    /// Run a git command and return whether it succeeded (exit code 0).
+    ///
+    /// This is useful for commands that use exit codes for boolean results,
+    /// like `git merge-base --is-ancestor` or `git diff --quiet`.
+    ///
+    /// # Examples
+    /// ```no_run
+    /// use worktrunk::git::Repository;
+    ///
+    /// let repo = Repository::current()?;
+    /// let is_clean = repo.run_command_check(&["diff", "--quiet", "--exit-code"])?;
+    /// # Ok::<(), anyhow::Error>(())
+    /// ```
+    pub fn run_command_check(&self, args: &[&str]) -> anyhow::Result<bool> {
+        Ok(self.run_command_output(args)?.status.success())
+    }
+
+    /// Abbreviate a commit SHA for display, honoring `core.abbrev` and
+    /// auto-extending for ambiguous prefixes.
+    ///
+    /// Wraps `git rev-parse --short <sha>`. Use this anywhere a short SHA is
+    /// shown to the user or passed to a hook template — never slice
+    /// `&sha[..7]` directly, since 7 chars regularly collides in large repos
+    /// and ignores the user's `core.abbrev` setting.
+    ///
+    /// For batches (e.g., abbreviating many worktree heads at once), prefer
+    /// folding `%h` into an existing `git log --format` call rather than
+    /// looping this helper. See [`commit_details_many`](Self::commit_details_many).
+    pub fn short_sha(&self, sha: &str) -> anyhow::Result<String> {
+        Ok(self
+            .run_command(&["rev-parse", "--short", sha])?
+            .trim()
+            .to_string())
+    }
+
+    /// Delay before showing progress output for slow operations.
+    /// See .claude/rules/cli-output-formatting.md: "Progress messages apply only to slow operations (>400ms)"
+    pub const SLOW_OPERATION_DELAY_MS: i64 = 400;
+
+    /// Run a git command with delayed output streaming.
+    ///
+    /// Thin wrapper over [`Cmd::delayed_stream`](crate::shell_exec::Cmd::delayed_stream):
+    /// buffers output initially, then streams to stderr if the command takes
+    /// longer than `delay_ms` (quiet for fast operations, progress for slow
+    /// ones like `worktree add` on large repos). Routing through `Cmd` is what
+    /// gives the command its `[wt-trace]` record and directive scrubbing — see
+    /// that method for the full contract.
+    pub fn run_command_delayed_stream(
+        &self,
+        args: &[&str],
+        delay_ms: i64,
+        progress_message: Option<String>,
+    ) -> anyhow::Result<()> {
+        Cmd::new("git")
+            .args(args.iter().copied())
+            .current_dir(&self.discovery_path)
+            .context(self.logging_context())
+            .delayed_stream(delay_ms, progress_message)
+    }
+
+    /// Run a git command and return the raw Output (for inspecting exit codes).
+    ///
+    /// Use this when exit codes have semantic meaning beyond success/failure.
+    /// For most cases, prefer `run_command` (returns stdout) or `run_command_check` (returns bool).
+    pub(super) fn run_command_output(&self, args: &[&str]) -> anyhow::Result<std::process::Output> {
+        Cmd::new("git")
+            .args(args.iter().copied())
+            .current_dir(&self.discovery_path)
+            .context(self.logging_context())
+            .run()
+            .with_context(|| format!("Failed to execute: git {}", args.join(" ")))
+    }
+
+    /// Extract structured failure info from a command-runner error.
+    ///
+    /// Returns `(output, Some(FailedCommand))` when the chain carries
+    /// either a [`StreamCommandError`](crate::shell_exec::StreamCommandError)
+    /// (from `run_command_delayed_stream`) or a [`super::error::CommandError`]
+    /// (from `run_command` / `WorkingTree::run_command`). Falls back to
+    /// `(error_string, None)` for other error types (e.g., spawn failures).
+    pub fn extract_failed_command(
+        err: &anyhow::Error,
+    ) -> (String, Option<super::error::FailedCommand>) {
+        if let Some(e) = err.downcast_ref::<crate::shell_exec::StreamCommandError>() {
+            return (
+                e.output.clone(),
+                Some(super::error::FailedCommand {
+                    command: e.command.clone(),
+                    exit_info: e.exit_info.clone(),
+                }),
+            );
+        }
+        if let Some(cmd_err) = CommandError::find_in(err) {
+            let exit_info = match cmd_err.exit_code {
+                Some(code) => format!("exit code {code}"),
+                None => "killed by signal".to_string(),
+            };
+            return (
+                cmd_err.combined_output(),
+                Some(super::error::FailedCommand {
+                    command: cmd_err.command_string(),
+                    exit_info,
+                }),
+            );
+        }
+        (err.to_string(), None)
+    }
+}
+
+/// Normalize a git config key to its canonical form.
+///
+/// Git section and variable names are case-insensitive; subsection names
+/// (the middle parts of 3+-part keys) preserve case. `git config --list`
+/// emits the canonical form — so lookups against the parsed map must
+/// normalize the same way.
+///
+/// - 1 or 2 parts (`section` or `section.variable`): lowercase the whole thing.
+/// - 3+ parts (`section.subsection….variable`): lowercase first and last parts,
+///   preserve the middle.
+pub(super) fn canonical_config_key(key: &str) -> String {
+    let parts: Vec<&str> = key.split('.').collect();
+    match parts.len() {
+        0 | 1 => key.to_ascii_lowercase(),
+        2 => key.to_ascii_lowercase(),
+        _ => {
+            let (first, rest) = parts.split_first().unwrap();
+            let (last, middle) = rest.split_last().unwrap();
+            let mut out = String::with_capacity(key.len());
+            out.push_str(&first.to_ascii_lowercase());
+            for part in middle {
+                out.push('.');
+                out.push_str(part);
+            }
+            out.push('.');
+            out.push_str(&last.to_ascii_lowercase());
+            out
+        }
+    }
+}
+
+/// True when `extensions.worktreeConfig = true` appears in a parsed config map.
+///
+/// When this extension is enabled, per-worktree config lives in separate
+/// `config.worktree` files — the main worktree's at `.git/config.worktree`,
+/// linked worktrees' at `.git/worktrees/<name>/config.worktree`. From a
+/// linked worktree, `git config --list` does not merge the main worktree's
+/// `config.worktree`, so a config read taken there is missing any value the
+/// main worktree set per-worktree (e.g., `core.bare`). [`prewarm_git_config`]
+/// uses this to detect and skip the preload in that layout. See [#2779].
+///
+/// Git emits config keys in lowercased canonical form, so the lookup matches
+/// directly without going through [`canonical_config_key`].
+///
+/// [`prewarm_git_config`]: Repository::prewarm_git_config
+/// [#2779]: https://github.com/max-sixty/worktrunk/issues/2779
+fn worktree_config_enabled(parsed: &indexmap::IndexMap<String, Vec<String>>) -> bool {
+    parsed
+        .get("extensions.worktreeconfig")
+        .and_then(|v| v.last())
+        .map(|v| parse_git_bool(v))
+        .unwrap_or(false)
+}
+
+/// Parse the output of `git config --list -z`.
+///
+/// Format: each entry is `key\nvalue\0`. Values may be empty (no `\n`) for
+/// keys set via `git config key ""` — handled as `key -> ""`.
+///
+/// Returns a map from canonical key (as git emits it) to the list of
+/// values, preserving order (matches git's own multivar semantics where
+/// the last value wins).
+fn parse_config_list_z(stdout: &[u8]) -> indexmap::IndexMap<String, Vec<String>> {
+    let mut map: indexmap::IndexMap<String, Vec<String>> = indexmap::IndexMap::new();
+    for entry in stdout.split(|&b| b == 0) {
+        if entry.is_empty() {
+            continue;
+        }
+        let text = String::from_utf8_lossy(entry);
+        let (key, value) = match text.split_once('\n') {
+            Some((k, v)) => (k, v),
+            // `key` without any newline → no value set (shouldn't happen
+            // with `--list -z`, but tolerate gracefully).
+            None => (text.as_ref(), ""),
+        };
+        map.entry(key.to_string())
+            .or_default()
+            .push(value.to_string());
+    }
+    map
+}
+
+/// Emit `UserConfig::load_with_warnings` warnings to stderr.
+///
+/// Shared by [`Repository::prewarm_user_config`] (preload thread on `main`)
+/// and [`Repository::user_config`] (on-demand path for tests and callers
+/// that bypass prewarm). Both routes go through the same formatting so the
+/// stderr output is byte-identical regardless of which path runs.
+fn emit_user_config_warnings(warnings: &[LoadError]) {
+    for warning in warnings {
+        match warning {
+            LoadError::File { path, label, err } => {
+                let path_display = crate::path::format_path_for_display(path);
+                crate::styling::eprintln!(
+                    "{}",
+                    crate::styling::warning_message(cformat!(
+                        "{label} @ <bold>{path_display}</> failed to parse, skipping"
+                    ))
+                );
+                crate::styling::eprintln!(
+                    "{}",
+                    crate::styling::format_with_gutter(&err.to_string(), None)
+                );
+            }
+            LoadError::Env { err, vars } => {
+                let var_list: Vec<_> = vars
+                    .iter()
+                    .map(|(name, value)| format!("{name}={value}"))
+                    .collect();
+                crate::styling::eprintln!(
+                    "{}",
+                    crate::styling::warning_message(format!(
+                        "Ignoring env var overrides: {}",
+                        var_list.join(", ")
+                    ))
+                );
+                crate::styling::eprintln!(
+                    "{}",
+                    crate::styling::format_with_gutter(err.trim(), None)
+                );
+            }
+            LoadError::CliOverride { err, overrides } => {
+                crate::styling::eprintln!(
+                    "{}",
+                    crate::styling::warning_message(format!(
+                        "Ignoring --config-set overrides: {}",
+                        overrides.join(", ")
+                    ))
+                );
+                crate::styling::eprintln!(
+                    "{}",
+                    crate::styling::format_with_gutter(err.trim(), None)
+                );
+            }
+            LoadError::Validation(err) => {
+                crate::styling::eprintln!(
+                    "{}",
+                    crate::styling::warning_message(format!("Config validation warning: {err}"))
+                );
+            }
+        }
+    }
+}
+
+/// Parse a git boolean config value.
+///
+/// Accepts the forms `git config --type=bool` normalizes: `true/1/yes/on`
+/// (case-insensitive) → `true`; anything else → `false`.
+fn parse_git_bool(value: &str) -> bool {
+    matches!(
+        value.trim().to_ascii_lowercase().as_str(),
+        "true" | "1" | "yes" | "on"
+    )
+}
+
+#[cfg(test)]
+mod tests;

@@ -1,0 +1,31 @@
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+dist/
+build/
+.eggs/
+*.egg
+.venv/
+venv/
+env/
+.env
+.mypy_cache/
+.pytest_cache/
+.tox/
+*.log
+.DS_Store
+Thumbs.db
+*.skill
+
+# Browser automation artifacts
+.playwright-mcp/
+
+# Local planning docs (not part of the plugin)
+docs/superpowers/
+
+# Maintainer-local Claude Code config (hooks, permissions)
+.claude/settings.local.json
+
+# brooks-harness orchestrator run notes (runtime artifacts, not the plugin)
+_workspace/

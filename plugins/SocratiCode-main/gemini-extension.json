@@ -1,0 +1,11 @@
+{
+  "name": "socraticode",
+  "version": "1.4.1",
+  "contextFileName": "GEMINI.md",
+  "mcpServers": {
+    "socraticode": {
+      "command": "npx",
+      "args": ["-y", "socraticode"]
+    }
+  }
+}

@@ -1,0 +1,95 @@
+---
+source: tests/integration_tests/help.rs
+info:
+  program: wt
+  args:
+    - config
+    - state
+    - default-branch
+    - "--help"
+  env:
+    CLICOLOR_FORCE: "1"
+    COLUMNS: "500"
+    LANG: C
+    LC_ALL: C
+    LLVM_PROFILE_FILE: "[LLVM_PROFILE_FILE]"
+    TERM: alacritty
+    WORKTRUNK_APPROVALS_PATH: "[TEST_APPROVALS]"
+    WORKTRUNK_CONFIG_PATH: "[TEST_CONFIG]"
+    WORKTRUNK_SYSTEM_CONFIG_PATH: "[TEST_SYSTEM_CONFIG]"
+    WORKTRUNK_TEST_BASH_INSTALLED: "0"
+    WORKTRUNK_TEST_CLAUDE_INSTALLED: "0"
+    WORKTRUNK_TEST_CODEX_INSTALLED: "0"
+    WORKTRUNK_TEST_DELAYED_STREAM_MS: "-1"
+    WORKTRUNK_TEST_EPOCH: "1735776000"
+    WORKTRUNK_TEST_FISH_INSTALLED: "0"
+    WORKTRUNK_TEST_GEMINI_INSTALLED: "0"
+    WORKTRUNK_TEST_NUSHELL_ENV: "0"
+    WORKTRUNK_TEST_OPENCODE_INSTALLED: "0"
+    WORKTRUNK_TEST_POWERSHELL_ENV: "0"
+    WORKTRUNK_TEST_POWERSHELL_INSTALLED: "0"
+    WORKTRUNK_TEST_SKIP_URL_HEALTH_CHECK: "1"
+    WORKTRUNK_TEST_ZSH_INSTALLED: "0"
+---
+success: true
+exit_code: 0
+----- stdout -----
+wt config state default-branch - Default branch detection and override
+
+Usage: [1m[36mwt config state default-branch[0m [36m[OPTIONS][0m [36m[COMMAND][0m
+
+[1m[32mCommands:[0m
+  [1m[36mget[0m    Get the default branch
+  [1m[36mset[0m    Set the default branch
+  [1m[36mclear[0m  Clear the default branch cache
+
+[1m[32mOptions:[0m
+  [1m[36m-h[0m, [1m[36m--help[0m
+          Print help (see a summary with '-h')
+
+[1m[32mGlobal Options:[0m
+  [1m[36m-C[0m[36m [0m[36m<path>[0m
+          Working directory for this command
+
+      [1m[36m--config[0m[36m [0m[36m<path>[0m
+          User config file path
+
+      [1m[36m--config-set[0m[36m [0m[36m<toml>[0m
+          Override config with inline TOML, e.g. --config-set list.full=true (repeatable)
+
+  [1m[36m-v[0m, [1m[36m--verbose[0m[36m...[0m
+          Verbose output (-v: info logs + hook/alias template variables on stderr; -vv: also debug logs and raw subprocess output written to .git/wt/logs/). Set WORKTRUNK_VERBOSE=0|1|2 to apply the same level everywhere — including shell completion, which no flag can reach
+
+  [1m[36m-y[0m, [1m[36m--yes[0m
+          Skip approval prompts
+
+Useful in scripts to avoid hardcoding [2mmain[0m or [2mmaster[0m:
+
+[107m [0m [2m[0m[2m[34mgit[0m[2m rebase $([0m[2m[34mwt[0m[2m config state default-branch)[0m
+
+In a hook or alias template, prefer the [2m{{ default_branch }}[0m template variable; [2m$(wt config state default-branch)[0m is for plain shell scripts.
+
+Without a subcommand, runs [2mget[0m. Use [2mset[0m to override, or [2mclear[0m then [2mget[0m to re-detect.
+
+[2mdefault-branch get[0m resolves the value and caches it on a miss; the aggregate [2mwt config state get[0m only reports the cache (read-only), so it can show [2m(none)[0m until something populates it.
+
+[1m[32mDetection[0m
+
+Worktrunk detects the default branch automatically:
+
+1. [1mWorktrunk cache[0m — Checks [2mgit config worktrunk.default-branch[0m
+2. [1mGit cache[0m — Detects primary remote and checks its HEAD (e.g., [2morigin/HEAD[0m)
+3. [1mRemote query[0m — If not cached, queries [2mgit ls-remote[0m — typically 100ms–2s
+4. [1mLocal inference[0m — If no remote, infers from local branches
+
+Once detected, the result is cached in [2mworktrunk.default-branch[0m for fast access.
+
+The local inference fallback uses these heuristics in order:
+- If only one local branch exists, uses it
+- For bare repos or empty repos, checks [2msymbolic-ref HEAD[0m
+- Checks [2mgit config init.defaultBranch[0m
+- Looks for common names: [2mmain[0m, [2mmaster[0m, [2mdevelop[0m, [2mtrunk[0m
+
+If none of these match, detection fails; set it explicitly with [2mwt config state default-branch set BRANCH[0m.
+
+----- stderr -----

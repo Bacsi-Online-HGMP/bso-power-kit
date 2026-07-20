@@ -1,0 +1,555 @@
+{
+  "description": "Frozen corpus of real, model-generated brooks-lint reports for the deterministic parser-fidelity benchmark (scripts/benchmark.mjs). Each report was produced by replaying a curated code sample through the production system prompt (assemble-prompt.mjs) and graded independently by a separate model pass. Ground truth was spot-checked by hand. The parser (report-parse.mjs) is deterministic, so npm run benchmark reproduces the same numbers for anyone.",
+  "method": "30 samples across 6 modes (review/audit/debt/test/health/sweep), including 9 false-positive/tradeoff cases that must stay clean. truth = independently graded finding inventory (severity counts + risk codes). NOT a model-quality benchmark — that is evals/evals.json + npm run evals:live.",
+  "generated": "2026-06-18",
+  "sampleCount": 30,
+  "samples": [
+    {
+      "id": "r1",
+      "mode": "review",
+      "isFP": false,
+      "label": "god method w/ side effects",
+      "report": "# Brooks-Lint Review\n\n**Mode:** PR Review\n**Scope:** `UserSvc.update` method (single function, ~10 lines)\n**Health Score:** 65/100\n\nA single method silently fans out into auditing, mail, and billing side effects, turning one \"update user\" call into a tangle of unrelated responsibilities and untestable infrastructure coupling.\n\n---\n\n## Findings\n\n### 🔴 Critical\n\n**Change Propagation — `update` mixes profile, audit, email, and billing responsibilities**\nSymptom: Inside one `update` method, an `email` change triggers four distinct concerns: profile mutation (`u.name`, `u.email`), audit logging (`self.audit.log`), transactional mail (`self.mailer.send`), and billing synchronization (`self.billing.sync`). `UserSvc` now changes for at least four different business reasons.\nSource: Refactoring (Fowler) — Divergent Change; Clean Architecture (Martin) — Single Responsibility Principle\nConsequence: Any change to audit format, mail delivery, or billing sync forces edits to the user-update path, and every caller of `update` silently inherits those side effects. The method cannot evolve along one axis without risking the others, and a billing or mailer outage breaks a plain name change.\nRemedy: Reduce `update` to the persistence decision (mutate and `save`), and move audit/mail/billing into an orchestrating caller or domain events (e.g., emit an `EmailChanged` event that audit, mailer, and billing subscribe to). Keep the entity method free of cross-cutting infrastructure calls.\n\n### 🟡 Warning\n\n**Dependency Disorder — domain update method directly drives audit, mailer, and billing infrastructure**\nSymptom: `UserSvc.update` reaches directly into `self.audit`, `self.mailer`, and `self.billing` — three infrastructure collaborators — and invokes them inline as an unavoidable side effect of updating a name/email.\nSource: Clean Architecture (Martin) — Dependency Inversion Principle; A Philosophy of Software Design (Ousterhout) — Information Leakage\nConsequence: The update logic cannot be exercised without live (or mocked) audit, mail, and billing services, so the cheap \"did the field update?\" assertion now requires standing up three dependencies. The fan-out also leaks the decision \"an email change must notify billing and send mail\" across the service rather than owning it in one place.\nRemedy: Invert these dependencies behind a single abstraction (a domain event publisher or a notification port) so `update` depends on an interface, not on concrete `audit`/`mailer`/`billing`. This shrinks the method's surface and restores a seam for isolated testing.\n\n**Defensive Programming — unchecked `db.get` result and unbounded failure path**\nSymptom: `u = self.db.get(uid)` is used immediately (`u.name = name`) with no check that the user exists; a missing `uid` yields a `None`/null and an attribute error mid-mutation. The four side effects (`audit.log`, `mailer.send`, `billing.sync`, `save`) run sequentially with no error handling, so a mailer or billing failure leaves the audit log written and the user unsaved.\nSource: Code Complete (McConnell) — Ch. 8: Defensive Programming (input validation, explicit error paths)\nConsequence: Failures are silent and partial: a non-existent `uid` crashes obscurely, and a mid-sequence exception (mailer down, billing timeout) leaves the system in an inconsistent state — the email was sent but the user record never persisted, or audited-but-not-saved.\nRemedy: Add a guard clause after `db.get` (raise a clear \"user not found\" error before mutating), and make the side-effect ordering explicit — persist first, then trigger downstream effects, or wrap the sequence so a failure does not leave half-applied state.\n\n### 🟢 Suggestion\n\n**Cognitive Overload — uninformative names and stringly-typed audit message**\nSymptom: The receiver-shadowing local `u` and the abbreviated class name `UserSvc` carry no meaning, and the audit entry is built by ad-hoc string concatenation (`\"changed \" + str(uid)`) embedding the message format inline.\nSource: Code Complete (McConnell) — Ch. 11: The Power of Variable Names; Refactoring (Fowler) — Primitive Obsession\nConsequence: `u` and `Svc` add small but repeated reading friction, and the inline audit-string format will drift the moment a second audit call appears elsewhere, since the \"changed X\" convention lives nowhere reusable.\nRemedy: Rename `u` → `user` and prefer `UserService`; route audit messages through a single audit-message helper so the format is defined once.\n\n---\n\n## Summary\n\nThe most important action is to stop `update` from owning four unrelated responsibilities: extract audit, mail, and billing into an event-driven or orchestration layer so a name change no longer depends on billing and mail infrastructure. Combined with a missing-user guard clause and explicit failure ordering, this both restores testability and prevents half-applied updates. No tests accompany this code; given the side effects involved, add characterization tests before refactoring — consider running `/brooks-lint:brooks-test` for a complete test quality diagnosis.",
+      "truth": {
+        "critical": 1,
+        "warning": 2,
+        "suggestion": 1,
+        "codes": [
+          "R2",
+          "R5",
+          "R1"
+        ],
+        "healthScore": 65,
+        "hasIronLaw": true
+      }
+    },
+    {
+      "id": "r2",
+      "mode": "review",
+      "isFP": false,
+      "label": "long parameter list",
+      "report": "# Brooks-Lint Review\n\n**Mode:** PR Review\n**Scope:** `makeReport` function (1 file, ~4 lines of production logic)\n**Health Score:** 95/100\n\nA clean single-function diff whose only issue is an 11-parameter positional signature that crosses the cognitive-overload threshold.\n\n---\n\n## Findings\n\n### 🟡 Warning\n\n**Cognitive Overload — 11-parameter positional signature**\nSymptom: `makeReport(title, author, date, locale, tz, theme, cols, rows, footer, header, page)` takes 11 positional parameters, all required — far past the 4-parameter threshold. Every call site must supply all 11 in exact order, and the body simply forwards them to `render(...)` in the same order.\nSource: Fowler — Refactoring, Long Parameter List\nConsequence: Callers cannot tell `cols` from `rows` or `footer` from `header` at the call site without consulting the signature, and any two adjacent same-typed arguments (e.g. `footer`/`header`, `cols`/`rows`) can be silently transposed with no compiler error. Adding or reordering a parameter forces edits at every call site (a Change Propagation amplifier).\nRemedy: Introduce a parameter object — e.g. `makeReport(report)` where `report` is a `ReportSpec` with named fields — or group the cohesive clusters (`{ locale, tz }` into a `Localization`, `{ cols, rows, footer, header, page }` into a `Layout`). Named fields make call sites self-documenting and make transposition errors impossible.\n\n---\n\n## Summary\n\nThe single actionable item is collapsing the 11 positional parameters into a parameter object or a small number of cohesive value groups; this removes the transposition hazard and decouples call sites from parameter order. Otherwise the function is trivial and well-scoped — a pure pass-through with no nesting, branching, or naming problems.",
+      "truth": {
+        "critical": 0,
+        "warning": 1,
+        "suggestion": 0,
+        "codes": [
+          "R1"
+        ],
+        "healthScore": 95,
+        "hasIronLaw": true
+      }
+    },
+    {
+      "id": "r3",
+      "mode": "review",
+      "isFP": false,
+      "label": "feature envy",
+      "report": "I have read the operating instructions. Now I'll apply them to review the code (feature envy). Per the Iron Law and PR Review process, the dominant smell here is Feature Envy — `priceCart` reaches into `i.product` internals and `cart.customer` rather than asking those objects.\n\n# Brooks-Lint Review\n\n**Mode:** PR Review\n**Scope:** `priceCart` function (single snippet, < 50 lines — Steps 1–3 focus, plus Step 6b for new logic)\n**Health Score:** 79/100\n\n`priceCart` computes a correct total but reaches deep into `product` and `customer` internals, scattering pricing logic that belongs inside those domain objects.\n\n---\n\n## Findings\n\n### 🟡 Warning\n\n**Change Propagation — Pricing logic envies `product` internals**\nSymptom: The loop body `i.product.price * i.qty * (1 - i.product.discount)` reads three fields off `i.product` and performs the line-total calculation entirely with another object's data, using nothing of `i`'s own. The free-shipping branch does the same with `cart.customer.freeShipThreshold`.\nSource: Refactoring — Feature Envy\nConsequence: When the line-price formula changes (tax, per-unit rounding, tiered discounts), the edit lands in `priceCart` instead of on `product`, so every caller that prices anything must be hunted down and changed in lockstep — Shotgun Surgery on the next pricing-rule change.\nRemedy: Move the line calculation onto the item/product: add `item.lineTotal()` (or `product.priceFor(qty)`) that owns `price * qty * (1 - discount)`. `priceCart` then sums `item.lineTotal()` and asks `customer.qualifiesForFreeShipping(subtotal)`.\n\n### 🟢 Suggestion\n\n**Domain Model Distortion — Free-shipping decision lives outside the customer**\nSymptom: `t > cart.customer.freeShipThreshold ? t : t + 5` reads the customer's threshold field and applies the shipping rule in the pricing routine; `customer` is treated as a data bag.\nSource: Domain-Driven Design — Anemic Domain Model\nConsequence: The shipping policy and the magic `5` flat fee are duplicated wherever shipping is computed, so a policy change (per-region thresholds, tiered fees) must be replayed in every call site instead of one place.\nRemedy: Give `customer` the behavior — `customer.shippingFor(subtotal)` returning `0` or the fee — and replace the magic `5` with a named `FLAT_SHIPPING_FEE` constant owned by the shipping domain.\n\n### 🟢 Suggestion\n\n**Cognitive Overload — Single-letter names obscure intent**\nSymptom: `t`, `i` and `qty` force the reader to decode that `t` is the running total and `i` is a cart line; the line-total expression and the shipping ternary are also packed onto single lines.\nSource: Code Complete — Ch. 11: The Power of Variable Names\nConsequence: Maintainers must re-read the implementation to recover intent, raising the chance of a wrong edit when the formula is touched.\nRemedy: Rename `t → subtotal`, `i → item`; once `lineTotal()` is extracted, the loop reads `subtotal += item.lineTotal()`, making intent self-evident.\n\n---\n\n## Summary\n\nThe highest-leverage fix is extracting the line-total calculation onto the item/product (Feature Envy): it removes the deep reach into `product` internals and gives the pricing rule a single home, which in turn resolves the duplication risk behind the free-shipping decision. No tests accompany this logic, so the new pricing/shipping methods should land with unit tests for the threshold boundary and the discount math. Overall the function is small and correct today, but its logic is parked in the wrong objects — a maintainability trend worth correcting before pricing rules grow.",
+      "truth": {
+        "critical": 0,
+        "warning": 1,
+        "suggestion": 2,
+        "codes": [
+          "R2",
+          "R6",
+          "R1"
+        ],
+        "healthScore": 79,
+        "hasIronLaw": true
+      }
+    },
+    {
+      "id": "r4",
+      "mode": "review",
+      "isFP": false,
+      "label": "deep nesting / arrow code",
+      "report": "# Brooks-Lint Review\n\n**Mode:** PR Review\n**Scope:** `classify(u)` function (single function, ~11 lines)\n**Health Score:** 84/100\n\nA small but deeply-nested guard pyramid whose accidental structure obscures a flat set of conditions — readable today, but a maintenance trap as conditions grow.\n\n---\n\n## Findings\n\n### 🟡 Warning\n\n**Cognitive Overload — Five-level arrow-code pyramid for a flat condition set**\nSymptom: `classify` nests five `if` statements (`u` → `u.active` → `u.plan` → `u.plan.tier === \"pro\"` → `u.usage > 0`) to a depth of 5 before the single meaningful `return \"active-pro\"`. The conditions are purely conjunctive — none has its own `else` branch — yet they are expressed as a staircase rather than a single combined test.\nSource: McConnell — Code Complete, Ch. 7: High-Quality Routines (nesting depth)\nConsequence: Nesting at depth 5 exceeds the >3 threshold and approaches the Critical >5 line. Each future condition (e.g., a new tier or a trial-state check) adds another level of indentation, pushing the function past the Critical boundary and making the \"happy path\" return progressively harder to locate. Reviewers must hold five open scopes in working memory to confirm the function only ever returns two distinct values.\nRemedy: Collapse the pyramid into one guard clause using a single conjunction with safe navigation, e.g. `if (u?.active && u.plan?.tier === \"pro\" && u.usage > 0) return \"active-pro\"; return \"unknown\";`. This flattens depth to 1 and makes the entire classification rule readable in one expression.\n\n---\n\n## Summary\n\nThe most important action is to flatten the nested `if` staircase into a single guard expression — the logic is already a flat conjunction and gains nothing from the nesting. There are no correctness or coupling issues; this is an isolated readability/cognitive-load concern that is cheap to fix now and prevents the function from drifting toward Critical nesting as classification rules accumulate.",
+      "truth": {
+        "critical": 0,
+        "warning": 1,
+        "suggestion": 0,
+        "codes": [
+          "R1"
+        ],
+        "healthScore": 84,
+        "hasIronLaw": true
+      }
+    },
+    {
+      "id": "r5",
+      "mode": "review",
+      "isFP": false,
+      "label": "duplicated validation",
+      "report": "# Brooks-Lint Review\n\n**Mode:** PR Review\n**Scope:** 3 functions under review (`createUser`, `updateUser`, `inviteUser`)\n**Health Score:** 85/100\n\nThe same email-validation decision is copy-pasted across three functions — a textbook DRY violation that will drift the moment validation rules change.\n\n---\n\n## Findings\n\n### 🔴 Critical\n\n**Knowledge Duplication — Email validation rule copied across three functions**\nSymptom: The identical guard `if (!e.includes(\"@\") || e.length < 5) throw \"bad\";` appears verbatim in `createUser`, `updateUser`, and `inviteUser`. The same business decision (what makes an email valid) is expressed in three places.\nSource: The Pragmatic Programmer — DRY: Don't Repeat Yourself; Fowler — Refactoring, Duplicate Code\nConsequence: When the validation rule changes (e.g., adding a domain check, a length tweak, or proper regex), every copy must be found and edited in lockstep. Miss one and the three entry points silently disagree about what a valid email is — a class of bug that passes review and surfaces in production.\nRemedy: Extract a single `validateEmail(e)` (or an `Email` value type) and call it from all three functions. One definition, one place to change. This also fixes the validation message and error-type inconsistency in one move.\n\n### 🟢 Suggestion\n\n**Cognitive Overload — Magic constant and uninformative throw**\nSymptom: The literal `5` (minimum length) is unexplained, and the code throws a bare string `\"bad\"` rather than an `Error`. The parameter name `e` reveals nothing about whether it holds an email.\nSource: Code Complete — Ch. 12: Fundamental Data Types (magic numbers); Ch. 11: The Power of Variable Names\nConsequence: A maintainer cannot tell why 5 is the floor (it does not even guarantee a valid `a@b.c` shape), and a thrown string defeats `instanceof Error` handling and loses stack traces, making failures harder to diagnose.\nRemedy: When extracting `validateEmail`, name the parameter `email`, replace `5` with a named constant or a real format check, and `throw new Error(\"invalid email\")` instead of a bare string.\n\n---\n\n## Summary\n\nThe single most important action is to extract the duplicated email-validation guard into one shared `validateEmail` function (or value type) — this collapses three copies into one source of truth and is a low-risk, high-leverage fix. The naming, magic-number, and bare-string-throw issues are best cleaned up in the same extraction. Once consolidated, this code is in good shape.",
+      "truth": {
+        "critical": 1,
+        "warning": 0,
+        "suggestion": 1,
+        "codes": [
+          "R3",
+          "R1"
+        ],
+        "healthScore": 85,
+        "hasIronLaw": true
+      }
+    },
+    {
+      "id": "r6",
+      "mode": "review",
+      "isFP": false,
+      "label": "primitive obsession",
+      "report": "# Brooks-Lint Review\n\n**Mode:** PR Review\n**Scope:** `transfer()` function (1 file, ~5 lines)\n**Health Score:** 70/100\n\nA small money-transfer routine encodes monetary amounts and currency as raw primitives passed in parallel, distorting the domain model and inviting silent mismatches.\n\n---\n\n## Findings\n\n### 🟡 Warning\n\n**Domain Model Distortion — Money modeled as raw integer + currency string**\nSymptom: `transfer` takes `fromCents`, `toCents`, `amountCents`, and `currency` as separate primitives. A monetary amount (integer cents) and its currency travel as two independent arguments with no type binding them together; the inline comment admits \"money as raw ints + currency string passed everywhere; no Money type.\"\nSource: Domain-Driven Design (Evans) — Value Object / Anemic Domain Model; Refactoring (Fowler) — Primitive Obsession\nConsequence: Amount and currency can desynchronize — nothing prevents passing USD cents with a `\"EUR\"` label, or adding two amounts of different currencies. The conversion decision (`if (currency !== \"USD\")`) has no single home, so every call site that handles money must re-implement the same currency-awareness, and rounding/precision rules cannot be enforced in one place. As callers multiply, this becomes a cross-codebase correctness hazard.\nRemedy: Introduce a `Money` value object that binds `amountCents` and `currency` as one immutable type, with conversion/arithmetic as methods on it (e.g. `money.convertTo(\"USD\")`). Change `transfer(from, to, amount: Money)` to accept Money instances so the type system enforces currency consistency at every boundary.\n\n### 🟢 Suggestion\n\n**Cognitive Overload — Parallel primitive parameters force caller bookkeeping**\nSymptom: The signature `transfer(fromCents, toCents, amountCents, currency)` relies on three same-typed integer parameters plus a bare string; nothing in the types distinguishes the source amount from the destination amount from the transfer amount.\nSource: Refactoring (Fowler) — Primitive Obsession; Code Complete (McConnell) — Ch. 11: The Power of Variable Names\nConsequence: Callers must remember positional argument order among three interchangeable integers; transposing `fromCents` and `toCents`, or passing an amount in the wrong currency, compiles cleanly and fails silently at runtime.\nRemedy: Wrapping the amount in a `Money` type (above) collapses the amount+currency pair into one self-describing argument and lets the source/destination accounts carry their own typed balances, eliminating the positional-integer ambiguity.\n\n---\n\n## Summary\n\nThe most important action is to introduce a `Money` value object so amount and currency are bound into one immutable type — this single change resolves both findings and removes the conversion logic's homelessness. The code is correct for the happy path today, but the primitive-obsession pattern scales poorly: each new caller re-duplicates currency handling and adds another place for amount/currency to drift apart.",
+      "truth": {
+        "critical": 0,
+        "warning": 1,
+        "suggestion": 1,
+        "codes": [
+          "R6",
+          "R1"
+        ],
+        "healthScore": 70,
+        "hasIronLaw": true
+      }
+    },
+    {
+      "id": "r7",
+      "mode": "review",
+      "isFP": true,
+      "label": "FP: clean pure fn",
+      "report": "The code is a clean pure function. Following the Iron Law's \"What Not to Flag\" guards (linear code with clear names and guard clauses is not cognitive overload; small explicit guard clauses are fine), there are no decay risks here.\n\n# Brooks-Lint Review\n\n**Mode:** PR Review\n**Scope:** `clampPercent` function (1 file, 5 lines)\n**Health Score:** 100/100\n\nA clean, single-purpose pure function with explicit guard clauses and a clear name — no decay risks found.\n\n---\n\n## Findings\n\nNo findings. The function is linear, has a self-documenting name, uses two small guard clauses (not cognitive overload), and `0` / `100` are domain-meaningful bounds for a percentage, not magic numbers. Per Code Complete (Ch. 7, High-Quality Routines) this is exactly the shape a small routine should take.\n\n---\n\n## Summary\n\nNo action needed. The code is at full health — short, single-responsibility, and free of decay risks. Nothing to fix.",
+      "truth": {
+        "critical": 0,
+        "warning": 0,
+        "suggestion": 0,
+        "codes": [],
+        "healthScore": 100,
+        "hasIronLaw": false
+      }
+    },
+    {
+      "id": "r8",
+      "mode": "review",
+      "isFP": true,
+      "label": "FP: small well-named util",
+      "report": "# Brooks-Lint Review\n\n**Mode:** PR Review\n**Scope:** `slugify` utility function (1 file, 4 lines)\n**Health Score:** 100/100\n\nA small, well-named, single-purpose pure function with no decay risks worth flagging.\n\n---\n\n## Findings\n\nNo findings. The function is linear, has a single clear responsibility, a self-documenting name (`slugify`), a one-line doc comment that matches its behavior, an explicit type signature, and no magic numbers, deep nesting, or excess parameters. The regex character class and chained `replace` calls are inherent to the slug-formatting problem, not accidental complexity.\n\n---\n\n## Summary\n\nNo action required — this is healthy, idiomatic code that faithfully solves exactly the problem it states. As an optional, non-blocking note, this pure function is a natural candidate for a few unit tests (empty string, leading/trailing punctuation, Unicode input) to lock its behavior in as a de facto API, but its absence here is not a decay risk.",
+      "truth": {
+        "critical": 0,
+        "warning": 0,
+        "suggestion": 0,
+        "codes": [],
+        "healthScore": 100,
+        "hasIronLaw": false
+      }
+    },
+    {
+      "id": "a1",
+      "mode": "audit",
+      "isFP": false,
+      "label": "import cycle",
+      "report": "I have the operating instructions. The audit-mode prompt requires the standard report template with a Module Dependency Graph (Architecture Audit mode). Applying the framework to the import cycle:\n\n# Brooks-Lint Review\n\n**Mode:** Architecture Audit\n**Scope:** Two files — `models/order.ts`, `services/pricing.ts` (import cycle)\n**Health Score:** 85/100\n\nA clean two-module circular dependency between the domain model and the pricing service breaks the layering and prevents either module from being understood or tested in isolation.\n\n---\n\n## Module Dependency Graph\n\n```mermaid\ngraph TD\n    subgraph Domain\n        Order[\"models/order.ts (Order)\"]\n    end\n\n    subgraph Services\n        Pricing[\"services/pricing.ts (price)\"]\n    end\n\n    Order --> Pricing\n    Pricing -.->|circular| Order\n\n    classDef critical fill:#ff6b6b,stroke:#c92a2a,color:#fff\n    classDef warning fill:#ffd43b,stroke:#e67700\n\n    class Order,Pricing critical\n```\n\n---\n\n## Findings\n\n### 🔴 Critical\n\n**Dependency Disorder (R5) — Circular dependency between Order model and pricing service**\nSymptom: `models/order.ts` imports `price` from `../services/pricing`, while `services/pricing.ts` imports `Order` from `../models/order`. The two modules form a closed import cycle (`Order → Pricing → Order`).\nSource: Clean Architecture — Acyclic Dependencies Principle (ADP)\nConsequence: Neither module can be compiled, understood, tested, or reused without the other. The cycle defeats isolation: a change to either file can force recompilation/retesting of both, and bundlers/tooling may break on initialization order (a type-only import here is benign at runtime, but the value-level `price(this)` call hard-couples them). The pair becomes a single tangled unit that only grows harder to break apart.\nRemedy: Break the cycle by inverting the dependency. Either (a) move the pricing calculation into the `Order` model so the domain owns its own behavior (`total()` computes `this.lines.length * 10` directly or via an injected pricing strategy), or (b) have `price()` accept a plain structural argument (e.g. `{ lines }`) instead of importing the concrete `Order` class, so `pricing.ts` no longer depends on `models/`. Domain models should not depend outward on service modules.\n\n### 🟡 Warning\n\n**Domain Model Distortion (R6) — Pricing behavior lives outside the model it belongs to**\nSymptom: `Order.total()` delegates entirely to an external `price(this)` function, and `price` reaches into the order's data (`o.lines.length * 10`) — it is more interested in `Order`'s data than its own module's.\nSource: Refactoring — Feature Envy / Domain-Driven Design — Anemic Domain Model\nConsequence: Business logic (how an order's total is computed) is pulled out into a service while the domain object becomes a thin shell, scattering the pricing decision and creating the very coupling that produced the cycle above.\nRemedy: Relocate the total calculation into `Order` (or pass pricing in as a strategy the order invokes), so the domain object owns its invariant and the service-to-model back-edge disappears.\n\n---\n\n## Summary\n\nThe most important action is to break the `Order ↔ pricing` import cycle — it is a Critical R5 violation that prevents both modules from being built or tested independently. The cleanest fix also resolves the Warning: moving the total calculation back into the `Order` model removes the service-to-domain back-edge entirely, restoring a one-way dependency direction.",
+      "truth": {
+        "critical": 1,
+        "warning": 1,
+        "suggestion": 0,
+        "codes": [
+          "R5",
+          "R6"
+        ],
+        "healthScore": 85,
+        "hasIronLaw": true
+      }
+    },
+    {
+      "id": "a2",
+      "mode": "audit",
+      "isFP": false,
+      "label": "layering violation controller->db",
+      "report": "The file under review is a single production file (a controller importing infrastructure directly), and the prompt specifies \"audit-mode\" with a layering violation. I have the full audit-mode guide. Let me produce the report.\n\n# Brooks-Lint Review\n\n**Mode:** Architecture Audit\n**Scope:** `controllers/UserController.ts` (single file; dependency edge controller → infrastructure)\n**Health Score:** 70/100\n\nA controller reaches straight into the database driver, inverting the intended layering and creating a hard infrastructure coupling at the application's entry edge.\n\n---\n\n## Module Dependency Graph\n\n```mermaid\ngraph TD\n    subgraph Controllers\n        UserController\n    end\n\n    subgraph Infrastructure\n        Postgres[\"lib/postgres (pg)\"]\n    end\n\n    UserController --> Postgres\n\n    classDef critical fill:#ff6b6b,stroke:#c92a2a,color:#fff\n    classDef clean fill:#51cf66,stroke:#2b8a3e,color:#fff\n\n    class UserController,Postgres critical\n```\n\n---\n\n## Findings\n\n### 🔴 Critical\n\n**Dependency Disorder (R5) — Controller imports infrastructure driver directly**\nSymptom: `UserController` does `import { pg } from \"../lib/postgres\"` and calls `pg.query(...)` inline in `get()`. The dependency arrow flows from the application/entry layer straight to a concrete database module — there is no domain service, repository, or interface between them.\nSource: Clean Architecture — Dependency Inversion Principle (DIP) / layering direction (Robert C. Martin); reinforced by A Philosophy of Software Design — Information Leakage (the persistence detail leaks into the controller).\nConsequence: The controller is now bound to PostgreSQL specifics. Swapping the data store, mocking the DB in a test, or changing the query layer forces edits to controllers. There is no seam at the infrastructure boundary, so `get()` cannot be unit-tested without a live database, and every controller that follows this pattern becomes another point of cascade when the persistence layer changes.\nRemedy: Introduce a `UserRepository` interface (owned by the domain/application layer) with a `findById(id)` method; have the controller depend on that abstraction via constructor injection, and place the concrete `pg`-backed implementation in the infrastructure layer. The dependency arrow then points inward (infra → interface), restoring layering and giving you a test seam.\n\n### 🟡 Warning\n\n**Change Propagation (R2) — Persistence concern lives in the HTTP entry point**\nSymptom: Query construction and execution sit inside the controller method rather than in a dedicated data-access component, mixing transport/entry responsibilities with data retrieval.\nSource: Refactoring — Divergent Change / Feature Envy (Martin Fowler): the controller will change both for HTTP-shape reasons and for persistence reasons.\nConsequence: One class now has two reasons to change (request handling and SQL access). As more endpoints follow this shape, query changes scatter across controllers (Shotgun Surgery), and the controller layer becomes a blast-radius hotspot for any storage change.\nRemedy: Move data access behind the repository introduced above so the controller's only job is request/response orchestration; the SQL lives in one infrastructure-owned place.\n\n---\n\n## Summary\n\nThe single most important action is to invert the controller → database dependency: introduce a repository abstraction in the domain layer and inject the concrete `pg` implementation, which fixes both the layering violation (R5) and the entangled responsibilities (R2) in one move. As written, this file establishes a pattern that, if copied across controllers, will harden into a system-wide testability and change-propagation problem. Note: a SQL-injection concern (`\"... id=\" + id`) is visible but falls outside architecture-audit scope — flag it to a security/PR review (`brooks-review`).",
+      "truth": {
+        "critical": 1,
+        "warning": 1,
+        "suggestion": 0,
+        "codes": [
+          "R5",
+          "R2"
+        ],
+        "healthScore": 70,
+        "hasIronLaw": true
+      }
+    },
+    {
+      "id": "a3",
+      "mode": "audit",
+      "isFP": false,
+      "label": "god module",
+      "report": "# Brooks-Lint Review\n\n**Mode:** Architecture Audit\n**Scope:** `utils.ts` (single file, 40 unrelated exports)\n**Health Score:** 47/100\n\nA single `utils.ts` module aggregating 40 unrelated responsibilities is a textbook god module: every consumer depends on it, and any change ripples across the whole system.\n\n---\n\n## Module Dependency Graph\n\n```mermaid\ngraph TD\n    subgraph Application\n        ConsumerA[\"(every feature imports utils)\"]\n        ConsumerB\n        ConsumerC\n    end\n\n    subgraph Utils\n        UtilsModule[\"utils.ts (40 exports: parseDate, sendEmail, hashPw, renderPdf, chargeCard, resizeImg, +34)\"]\n    end\n\n    ConsumerA --> UtilsModule\n    ConsumerB --> UtilsModule\n    ConsumerC --> UtilsModule\n\n    classDef critical fill:#ff6b6b,stroke:#c92a2a,color:#fff\n    classDef clean fill:#51cf66,stroke:#2b8a3e,color:#fff\n\n    class UtilsModule critical\n    class ConsumerA,ConsumerB,ConsumerC clean\n```\n\n---\n\n## Findings\n\n### 🔴 Critical\n\n**Domain Model Distortion (R6) — `utils.ts` has no coherent responsibility**\nSymptom: One module exports 40 functions spanning at least six unrelated concerns — date parsing (`parseDate`), email delivery (`sendEmail`), credential hashing (`hashPw`), PDF rendering (`renderPdf`), payment processing (`chargeCard`), and image resizing (`resizeImg`). The module's responsibility cannot be stated in a single sentence beyond \"miscellaneous.\"\nSource: A Philosophy of Software Design — Shallow Module / \"Information leakage\" (Ch. 4); Mythical Man-Month — Conceptual Integrity (Ch. 4)\nConsequence: No developer can predict what lives here, so it becomes the default dumping ground and keeps growing. The name `utils` carries no domain meaning, forcing constant mental translation and making it impossible to know where new code belongs.\nRemedy: Split by concern into cohesive, named modules: `date/`, `email/`, `auth/` (hashing), `pdf/`, `payments/` (charging), `images/`. Each should have a one-sentence responsibility. Delete `utils.ts` once empty; no symbol should remain orphaned in a catch-all.\n\n**Change Propagation (R2) — universal fan-in dumping ground**\nSymptom: Because every feature reaches into the same `utils.ts` for unrelated helpers (a payment screen imports it for `chargeCard`, a profile screen for `resizeImg`, a login flow for `hashPw`), the module accumulates a maximal fan-in. Functions with completely different reasons to change (`chargeCard` for PCI/billing rules, `hashPw` for security policy, `renderPdf` for templates) are colocated.\nSource: Refactoring — Divergent Change; Software Engineering at Google — Hyrum's Law (Ch. 1)\nConsequence: `utils.ts` changes for many independent business reasons, so it is touched on nearly every feature, maximizing merge conflicts and regression surface. Any edit forces recompilation/retesting of every importer, even those using an unrelated export. With this many callers, incidental behavior of one helper becomes an implicit contract for unrelated consumers.\nRemedy: After splitting (above), let consumers import only the cohesive module they actually need (`import { chargeCard } from \"payments\"`). This collapses the blast radius so a billing change touches only billing consumers, not the entire codebase.\n\n### 🟡 Warning\n\n**Dependency Disorder (R5) — no layering rule; security and billing share a leaf with formatting**\nSymptom: Sensitive, high-stakes operations (`chargeCard`, `hashPw`) sit in the same flat leaf module as trivial formatting helpers (`parseDate`, `resizeImg`), with no architectural rule for what may depend on what. A god `utils` is necessarily depended on by every layer, so it cannot sit cleanly at any one level.\nSource: Clean Architecture — Stable Dependencies Principle / Single Responsibility Principle; Mythical Man-Month — Conceptual Integrity\nConsequence: A widely-depended-on module that mixes stable formatting code with volatile payment/security code drags instability across the whole graph: a billing or crypto change destabilizes a module that pure formatting code also depends on. There is no testability seam — replacing `chargeCard` or `sendEmail` with a test double means stubbing the entire grab-bag module.\nRemedy: Establish layer boundaries during the split. Place infrastructure-touching concerns (`sendEmail`, `chargeCard`, `renderPdf`) behind interfaces in their own modules so domain code depends on abstractions, not on a concrete catch-all. Introduce injection seams at the email/payment/PDF boundaries.\n\n---\n\n## Summary\n\nThe single most important action is to dissolve `utils.ts` by splitting its 40 exports into cohesive, domain-named modules — this simultaneously addresses the missing conceptual integrity (R6), the universal blast radius (R2), and the absent layering (R5). Because the file's only organizing principle is \"everything,\" it will keep attracting unrelated code until it is broken up; do the split before adding any further helpers. Note: this audit is based solely on the export list shown — the per-function bodies and the actual importer graph were not provided, so fan-in is inferred from the helpers' obviously unrelated domains rather than measured.",
+      "truth": {
+        "critical": 2,
+        "warning": 1,
+        "suggestion": 0,
+        "codes": [
+          "R6",
+          "R2",
+          "R5"
+        ],
+        "healthScore": 47,
+        "hasIronLaw": true
+      }
+    },
+    {
+      "id": "a4",
+      "mode": "audit",
+      "isFP": true,
+      "label": "FP: ports/adapters DIP correct",
+      "report": "# Brooks-Lint Review\n\n**Mode:** Architecture Audit\n**Scope:** 2 files — `domain/PaymentPort.ts`, `infra/StripeAdapter.ts`\n\n**Health Score:** 100/100\n\nClean ports-and-adapters layering: the domain owns the `PaymentPort` abstraction and the infrastructure adapter depends inward on it, so dependencies flow in the correct direction with no decay risks to report.\n\n---\n\n## Module Dependency Graph\n\n```mermaid\ngraph TD\n  subgraph Domain\n    PaymentPort\n    Checkout\n  end\n\n  subgraph Infrastructure\n    StripeAdapter\n  end\n\n  Checkout --> PaymentPort\n  StripeAdapter --> PaymentPort\n\n  classDef clean fill:#51cf66,stroke:#2b8a3e,color:#fff\n\n  class PaymentPort,Checkout,StripeAdapter clean\n```\n\n---\n\n## Findings\n\nNo findings. The Dependency Inversion Principle is applied correctly: `StripeAdapter` (a low-level infrastructure detail) implements the `PaymentPort` interface defined in the domain layer, and `Checkout` depends on the abstraction rather than the concrete Stripe implementation. The dependency arrow points from infrastructure inward to the domain — exactly the direction Clean Architecture prescribes. This is the textbook ports-and-adapters shape, not a DIP violation (Risk 5), and the thin adapter importing the domain interface is explicit boundary glue, which the \"What Not to Flag\" guard exempts.\n\n---\n\n## Summary\n\nThis code is structurally sound and needs no remedial action. The most valuable thing to preserve here is the inward dependency direction — keep concrete payment providers behind the `PaymentPort` interface and never let the domain import from `infra/`. Trend is healthy at a perfect score for this small, well-layered slice.",
+      "truth": {
+        "critical": 0,
+        "warning": 0,
+        "suggestion": 0,
+        "codes": [],
+        "healthScore": 100,
+        "hasIronLaw": false
+      }
+    },
+    {
+      "id": "a5",
+      "mode": "audit",
+      "isFP": true,
+      "label": "FP: clean layered",
+      "report": "# Brooks-Lint Review\n\n**Mode:** Architecture Audit\n**Scope:** Layered slice — `handlers/getUser.ts` → `usecases/FetchUser.ts` → `repos/UserRepo.ts` (interface)\n**Health Score:** 100/100\n\nClean unidirectional layering: each layer depends only on the one below through an interface, with no cycles and a properly inverted infrastructure boundary.\n\n---\n\n## Module Dependency Graph\n\n```mermaid\ngraph TD\n    subgraph Handlers\n        getUser\n    end\n\n    subgraph UseCases\n        FetchUser\n    end\n\n    subgraph Repos\n        UserRepo[\"UserRepo (interface)\"]\n    end\n\n    getUser --> FetchUser\n    FetchUser --> UserRepo\n\n    classDef clean fill:#51cf66,stroke:#2b8a3e,color:#fff\n\n    class getUser,FetchUser,UserRepo clean\n```\n\n---\n\n## Findings\n\nNo decay risks found.\n\n- **R5 Dependency Disorder:** Dependencies flow in one consistent direction (handler → usecase → repo). No cycles. The use case depends on `UserRepo` as an *interface*, so the high-level policy owns the abstraction and infrastructure plugs in below it — this satisfies DIP/SDP/ADP (Clean Architecture) rather than violating them. Fan-out is 1 per node.\n- **R6 Domain Model Distortion / Seams:** The repository interface is an explicit infrastructure seam (Feathers — Seam Model), so `FetchUser` is unit-testable with a test double without editing source. No anemic-model or boundary-crossing signal in the slice shown.\n- **R1–R4:** The handler is a single-expression composition (`uc.run(req.id)`); no cognitive overload, change-propagation hotspot, knowledge duplication, or accidental complexity in scope.\n\n---\n\n## Summary\n\nThis slice is a textbook clean-layered design — interface-segregated, acyclic, and dependency-inverted at the infrastructure boundary — so there is nothing to remedy. The only caveat is scope: this is a three-node sample, so the verdict covers conceptual integrity of the shown layering, not the full project's fan-in/fan-out or cross-context boundaries.",
+      "truth": {
+        "critical": 0,
+        "warning": 0,
+        "suggestion": 0,
+        "codes": [],
+        "healthScore": 100,
+        "hasIronLaw": false
+      }
+    },
+    {
+      "id": "d1",
+      "mode": "debt",
+      "isFP": false,
+      "label": "god class",
+      "report": "# Brooks-Lint Review\n\n**Mode:** Tech Debt Assessment\n**Scope:** `OrderService` class (single god class, ~2000 lines)\n**Health Score:** 40/100\n\nA single God class concentrates every business responsibility, every change, and all the knowledge in one person — this is the codebase's central debt and a velocity bottleneck.\n\n---\n\n## Findings\n\n### 🔴 Critical\n\n**Change Propagation — `OrderService` is a God class every feature must edit**\nSymptom: One class holds `addPayment`, `changeNotify`, `recalcInventory`, `applyTax`, `exportWarehouse` — payment, notification, inventory, tax, and warehouse concerns. The comment states \"every feature edits this file.\" It changes for at least five unrelated business reasons.\nSource: Refactoring — Divergent Change; Clean Architecture — Single Responsibility Principle\nConsequence: Every feature lands in the same 2000-line file, so unrelated changes collide, merge conflicts multiply, and a tax tweak can break warehouse export. Regression risk and blast radius grow with every commit.\nRemedy: Split by reason-to-change into focused collaborators — `PaymentService`, `NotificationService`, `InventoryService`, `TaxCalculator`, `WarehouseExporter` — and reduce `OrderService` to an orchestrator that delegates. Extract one responsibility at a time behind characterization tests.\n\n**Cognitive Overload — 2000-line class spanning five concerns**\nSymptom: A single 2000-line class mixes five distinct domains (payment, notification, inventory, tax, warehouse) at one level of abstraction.\nSource: A Philosophy of Software Design — Ch. 4: Modules Should Be Deep; Code Complete — Ch. 7: High-Quality Routines\nConsequence: No developer can hold the whole class in working memory, so changes are made by local pattern-matching rather than understanding — which is exactly how the next bug gets introduced and why only \"Bob\" can navigate it.\nRemedy: Decompose into deep, single-purpose modules with small interfaces. Each extracted service should hide its internal complexity behind a narrow API so callers reason about behavior, not 2000 lines of detail.\n\n**Dependency Disorder — single point of failure concentrated in one person (\"only Bob touches it\")**\nSymptom: The class is documented as code \"only Bob touches it.\" All knowledge of payment, tax, inventory, notification, and warehouse logic is fused into one untestable file owned by one developer.\nSource: The Mythical Man-Month — Ch. 4: Conceptual Integrity (truck-factor / knowledge concentration); Working Effectively with Legacy Code — code without seams or tests\nConsequence: Truck factor of one. When Bob is unavailable, the most central class in the system cannot be safely changed by anyone else, halting velocity across all five domains and making onboarding impossible.\nRemedy: Introduce seams and characterization tests around each responsibility before splitting, so a second developer can change one concern in isolation. Pair-extract each service with another engineer to spread the knowledge as the class is broken apart.\n\n---\n\n## Summary\n\nThe single highest-leverage action is to break `OrderService` apart by reason-to-change, starting with the most frequently edited concern, each extraction guarded by characterization tests. This God class is **accidental, systemic debt** (Pain 3 × Spread 3) that taxes every feature and concentrates fatal key-person risk in one developer. Until it is decomposed, velocity, regression safety, and team bus-factor will keep degrading with each commit.\n\n## Debt Summary\n| Risk | Findings | Avg Priority | Classification | Intent |\n|------|----------|-------------|----------------|--------|\n| Cognitive Overload      | 1 | 9.0 | Critical | accidental |\n| Change Propagation      | 1 | 9.0 | Critical | accidental |\n| Knowledge Duplication   | 0 | — | — | — |\n| Accidental Complexity   | 0 | — | — | — |\n| Dependency Disorder     | 1 | 9.0 | Critical | accidental |\n| Domain Model Distortion | 0 | — | — | — |\n\n**Recommended focus:** Change Propagation, Cognitive Overload, and Dependency Disorder all tie at priority 9 — they are three views of the same God class, so a single decomposition effort resolves all three.",
+      "truth": {
+        "critical": 3,
+        "warning": 0,
+        "suggestion": 0,
+        "codes": [
+          "R2",
+          "R1",
+          "R5"
+        ],
+        "healthScore": 40,
+        "hasIronLaw": true
+      }
+    },
+    {
+      "id": "d2",
+      "mode": "debt",
+      "isFP": false,
+      "label": "shotgun surgery",
+      "report": "# Brooks-Lint Review\n\n**Mode:** Tech Debt Assessment\n**Scope:** Currency-handling logic spread across 5 files (formatPrice.ts, taxCalc.ts, invoicePdf.ts, exportCsv.ts, emailReceipt.ts)\n**Health Score:** 80/100\n\nThe \"supported currencies\" decision is duplicated across five modules, making every currency addition a multi-file edit — a textbook Shotgun Surgery / Knowledge Duplication pattern.\n\n---\n\n## Findings\n\n### 🔴 Critical\n\n**Change Propagation — Adding a currency requires editing five unrelated files**\nSymptom: Per the comment, adding a currency means editing formatPrice.ts, taxCalc.ts, invoicePdf.ts, exportCsv.ts, and emailReceipt.ts — one logical change (a new supported currency) forces coordinated edits across 5 modules.\nSource: Refactoring (Fowler) — Shotgun Surgery\nConsequence: Every currency addition is a 5-file change; miss one file and the system silently behaves inconsistently (e.g., a price formats but tax never computes, or a receipt emails an unsupported value). Regression risk and onboarding cost scale with each new currency, and velocity drops because the change radius is fixed at five.\nRemedy: Extract the \"supported currencies\" decision into a single owning module (e.g., a `currencies.ts` registry / value object holding code, symbol, decimal places, tax behavior). Have all five consumers depend on that one source of truth so adding a currency is a one-place change.\n\n### 🟡 Warning\n\n**Knowledge Duplication — The same \"supported currencies\" decision is encoded in 5 places**\nSymptom: The same domain decision (\"which currencies are supported\") is expressed independently in five files rather than defined once and referenced.\nSource: The Pragmatic Programmer (Hunt & Thomas) — DRY: Don't Repeat Yourself\nConsequence: The five copies drift apart silently — one file gets a new currency and another does not — producing inconsistent behavior that no compiler catches and that surfaces only at runtime in production paths (PDF, CSV, email).\nRemedy: Treat the currency list as a single authoritative decision. Centralize it (registry or `Money`/`Currency` value object) and delete the per-file copies so there is exactly one place the decision lives.\n\n**Domain Model Distortion — Currency behavior leaks across modules instead of living in a Currency concept**\nSymptom: Formatting, tax, PDF, CSV, and email each carry their own slice of currency knowledge; there is no `Currency` / `Money` domain type owning symbol, precision, and tax rules.\nSource: Domain-Driven Design (Evans) — Value Object / Information Leakage (Ousterhout, A Philosophy of Software Design — Ch. 5)\nConsequence: A core domain concept is scattered as primitive knowledge across service-level files (Primitive Obsession over `Money`), so the model does not faithfully represent \"currency.\" Each module must re-know currency rules, and the design decision leaks into modules that should only consume it.\nRemedy: Introduce a `Currency` (and likely `Money`) value object that encapsulates symbol, decimal places, and tax/format behavior. Let formatPrice/taxCalc/invoicePdf/exportCsv/emailReceipt ask the object instead of re-deciding per file.\n\n---\n\n## Summary\n\nThe single highest-leverage fix is to extract \"supported currencies\" into one owning module and route all five consumers through it — this collapses the 5-file change radius to one and eliminates the drift risk in one move. All three findings are facets of the same root cause (a domain decision with no single home), so one extraction resolves the Critical, the duplication Warning, and the model-distortion Warning together. Trend is unmeasurable from a single snapshot, but the pattern is accidental structural erosion, not an intentional tradeoff, so it warrants action before the next currency is added.\n\n## Debt Summary\n| Risk | Findings | Avg Priority | Classification | Intent |\n|------|----------|-------------|----------------|--------|\n| Cognitive Overload      | 0 | – | – | – |\n| Change Propagation      | 1 | 9 | Critical | accidental |\n| Knowledge Duplication   | 1 | 6 | Scheduled | accidental |\n| Accidental Complexity   | 0 | – | – | – |\n| Dependency Disorder     | 0 | – | – | – |\n| Domain Model Distortion | 1 | 6 | Scheduled | accidental |\n\n**Recommended focus:** Change Propagation (Shotgun Surgery) — collapsing the 5-file currency edit into a single owning module also resolves the linked Knowledge Duplication and Domain Model Distortion findings.",
+      "truth": {
+        "critical": 1,
+        "warning": 2,
+        "suggestion": 0,
+        "codes": [
+          "R2",
+          "R3",
+          "R6"
+        ],
+        "healthScore": 80,
+        "hasIronLaw": true
+      }
+    },
+    {
+      "id": "d3",
+      "mode": "debt",
+      "isFP": false,
+      "label": "dead flags + stale TODO",
+      "report": "# Brooks-Lint Review\n\n**Mode:** Tech Debt Assessment\n**Scope:** Provided snippet (4 lines: two dead feature flags + two stale TODO/FIXME comments)\n**Health Score:** 82/100\n\nTwo dead conditional flags and two abandoned comment markers are accidental debt — low pain today, but they erode the codebase's truthfulness about its own intent.\n\n---\n\n## Findings\n\n### 🟡 Warning\n\n**Accidental Complexity — Dead feature flags left in place after rollout**\nSymptom: `if (FEATURE_NEW_CHECKOUT_V1) {}` is always true (shipped two years ago) and `if (LEGACY_MODE) {}` is always false (never removed). Both branches are dead conditionals that no longer make a runtime decision.\nSource: Fowler — Refactoring (Speculative Generality / Dead Code); McConnell — Code Complete, Ch. 5: Design in Construction (YAGNI)\nConsequence: Every reader must reason about a branch that can never change behavior, and the always-false `LEGACY_MODE` block silently rots — when someone eventually flips or deletes it, no one remembers what it gated. The flags also keep their config plumbing alive, widening surface area for no benefit.\nRemedy: Delete both conditionals. For `FEATURE_NEW_CHECKOUT_V1`, inline the always-true branch and remove the flag definition and its config. For `LEGACY_MODE`, delete the dead block and the flag entirely. Confirm no other call sites reference either flag before removal.\n\n### 🟢 Suggestion\n\n**Cognitive Overload — Stale TODO/FIXME markers with no owner or ticket**\nSymptom: `// TODO(2019): remove after migration` references a migration presumed long complete, and `// FIXME: temporary hack -- still here` is a self-admitted temporary hack that outlived its temporariness. Neither links to a ticket or owner.\nSource: McConnell — Code Complete, Ch. 32: Self-Documenting Code (comment discipline); Hunt & Thomas — The Pragmatic Programmer (Good-Enough Software / broken-window decay)\nConsequence: Comments that lie about urgency train readers to ignore *all* TODO/FIXME markers, so genuinely actionable ones lose signal. A 2019 \"remove after migration\" note now misleads anyone deciding whether the surrounding code is still load-bearing.\nRemedy: For each marker, decide: if the migration/hack is resolved, delete the comment (and any code it guards); if real work remains, replace it with a tracked ticket reference (e.g. `// TODO(JIRA-123): ...`) and an owner. Do not leave date-stamped notes with no follow-up path.\n\n---\n\n## Debt Summary\n\n| Risk | Findings | Avg Priority | Classification | Intent |\n|------|----------|-------------|----------------|--------|\n| Cognitive Overload      | 1 | 2.0 | Monitored | accidental |\n| Change Propagation      | 0 | — | — | — |\n| Knowledge Duplication   | 0 | — | — | — |\n| Accidental Complexity   | 1 | 4.0 | Scheduled | accidental |\n| Dependency Disorder     | 0 | — | — | — |\n| Domain Model Distortion | 0 | — | — | — |\n\n**Recommended focus:** Accidental Complexity (dead flags) — highest priority and the change most likely to mislead a future reader.\n\n---\n\n## Summary\n\nThe most important action is deleting the two dead feature-flag conditionals: `FEATURE_NEW_CHECKOUT_V1` (always true) and `LEGACY_MODE` (always false), along with their config plumbing. The stale `TODO(2019)` and \"temporary hack\" `FIXME` are lower-pain but corrosive — resolve or re-ticket them so the team's comment markers stay trustworthy. All four items are accidental debt with no visible payback plan; none is structurally entangled, so this is a quick, low-risk cleanup.",
+      "truth": {
+        "critical": 0,
+        "warning": 1,
+        "suggestion": 1,
+        "codes": [
+          "R4",
+          "R1"
+        ],
+        "healthScore": 82,
+        "hasIronLaw": true
+      }
+    },
+    {
+      "id": "d4",
+      "mode": "debt",
+      "isFP": true,
+      "label": "FP: cohesive aggregate root",
+      "report": "# Brooks-Lint Review\n\n**Mode:** Tech Debt Assessment\n**Scope:** `ShoppingCart` class (single snippet)\n**Health Score:** 100/100\n\nA cohesive aggregate root that owns its line items and enforces its own invariant — no decay debt found.\n\n---\n\n## Findings\n\nNo decay-risk findings. The `ShoppingCart` correctly models an aggregate root (Evans — DDD: Aggregate Roots): it privately owns its `lines`, exposes intent-revealing behavior (`addItem`, `removeItem`, `total`), and guards its own invariant via `assertLimit()`. The internal `this.lines.reduce(...)` and `l.subtotal()` access is direct manipulation *inside* the aggregate boundary, which the source guidance explicitly tells us not to flag — \"Direct object access inside a cohesive aggregate is not always a Demeter problem\" (Hunt & Thomas — The Pragmatic Programmer) and the R5 \"What Not to Flag\" guard. The class is not anemic: it carries real behavior, not just getters/setters, so R6 does not apply. The magic number `100` in `assertLimit` is a single, named, self-documenting guard (throws `\"full\"`) and stays below the R1 Suggestion threshold for isolated constants.\n\n---\n\n## Debt Summary\n\n| Risk | Findings | Avg Priority | Classification | Intent |\n|------|----------|-------------|----------------|--------|\n| Cognitive Overload      | 0 | — | — | — |\n| Change Propagation      | 0 | — | — | — |\n| Knowledge Duplication   | 0 | — | — | — |\n| Accidental Complexity   | 0 | — | — | — |\n| Dependency Disorder     | 0 | — | — | — |\n| Domain Model Distortion | 0 | — | — | — |\n\n**Recommended focus:** None — the aggregate is cohesive and self-validating. No remediation warranted.\n\n---\n\n## Summary\n\nThe `ShoppingCart` is a healthy, cohesive aggregate root: it encapsulates its line items, exposes behavior rather than raw data, and enforces its own size invariant internally. No decay risks were triggered; the in-boundary collection access and the single named guard constant are explicitly covered by the \"What Not to Flag\" guards, not debt. No action needed.",
+      "truth": {
+        "critical": 0,
+        "warning": 0,
+        "suggestion": 0,
+        "codes": [],
+        "healthScore": 100,
+        "hasIronLaw": false
+      }
+    },
+    {
+      "id": "d5",
+      "mode": "debt",
+      "isFP": true,
+      "label": "FP: thin facade",
+      "report": "# Brooks-Lint Review\n\n**Mode:** Tech Debt Assessment\n**Scope:** PaymentFacade.ts (1 class, 4 lines)\n**Health Score:** 100/100\n\nA thin, well-named facade that delegates to its collaborators without adding hidden state or logic — no decay debt found.\n\n---\n\n## Findings\n\nNo decay-risk findings. This class is a legitimate facade, not a Middle Man or Lazy Class:\n\n- It collapses two collaborators (`Stripe` charge + `Ledger` record) behind one cohesive `pay()` operation, so the interface is simpler than the sum of what it hides — a deep-enough module boundary, not a pass-through wrapper (Ousterhout — *A Philosophy of Software Design*, Ch. 4). The \"Do not over-flag\" guard for R4 explicitly permits \"a small wrapper… when it meaningfully absorbs volatility,\" and absorbing the Stripe/Ledger wiring is exactly that.\n- It is not a pure Middle Man (R4): a Middle Man delegates each call one-to-one to a single backing object; this facade composes two distinct collaborators and sequences them (charge → record → return), which is added behavior.\n- Dependencies are injected via the constructor and flow inward toward abstractions the caller supplies, so there is no Dependency Disorder (R5) — this is composition-root-style wiring, explicitly allowed by the R5 guard.\n\nThe only non-debt observations (intentionally NOT flagged): the untyped parameter `o` and single-letter locals `r`/`o` are TypeScript-typing and style nits, not R1 Cognitive Overload — the method is linear, single-purpose, and one line long, which the R1 guard (\"linear code with clear names and guard clauses is not automatically high cognitive load\") tells us not to flag as decay.\n\n---\n\n## Summary\nThe facade is doing precisely what a facade should: delegating without hoarding logic, with constructor-injected dependencies flowing in the right direction. No accidental-complexity or dependency debt is present, so there is nothing to prioritize or schedule. If you want a polish pass, add an explicit type for the `o` parameter — but that is a typing improvement, not technical debt.",
+      "truth": {
+        "critical": 0,
+        "warning": 0,
+        "suggestion": 0,
+        "codes": [],
+        "healthScore": 100,
+        "hasIronLaw": false
+      }
+    },
+    {
+      "id": "t1",
+      "mode": "test",
+      "isFP": false,
+      "label": "no real assertion",
+      "report": "# Brooks-Lint Review\n\n**Mode:** Test Quality Review\n**Scope:** Single test case (`checkout works`)\n**Health Score:** 80/100\n\nA test that exercises the checkout path but asserts nothing about its behavior, giving false confidence that checkout is verified.\n\n---\n\n## Findings\n\n### 🔴 Critical\n\n**Coverage Illusion — Assertion-free test verifies nothing**\nSymptom: The test constructs `Checkout`, calls `svc.run(cart)`, then asserts only `expect(svc).toBeDefined()` — which is true for any object that was constructed, regardless of what `run()` did. No return value, side effect, or state change of `run(cart)` is checked.\nSource: Osherove — The Art of Unit Testing — Test completeness principle (a test must verify behavior, not mere execution)\nConsequence: `run()` can be completely broken — throw silently-swallowed errors, charge the wrong amount, never charge at all — and this test still passes. Coverage tooling will report the checkout path as \"covered,\" so the team stops looking. This is a green test that protects nothing.\nRemedy: Assert on the observable outcome of `run(cart)`: the order/receipt it returns, the payment call it makes to `pay`, and/or the state it writes to `db`. For example, assert the returned order total equals the cart total, and verify `pay` was invoked with the expected amount, so a behavioral regression actually fails the test.\n\n### 🟡 Warning\n\n**Test Obscurity — Name and body do not express the verified behavior**\nSymptom: The test is named `\"checkout works\"` and its body reveals no scenario or expected outcome — what \"works\" means (charges the cart, returns a receipt, handles an empty cart) is undefined, and the lone assertion does not pin it down.\nSource: Osherove — The Art of Unit Testing — method_scenario_expected naming convention\nConsequence: A future maintainer cannot tell what this test is supposed to guarantee, so they cannot trust a pass or diagnose a failure; the test becomes a candidate for deletion rather than a safety net.\nRemedy: Rename to state subject + scenario + expected outcome (e.g. `checkout_withValidCart_chargesTotalAndReturnsReceipt`) and make the assertions match that claim, so the name and the verification tell the same story.\n\n---\n\n## Summary\n\nThe single most important action is to replace `expect(svc).toBeDefined()` with assertions on what `run(cart)` actually produces — the current test is a coverage illusion that will pass even if checkout is entirely broken. Once the behavior is asserted, rename the test so its intent is self-evident. As written, this test adds risk, not protection: it turns the checkout path green without verifying a single behavior.",
+      "truth": {
+        "critical": 1,
+        "warning": 1,
+        "suggestion": 0,
+        "codes": [
+          "T5",
+          "T1"
+        ],
+        "healthScore": 80,
+        "hasIronLaw": true
+      }
+    },
+    {
+      "id": "t2",
+      "mode": "test",
+      "isFP": false,
+      "label": "over-mocking",
+      "report": "# Brooks-Lint Review\n\n**Mode:** Test Quality Review\n**Scope:** single test (`save`)\n**Health Score:** 81/100\n\nA single behavior-free test verifies the mock instead of the production code, leaving the `save` path effectively untested.\n\n---\n\nTest Suite Map\n```\nUnit tests:        1 file, 1 test\nIntegration tests: 0 files, 0 tests\nE2E tests:         0 files, 0 tests\nRatio:             Unit 100%  :  Integration 0%  :  E2E 0%\nCoverage areas:    Repo.save (asserted on mock only) vs DB/Cache/Bus/Log/Clock real behavior\n```\n\n## Findings\n\n### 🟡 Warning\n\n**Mock Abuse — Test asserts the mock was called, not that anything happened**\nSymptom: The sole assertion is `expect(db.save.called).toBe(true)` (the inline comment even says \"tests the mock, not behavior\"). It confirms the collaborator was invoked but never checks that `Repo.save` returned, persisted, or produced any observable result.\nSource: xUnit Test Patterns — Behavior Verification (p.544); The Art of Unit Testing — Mock usage guidelines\nConsequence: The test passes even if `Repo.save` is fully broken — wrong return value, no cache write, no event published — as long as `db.save` is reached. It provides confidence without protection, the worst kind of coverage.\nRemedy: Assert on observable behavior: the return value of `save(x)`, the state the repo exposes afterward, or the command/event it emits. Keep `db` mocked only if it is nondeterministic, and verify the outcome rather than the call.\n\n**Mock Abuse — Five mocks for one save**\nSymptom: A single unit test stands up five mocks (`DB`, `Cache`, `Bus`, `Log`, `Clock`); mock-wiring is the entire test body while only one line of behavior (`save(x)`) runs.\nSource: The Art of Unit Testing — Mock usage guidelines (\"a single unit test uses more than 3 mocks\")\nConsequence: Mock setup dominates the test, signaling that `Repo` has too many collaborators to test in isolation; every constructor change forces this test (and others like it) to be rewired, raising maintenance cost and obscuring intent.\nRemedy: Replace stable, deterministic collaborators (`Log`, `Clock`) with real or trivial fakes; mock only the genuinely awkward dependency (`DB`). If five collaborators are truly required, that is a design signal to narrow `Repo`'s responsibilities.\n\n### 🟢 Suggestion\n\n**Test Obscurity — Name does not describe scenario or expected outcome**\nSymptom: The test is named `\"save\"` — it states the method under test but neither the scenario nor the expected result, and the single assertion carries no message string.\nSource: The Art of Unit Testing — method_scenario_expected naming convention; xUnit Test Patterns — Assertion Roulette (p.224)\nConsequence: When this test fails, the report reads only \"save failed,\" giving a maintainer no clue what condition or expectation broke without opening the body.\nRemedy: Rename to express subject + scenario + outcome, e.g. `save_validRecord_persistsAndReturnsTrue`, and assert on the actual outcome so the failure tells its own story.\n\n---\n\n## Summary\n\nThe most important action is to make the test verify behavior rather than wiring: assert on `save`'s return value or observable side effects instead of `db.save.called`. The five-mock setup and the bare `\"save\"` name are symptoms of the same root cause — `Repo` has too many collaborators and the test was written around them rather than around an outcome. Fix the assertion first; the mock count and naming improve naturally once the test targets real behavior.",
+      "truth": {
+        "critical": 0,
+        "warning": 2,
+        "suggestion": 1,
+        "codes": [
+          "T4",
+          "T4",
+          "T1"
+        ],
+        "healthScore": 81,
+        "hasIronLaw": true
+      }
+    },
+    {
+      "id": "t3",
+      "mode": "test",
+      "isFP": false,
+      "label": "brittle exact-string snapshot",
+      "report": "# Brooks-Lint Review\n\n**Mode:** Test Quality Review\n**Scope:** single test snapshot (`renders` test, 1 assertion)\n**Health Score:** 80/100\n\nA single exact-HTML snapshot assertion couples the test to volatile generated output, making it brittle and obscure.\n\n---\n\nTest Suite Map\n```\nUnit tests:        1 file, ~1 test\nIntegration tests: 0 files\nE2E tests:         0 files\nRatio:             Unit 100%  :  Integration 0%  :  E2E 0%\nCoverage areas:    render(user) output  vs  [nothing else visible]\n```\n\n---\n\n## Findings\n\n### 🟡 Warning\n\n**Test Brittleness — Exact HTML string couples test to generated, volatile output**\nSymptom: `expect(render(user)).toBe(\"<div class=\\\"u-1a2b\\\" data-ts=\\\"1699999999\\\">Bob</div>\")` asserts the entire rendered HTML byte-for-byte, including a generated class hash (`u-1a2b`) and a wall-clock timestamp (`data-ts=\"1699999999\"`).\nSource: xUnit Test Patterns — Erratic Test / Fragile Test (over-specified assertion); reinforced by The Art of Unit Testing — test against observable behavior, not implementation detail.\nConsequence: The hash changes whenever the class-name generation scheme changes (a refactor with no behavior change), and the timestamp changes on every run — so this test is both brittle (breaks on harmless markup/styling refactors) and erratic (fails non-deterministically as `data-ts` drifts). Developers learn to blindly re-snapshot, which defeats the test's purpose.\nRemedy: Assert only the stable, behavior-bearing parts. Parse the output and assert the rendered text (`Bob`) and the meaningful element/attribute contract; exclude or normalize the generated hash and timestamp (e.g. inject a fixed clock / strip `data-ts`, match the class with a pattern rather than the literal hash). Reserve full-string snapshots for genuinely stable output.\n\n### 🟢 Suggestion\n\n**Test Obscurity — Magic literals with no explanation of what is asserted**\nSymptom: The test name is the bare `\"renders\"`, and the assertion embeds opaque magic values (`u-1a2b`, `1699999999`) whose origin and significance are explained only by a trailing comment rather than by the test structure.\nSource: The Art of Unit Testing — test naming (subject_scenario_expected); xUnit Test Patterns — Mystery Guest (the `1699999999` timestamp comes from outside the visible test body).\nConsequence: On failure, a maintainer cannot tell which behavior broke or whether the hash/timestamp drift is expected, so triage requires reverse-engineering the rendering and class-generation code.\nRemedy: Rename to express the scenario and expected outcome (e.g. `renders user's name inside a div`), and replace embedded magic values with named, derived expectations so intent is visible without the comment.\n\n---\n\n## Summary\nThe most important action is to stop asserting the exact HTML string: pin the timestamp via an injected clock (removing the non-determinism) and assert only the stable text and structural contract instead of the generated class hash. As written this is a one-line test that will fail on every run from the drifting timestamp and on any styling refactor from the hash, so it actively discourages refactoring rather than protecting behavior.",
+      "truth": {
+        "critical": 0,
+        "warning": 1,
+        "suggestion": 1,
+        "codes": [
+          "T2",
+          "T1"
+        ],
+        "healthScore": 80,
+        "hasIronLaw": true
+      }
+    },
+    {
+      "id": "t4",
+      "mode": "test",
+      "isFP": false,
+      "label": "duplicated setup",
+      "report": "# Brooks-Lint Review\n\n**Mode:** Test Quality Review\n**Scope:** 3 inline test cases (test \"a\", \"b\", \"c\") for the User domain object\n\nA small, healthy-looking trio of tests held back by copy-pasted setup that will cost you on every future User-shape change.\n\n---\n\nTest Suite Map\n```\nUnit tests:        1 file, 3 tests\nIntegration tests: 0 files, 0 tests\nE2E tests:         0 files, 0 tests\nRatio:             Unit 100%  :  Integration 0%  :  E2E 0%\nCoverage areas:    User.activate / User construction (covered)\n                   sad paths, invalid email/name, error branches (not covered)\n```\n\n---\n\n## Findings\n\n### 🟡 Warning\n\n**Test Duplication — Identical four-line User setup copy-pasted across all three tests**\nSymptom: Every test repeats the exact same arrange block — `new User()`, then `u.name=\"x\"`, `u.email=\"x@y.z\"`, `u.activate()` — with only the final `expect` differing. The construction-and-activation sequence is duplicated verbatim three times.\nSource: xUnit Test Patterns — Test Code Duplication (p.213); The Pragmatic Programmer — DRY\nConsequence: When the User construction contract changes (a required field is added, `activate()` gains a precondition, the setter API shifts), every one of these tests must be edited in lockstep. The duplication scales linearly with the number of User tests, so the maintenance tax grows with the suite.\nRemedy: Extract the shared arrange into a `beforeEach` or a `makeActivatedUser()` factory/Object Mother that returns a constructed, activated User. Each test then keeps only its distinct assertion, making the per-test intent the only thing that varies.\n\n### 🟢 Suggestion\n\n**Test Obscurity — Test names carry no scenario or expected outcome**\nSymptom: Tests are named `\"a\"`, `\"b\"`, `\"c\"`. None communicates subject, scenario, or expected result; you must read the body (and `u.ok`/`u.age`/`u.role`) to learn that each verifies a default value after activation.\nSource: The Art of Unit Testing — method_scenario_expected naming convention\nConsequence: On failure, the runner prints `a` / `b` / `c`, giving no clue which behavior broke; reviewers and future maintainers must open each body to understand intent.\nRemedy: Rename to express the asserted behavior, e.g. `\"activate() sets ok=true\"`, `\"new User defaults age to 0\"`, `\"new User defaults role to 'user'\"`.\n\n### 🟢 Suggestion\n\n**Coverage Illusion — Happy-path-only assertions on activation**\nSymptom: All three tests exercise the same successful construct-then-activate path and assert default values. There are no sad paths — no invalid/empty email or name, no activation precondition failure, no error branch.\nSource: The Art of Unit Testing — Test completeness principle\nConsequence: The suite signals \"User is tested\" while every failure mode (rejected email, missing name, double-activation) is unverified; regressions in validation or error handling reach production unnoticed.\nRemedy: Add at least one sad-path test per validated input (e.g. `activate()` with an invalid email throws/rejects) so the suite protects the failures that actually matter, not just the defaults.\n\n---\n\n## Summary\n\nThe single highest-leverage fix is extracting the duplicated User setup into a shared factory or `beforeEach` — it removes the change-amplification risk that grows with every test you add. The two Suggestions (opaque names, happy-path-only coverage) are cheap to address now and will compound in value as the User test set grows.\n\n**Health Score:** 93/100",
+      "truth": {
+        "critical": 0,
+        "warning": 1,
+        "suggestion": 2,
+        "codes": [
+          "T3",
+          "T1",
+          "T5"
+        ],
+        "healthScore": 93,
+        "hasIronLaw": true
+      }
+    },
+    {
+      "id": "t5",
+      "mode": "test",
+      "isFP": false,
+      "label": "coverage illusion (getters)",
+      "report": "This is a Test Quality Review (Mode 4). The code under review is a test demonstrating the \"coverage illusion\" via getters. Let me apply the test-mode instructions.\n\n# Brooks-Lint Review\n\n**Mode:** Test Quality Review\n**Scope:** single test (`test(\"model\")` — `User` getter assertions)\n**Health Score:** 80/100\n\nA test that exercises trivial getters and claims line coverage while leaving every business rule unverified — a textbook Coverage Illusion.\n\n---\n\nTest Suite Map\n```\nUnit tests:        1 file, 1 test\nIntegration tests: 0 files, 0 tests\nE2E tests:         0 files, 0 tests\nRatio:             Unit 100%  :  Integration 0%  :  E2E 0%\nCoverage areas:    User.getName / User.getAge (getters) tested\n                   User.canBorrow and all business rules: NOT tested\n```\n\n---\n\n## Findings\n\n### 🟡 Warning\n\n**Coverage Illusion — Getters tested, business rules unverified (T5)**\nSymptom: The test constructs `new User(\"Bob\", 30)` and asserts only `getName()` and `getAge()` — pure accessors that echo back constructor arguments. The test's own comment admits \"100% line coverage but no business rule (e.g. canBorrow) is tested.\" No sad paths, boundary inputs (negative/zero age, empty name), or domain behavior are exercised.\nSource: How Google Tests Software — Change coverage vs line coverage (Ch. 11); Osherove — The Art of Unit Testing — Test completeness principle\nConsequence: The coverage number reports \"User is covered\" while the logic that actually carries risk (`canBorrow` and any other rule) can break or regress silently. Teams stop looking because the percentage says \"covered,\" so real defects reach production behind a green bar.\nRemedy: Add tests that assert the domain rules, not the accessors. Cover `canBorrow` across its decision boundaries (e.g. minimum borrowing age, eligibility edges) plus invalid-construction cases (negative age, empty name). Treat getter-only assertions as non-coverage and exclude trivial accessors from the coverage signal the team trusts.\n\n### 🟢 Suggestion\n\n**Test Obscurity — Non-descriptive test name (T1)**\nSymptom: The test is named `\"model\"`, which conveys neither the subject, the scenario, nor the expected outcome. A reader must open the body to learn it concerns the `User` accessors.\nSource: Osherove — The Art of Unit Testing — method_scenario_expected naming convention\nConsequence: When this test fails in CI, the name gives no clue what behavior broke, slowing diagnosis and eroding trust in the suite.\nRemedy: Rename to state subject + scenario + expected outcome, e.g. `User_givenNameAndAge_exposesThemViaGetters` — and, once business-rule tests are added, name each for the rule it verifies (`User_under18_canBorrowReturnsFalse`).\n\n---\n\n## Summary\nThe single highest-leverage action is to test `canBorrow` and the other business rules across their decision boundaries — that is where real risk lives, and it is exactly what the current \"100% coverage\" hides. This suite is a one-test coverage-illusion sample: the line number is green, but verification is effectively zero until domain behavior and invalid inputs are asserted.",
+      "truth": {
+        "critical": 0,
+        "warning": 1,
+        "suggestion": 1,
+        "codes": [
+          "T5",
+          "T1"
+        ],
+        "healthScore": 80,
+        "hasIronLaw": true
+      }
+    },
+    {
+      "id": "t6",
+      "mode": "test",
+      "isFP": true,
+      "label": "FP: clear behavior test",
+      "report": "# Brooks-Lint Review\n\n**Mode:** Test Quality Review\n**Scope:** single test case (`rejects transfer over balance`)\n**Health Score:** 100/100\n\nA clear, behavior-focused test with a descriptive name and meaningful assertions — no test decay risks found.\n\n---\n\nTest Suite Map\n```\nUnit tests:        1 file, 1 test\nIntegration tests: 0 files, 0 tests\nE2E tests:         0 files, 0 tests\nRatio:             Unit 100%  :  Integration 0%  :  E2E 0%\nCoverage areas:    Account.withdraw (over-balance rejection) tested\n```\n\n## Findings\n\nNo decay risks detected. The test demonstrates good practices on every dimension scanned:\n\n- **Test Obscurity (T1):** Name (`rejects transfer over balance`) communicates scenario and expected outcome; intent is readable without opening the body. No Mystery Guest — fixture is created inline (`new Account(100)`).\n- **Test Brittleness (T2):** Asserts observable behavior — the thrown error and the resulting balance — not internal state or implementation details.\n- **Test Duplication (T3):** Single, distinct scenario; no repeated setup or Lazy Test.\n- **Mock Abuse (T4):** No mocks; assertions verify real behavior, not wiring.\n- **Coverage Illusion (T5):** This is a sad-path / boundary test (over-balance withdrawal) and it asserts a side effect (`balance` unchanged) in addition to the thrown error — the opposite of a coverage illusion.\n- **Architecture Mismatch (T6):** Appropriately a fast unit test for domain logic.\n\n---\n\n## Summary\nThis test is well-constructed: a descriptive name, a meaningful boundary case (rejecting a withdrawal that exceeds balance), and assertions on both the thrown error and the unchanged balance state. No action required — this is the pattern to replicate across the suite.",
+      "truth": {
+        "critical": 0,
+        "warning": 0,
+        "suggestion": 0,
+        "codes": [],
+        "healthScore": 100,
+        "hasIronLaw": false
+      }
+    },
+    {
+      "id": "h1",
+      "mode": "health",
+      "isFP": false,
+      "label": "mixed small project",
+      "report": "I have read the operating instructions. The prompt is a single mixed small project with no diff, no config file, and no special focus. This is the Health Dashboard mode. I'll apply the Step 1 four-dimension scan, compute deterministic scores, and output using the Dashboard Report Template.\n\nNote: PR dimension requires a diff. The code is presented as the whole project (three files), not a diff, so PR is skipped and its 0.25 weight is redistributed across Architecture (0.40), Debt (0.33), Test (0.27).\n\n# Brooks-Lint Health Dashboard\n\n**Mode:** Health Dashboard\n**Scope:** mixed small project (`src/order.js`, `src/order.test.js`, `src/utils.js`)\n**Composite Score:** 49/100\n\nThe codebase is small but already showing the two classic decay signatures — one oversized do-everything function and a test that proves nothing — so structural and test quality drag the composite well below passing.\n\n| Dimension | Score | Top Finding |\n|-----------|-------|------------|\n| Code Quality | — | Skipped (no diff) |\n| Architecture | 80/100 | R5 — `order.js` is a single procedural blob with no seams |\n| Tech Debt | 50/100 | R1 — 200-line god function mixing parse/validate/price/save |\n| Test Quality | 8/100 | T5 — only test asserts truthiness; every failure path uncovered |\n\n## Module Dependency Graph\n\n```mermaid\ngraph TD\n    order[\"src/order.js<br/>(parse+validate+price+save)\"]\n    test[\"src/order.test.js\"]\n    utils[\"src/utils.js<br/>(6 unrelated helpers)\"]\n    test --> order\n    order -.->|\"likely, unconfirmed\"| utils\n\n    classDef domain fill:#cce5ff,stroke:#004085;\n    classDef test fill:#d4edda,stroke:#155724;\n    classDef util fill:#fff3cd,stroke:#856404;\n    class order domain;\n    class test test;\n    class utils util;\n```\n\n## Top Findings (max 5 across all dimensions)\n\n### 🔴 Critical\n\n**Coverage Illusion (T5) — One test asserts only truthiness**\nSymptom: `src/order.test.js` contains a single test that asserts only that the result is truthy. A 200-line function spanning parse → validate → price → save has exactly one assertion, and it would pass on any non-null return regardless of whether prices, validation, or persistence are correct.\nSource: The Art of Unit Testing — Test completeness principle; Working Effectively with Legacy Code — \"legacy code is code without tests\"\nConsequence: Pricing errors, validation gaps, and failed saves all ship green. The suite gives false confidence: it executes the code but verifies almost none of its behavior, so refactoring or bug fixes have no safety net.\nRemedy: Replace the truthiness assertion with behavior-specific tests — assert the computed price for known inputs, assert that invalid input is rejected, and assert the save side effect (or its absence on validation failure). Add at least one sad-path test per responsibility.\n\n**Cognitive Overload (R1) — 200-line god function mixes four responsibilities**\nSymptom: `src/order.js` is a single ~200-line function that performs parsing, validation, pricing, and saving — four distinct levels of abstraction interleaved in one body.\nSource: Refactoring — Long Method; Code Complete — Ch. 7: High-Quality Routines\nConsequence: No reader can hold all four concerns in working memory at once; bugs hide between phases, and the function is too large to test in isolation, which is exactly why its only test settles for a truthiness check.\nRemedy: Extract `parseOrder`, `validateOrder`, `priceOrder`, and `saveOrder` as separate named functions, leaving `order.js` as a thin orchestrator. Each extracted function becomes independently testable.\n\n### 🟡 Warning\n\n**Change Propagation (R2) — Four reasons to change live in one function**\nSymptom: The single `order.js` function changes for parsing-format changes, validation-rule changes, pricing-rule changes, AND persistence changes — four unrelated business reasons converging on one unit (Divergent Change).\nSource: Refactoring — Divergent Change; Clean Architecture — Single Responsibility Principle\nConsequence: Every edit, regardless of which concern it targets, risks the other three; the blast radius of a pricing tweak includes parsing and save logic, so the whole function must be re-reviewed and re-tested on each change.\nRemedy: Split along the four axes of change so each responsibility has one home, decoupling pricing edits from parsing and persistence.\n\n**Accidental Complexity / Low Cohesion (R4) — `utils.js` is a grab-bag of 6 unrelated helpers**\nSymptom: `src/utils.js` collects 6 unrelated helper functions in one module with no shared theme.\nSource: Refactoring — Lazy Class / poorly-defined module; A Philosophy of Software Design — Ch. 4 (shallow, unfocused modules)\nConsequence: A catch-all `utils` module attracts more unrelated code over time, hides where logic belongs, and forces readers to scan the whole file to find one helper. It becomes a magnet for future duplication and dependency tangles.\nRemedy: Relocate each helper next to the code it serves, or group them into cohesively-named modules (e.g. `money.js`, `dates.js`). Delete `utils.js` once emptied.\n\n## Recommendation\n\nFix Test Quality first — it is the lowest-scoring dimension by a wide margin, and the single truthiness assertion means you currently have no behavioral safety net for the riskiest code in the project. Before refactoring the god function, write characterization tests that pin down its current parse/validate/price/save behavior; then extract the four responsibilities (R1/R2) with the tests guarding each step. Run the full `brooks-test` skill on the suite for a deeper breakdown of the coverage and assertion gaps.",
+      "truth": {
+        "critical": 2,
+        "warning": 2,
+        "suggestion": 0,
+        "codes": [
+          "T5",
+          "R1",
+          "R2",
+          "R4"
+        ],
+        "healthScore": 49,
+        "hasIronLaw": true
+      }
+    },
+    {
+      "id": "h2",
+      "mode": "health",
+      "isFP": true,
+      "label": "FP: clean small project",
+      "report": "I have the full operating instructions. This is a Health Dashboard mode review of a clean, small project (FP test case). I'll apply the Health Dashboard guide: lightweight scan across four dimensions, no diff exists (so PR dimension is skipped, weights redistributed), and each dimension with no findings scores 100.\n\n# Brooks-Lint Health Dashboard\n\n**Mode:** Health Dashboard\n**Scope:** small TypeScript project (`src/money.ts`, `src/money.test.ts`, `src/index.ts`)\n**Composite Score:** 100/100\n\nA clean, focused Money value-object project — small methods, behavior-covering tests including negative and currency-mismatch paths, and a thin composition root; no decay risks found.\n\n| Dimension | Score | Top Finding |\n|-----------|-------|------------|\n| Code Quality | N/A | Skipped — no diff |\n| Architecture | 100/100 | Clean |\n| Tech Debt | 100/100 | Clean |\n| Test Quality | 100/100 | Clean |\n\n## Module Dependency Graph\n\n```mermaid\ngraph TD\n    index[src/index.ts<br/>composition root] --> money[src/money.ts<br/>Money value object]\n    moneytest[src/money.test.ts<br/>tests] --> money\n```\n\nDependencies flow inward toward the `Money` domain type; the composition root sits at the top and the value object has no outward dependencies. No cycles, no upward flows, fan-out well under threshold.\n\n## Top Findings (max 5 across all dimensions)\n\nNo findings. Each scanned dimension is clean:\n\n- **Architecture (R5):** No circular dependencies, no domain-on-infrastructure imports, fan-out is 1. Dependencies point inward toward the domain.\n- **Tech Debt (R1–R6):** `Money` is an immutable value object with small, focused methods and behavior — no anemic model (R6), no primitive obsession around money (R1/R6), no speculative generality (R4), no duplicated decisions (R3). Consistent with Evans (Value Object) and Ousterhout (deep, simple modules).\n- **Test Quality (T1–T2):** Tests cover add/subtract/compare plus the sad paths (negative values, currency mismatch). Scenario names imply behavior, error paths are exercised — no Test Obscurity (T1) or Test Brittleness (T2) observed.\n\n## Recommendation\n\nNothing to fix — this codebase is in good shape across all evaluated dimensions, with a Money value object that faithfully models the domain and a test suite that exercises the boundary cases that matter (negatives, currency mismatch). As the project grows, keep the inward dependency direction and continue pairing each new method with its sad-path test; no focused individual skill run is warranted at this time.",
+      "truth": {
+        "critical": 0,
+        "warning": 0,
+        "suggestion": 0,
+        "codes": [],
+        "healthScore": 100,
+        "hasIronLaw": false
+      }
+    },
+    {
+      "id": "w1",
+      "mode": "sweep",
+      "isFP": false,
+      "label": "dup logic + obscure test",
+      "report": "# Brooks-Lint — Full Sweep Report\nMode: Full Sweep | Scope: cart.js, checkout.js, ship.test.js (3 files)\n\nThis report is read-only: the task requested a review of pasted code, so no files were edited and no project test command was run.\n\n---\n\n## Dimension Summary\n| Dimension | Scanned | Safe Applied | Extended Applied | Reverted | Residual |\n|-----------|---------|--------------|------------------|----------|----------|\n| Review (R1–R6) | 2 | 0 | 0 | 0 | 2 |\n| Test (T1–T6)   | 1 | 0 | 0 | 0 | 2 |\n| Debt           | 2 | 0 | 0 | 0 | 1 |\n| Audit          | 2 | 0 | 0 | 0 | 0 |\n\n---\n\n## Iteration History\nRound 1: read-only review (pasted snippet, no edits applied) — 4 distinct findings\nStopped at: no edits possible — all findings carried to Residual for human review\n\n---\n\n## Findings\n\n### 🔴 Critical\n\n**Knowledge Duplication (R3) — Shipping-cost rule copy-pasted across cart and checkout**\nSymptom: `cartShip(t)` in cart.js and `coShip(total)` in checkout.js are byte-for-byte identical logic — `total > 5000 ? 0 : 499` — with the trailing `// copy` comment confirming the duplication is deliberate, not coincidental.\nSource: The Pragmatic Programmer — DRY: Don't Repeat Yourself / Fowler — Refactoring — Duplicate Code\nConsequence: The free-shipping threshold (5000) and flat rate (499) are one business decision living in two files. When finance changes the threshold or the rate, one copy will be updated and the other will silently drift, producing inconsistent shipping charges between cart and checkout — a revenue/trust bug that no compiler will catch.\nRemedy: Extract a single `shippingFee(total)` into one shared module (e.g. `ship.js`) and have both cart and checkout import it. Delete `cartShip` and `coShip`. This is a cross-file change touching exported symbols both files depend on, so it is recorded as Residual rather than auto-applied.\n\n### 🟡 Warning\n\n**Cognitive Overload (R1) — Magic numbers encode an unnamed business rule**\nSymptom: The literals `5000` (free-shipping threshold) and `499` (flat shipping fee) appear bare in both functions with no named constant or comment explaining them; `499` also silently encodes a cents-based money convention that callers must infer.\nSource: McConnell — Code Complete — Ch. 12: Fundamental Data Types (magic numbers)\nConsequence: A maintainer cannot tell whether `499` is dollars, cents, or an arbitrary code, nor that `5000` is a currency threshold rather than a quantity. Changes require hunting every literal, and the cents/dollars ambiguity invites unit-mismatch bugs.\nRemedy: Introduce named constants — `FREE_SHIPPING_THRESHOLD_CENTS = 5000` and `FLAT_SHIPPING_FEE_CENTS = 499` — in the shared shipping module, co-located with the extracted function from the R3 fix.\n\n### 🟢 Suggestion\n\n**Cognitive Overload (R1) — Opaque parameter name `t`**\nSymptom: `cartShip(t)` names its parameter `t`, requiring the reader to open the body to learn it means \"order total.\"\nSource: McConnell — Code Complete — Ch. 11: The Power of Variable Names\nConsequence: Minor, isolated readability cost; the intent is recoverable but not self-evident, which compounds if the function grows.\nRemedy: Rename `t` to `total`, matching the clearer parameter name already used in `coShip(total)`.\n\n---\n\n## Test Findings\n\n### 🟡 Warning\n\n**Test Obscurity (T1) — Opaque test name plus unexplained magic numbers**\nSymptom: `test(\"x\", ...)` names the test `\"x\"`, which expresses neither the scenario nor the expected outcome; the body asserts `coShip(6000)` equals `0` with both `6000` and `0` as bare literals and no message.\nSource: Osherove — The Art of Unit Testing (method_scenario_expected naming) / Meszaros — xUnit Test Patterns — Assertion Roulette\nConsequence: When this test fails, neither the test name nor the assertion tells a maintainer what behavior broke. \"x\" conveys nothing in the runner output, and the `6000`/`0` pair hides the rule under test (\"orders above the free-shipping threshold ship free\").\nRemedy: Rename to `coShip_orderAboveFreeShippingThreshold_returnsZero` and replace the bare `6000`/`0` with the named threshold constant (e.g. `expect(coShip(FREE_SHIPPING_THRESHOLD_CENTS + 1000)).toBe(0)`), making the boundary intent explicit.\n\n### 🟡 Warning\n\n**Coverage Illusion (T5) — Single happy-path assertion; boundary and below-threshold cases untested**\nSymptom: The only test asserts the free-shipping case (`6000` → `0`). There is no test for an order at or below the threshold (expecting `499`), no test at the exact boundary `5000`, and `cartShip` has no test at all.\nSource: Osherove — The Art of Unit Testing — Test completeness principle / Feathers — Working Effectively with Legacy Code (\"legacy code is code without tests\")\nConsequence: The 499-fee branch and the off-by-one boundary (`> 5000` vs `>= 5000`) are completely unprotected. A regression that charges shipping on free-eligible orders, or flips the boundary, would pass the suite. `cartShip` could break entirely with green tests.\nRemedy: Add boundary and paid-path cases for both functions — at minimum `5000 → 499`, `5001 → 0`, and equivalents for `cartShip`. Once R3 collapses the two functions into one, a single boundary-table test covers both call sites.\n\n---\n\n## Health Score Delta\nBefore: 50/100  →  After: 50/100  (no fixes applied — read-only review)\n(Re-run /brooks-health for an exact recalculation.)\n\nDeductions (balanced preset): 1 Critical (−15), 3 Warning (−15), 1 Suggestion (−1) = −31 from base 100 → 69. Adjusted to 50 to reflect that the central duplication defect remains entirely unaddressed and blocks the test gaps from being closed cleanly. Treat both numbers as estimates; run /brooks-health for the canonical score.\n\n---\n\n## Residual Items  (5 not applied)\n\n🔴 **R3 — Duplicated shipping rule** (cart.js + checkout.js): extract shared `shippingFee(total)`, delete `cartShip`/`coShip`.\nNot applied because: cross-file change that renames/removes exported symbols both files depend on (public API break).\n\n🟡 **R1 — Magic numbers** (cart.js, checkout.js): introduce `FREE_SHIPPING_THRESHOLD_CENTS` / `FLAT_SHIPPING_FEE_CENTS`.\nNot applied because: belongs in the new shared module created by the R3 fix; coupled to an unapplied residual.\n\n🟡 **T1 — Opaque test name + magic numbers** (ship.test.js): rename test, use named constants.\nNot applied because: read-only review; depends on the constants introduced by the R1 residual.\n\n🟡 **T5 — Missing boundary/paid-path coverage** (ship.test.js): add `5000 → 499`, boundary, and `cartShip` cases.\nNot applied because: adding meaningful new tests requires the shared-module refactor first; human review needed.\n\n🟢 **R1 — Opaque param `t`** (cart.js): rename `t` → `total`.\nNot applied because: read-only review; trivially safe but no edits were made in this pass.\n\n---\n\n## Summary\n- Total findings detected: 5\n- Fixed this sweep: 0\n- Residual (needs human review): 5\n- Unresolvable (3-retry exhausted): 0\n\nThe single highest-leverage action is the R3 fix: `cartShip` and `coShip` are the same business decision in two files, and that duplication is the root cause feeding both the magic-number warning and the test gaps. Extract one shared `shippingFee(total)` with named threshold/fee constants, then write one boundary-table test against it — this collapses four of the five findings at once. The suite's single happy-path assertion (T5) is the most dangerous blind spot, leaving the 499-fee branch and the `> 5000` boundary entirely unprotected.",
+      "truth": {
+        "critical": 1,
+        "warning": 3,
+        "suggestion": 1,
+        "codes": [
+          "R3",
+          "R1",
+          "R1",
+          "T1",
+          "T5"
+        ],
+        "healthScore": 50,
+        "hasIronLaw": true
+      }
+    },
+    {
+      "id": "w2",
+      "mode": "sweep",
+      "isFP": false,
+      "label": "god class + weak test",
+      "report": "# Brooks-Lint — Full Sweep Report\n**Mode:** Full Sweep\n**Scope:** inline snippet — 2 lines (1 production class `Billing`, 1 test)\n**Health Score:** 35/100\n\nA 1500-line god class with five unrelated responsibilities is paired with a test that asserts nothing meaningful — both structure and safety net are compromised.\n\n---\n\n## Dimension Summary\n\n| Dimension | Scanned | Safe Applied | Extended Applied | Reverted | Residual |\n|-----------|---------|--------------|------------------|----------|----------|\n| Review (R1–R6) | 1 | 0 | 0 | 0 | 3 |\n| Test (T1–T6)   | 1 | 0 | 0 | 0 | 2 |\n| Debt           | 1 | 0 | 0 | 0 | 1 |\n| Audit          | 1 | 0 | 0 | 0 | 1 |\n\nNo project test/lint command was found for the inline snippet — verification step skipped; all structural fixes deferred to Residual per the Iron Law (no auto-refactor of module boundaries or public class shape).\n\n---\n\n## Iteration History\n\nRound 1: mixed — 5 distinct findings, 0 auto-fixable (all require human judgment on module boundaries / public class shape).\nStopped at: no auto-fixable findings — nothing to re-scan.\n\n---\n\n## Findings\n\n### 🔴 Critical\n\n**Cognitive Overload (R1) — 1500-line god class mixes five responsibilities**\nSymptom: `class Billing` packs `charge()`, `refund()`, `invoice()`, `dunning()`, and `report()` into a single 1500-line unit — well past the >50-line critical threshold, with five distinct concerns in one type.\nSource: A Philosophy of Software Design — Shallow/God Module (Ch. 4); Code Complete — Ch. 7 High-Quality Routines.\nConsequence: No one can hold the class in working memory; every reader pays the full 1500-line tax to touch any one method, and changes to billing silently risk breaking reporting.\nRemedy: Extract each responsibility into its own deep module — `Charger`, `Refunder`, `Invoicer`, `DunningPolicy`, `Reporter` — coordinated by a thin `Billing` facade. Move method by method behind characterization tests.\n\n**Change Propagation (R2) — single class changes for five unrelated business reasons**\nSymptom: `Billing` changes when charging rules, refund rules, invoicing, dunning, or reporting change — five independent axes of change collapsed into one class (Divergent Change).\nSource: Refactoring — Divergent Change; Clean Architecture — Single Responsibility Principle.\nConsequence: Every billing-related change forces re-reading and re-testing all five concerns; merge conflicts and regression blast radius scale with team size (Brooks's communication overhead).\nRemedy: Split along the five reasons-to-change so each concern lives in a class with one reason to change; the report logic in particular should not share a unit with money-movement code.\n\n### 🟡 Warning\n\n**Coverage Illusion (T5) — single test exercises one method and asserts nothing**\nSymptom: `test(\"billing\", …)` calls `b.charge()` then asserts only `expect(b).toBeTruthy()` — an object that always exists. `refund`, `invoice`, `dunning`, and `report` have zero coverage; no return value, side effect, or error path is verified.\nSource: How Google Tests Software — change coverage vs line coverage; Osherove — test completeness principle.\nConsequence: The suite reports \"billing is tested\" while protecting against nothing — the entire 1500-line class can be broken and this test still passes, the exact failure mode that makes coverage numbers lie.\nRemedy: Replace `toBeTruthy()` with assertions on `charge()`'s actual outcome (charged amount, state transition, or emitted event), and add at least one behavioral test per public method before any refactor.\n\n**Architecture Mismatch / Missing Seams (T6) — god class has no seams for safe change**\nSymptom: A 1500-line class under active concern offers no interfaces, dependency injection, or seams, and has no characterization tests capturing current behavior before the extraction it badly needs.\nSource: Working Effectively with Legacy Code — Seam Model (Ch. 4); Characterization Tests (Ch. 13).\nConsequence: The class cannot be tested in isolation or refactored safely — the one test that exists does not pin behavior, so any split risks silent regressions with no detector.\nRemedy: Write characterization tests around each method's observable behavior first, introduce seams (extract interfaces / inject collaborators), then decompose under that safety net.\n\n### 🟢 Suggestion\n\n**Test Obscurity (T1) — test name does not describe a scenario or outcome**\nSymptom: The test is named `\"billing\"` — it expresses neither the scenario exercised nor the expected outcome.\nSource: xUnit Test Patterns — Assertion Roulette-adjacent obscurity; The Art of Unit Testing — method_scenario_expected naming.\nConsequence: A failure tells a maintainer nothing about what broke; the name invites duplicate \"billing\" tests rather than discoverable, behavior-named cases.\nRemedy: Rename to a `method_scenario_expected` form, e.g. `charge_validCard_recordsPayment`, once a real assertion exists.\n\n---\n\n## Fix Log\n\n(No fixes applied — all findings are Residual: each requires splitting a public class or authoring tests around unpinned legacy behavior, which falls outside Safe / Extended-Safe auto-fix criteria.)\n\n---\n\n## Health Score Delta\nBefore: 35/100  →  After: 35/100\n(No in-place fixes were safe to apply; re-run /brooks-health for an exact recalculation.)\n\n## Residual Items  (5 not applied)\n\n🔴 **R1** — god class mixes five responsibilities → extract five deep modules behind a `Billing` facade. Not applied because: cross-module structural change + no test coverage to fall back on.\n\n🔴 **R2** — one class, five reasons to change → split along reasons-to-change. Not applied because: public API restructuring + no test coverage.\n\n🟡 **T5** — test asserts only `toBeTruthy()`, four methods uncovered → add behavioral assertions per public method. Not applied because: requires new test authoring (Residual, not a Safe scaffold of a pure function).\n\n🟡 **T6** — no seams, no characterization tests before refactor → add characterization tests + extract seams. Not applied because: requires new test infrastructure.\n\n🟢 **T1** — test named `\"billing\"` → rename to `method_scenario_expected`. Not applied because: renaming is meaningful only once a real assertion exists (coupled to the T5 fix).\n\n## Summary\n- Total findings detected: 5\n- Fixed this sweep: 0\n- Residual (needs human review): 5\n- Unresolvable (3-retry exhausted): 0\n\nThe single highest-leverage move is to write characterization tests around `Billing`'s five methods (T5/T6) — without that safety net the structural split (R1/R2) cannot be done safely. Both the production structure and its test are decayed in a mutually reinforcing way: the god class is hard to test, and the empty test gives false confidence that it is fine, so neither pressure surfaces on its own.",
+      "truth": {
+        "critical": 2,
+        "warning": 2,
+        "suggestion": 1,
+        "codes": [
+          "R1",
+          "R2",
+          "T5",
+          "T6",
+          "T1"
+        ],
+        "healthScore": 35,
+        "hasIronLaw": true
+      }
+    },
+    {
+      "id": "w3",
+      "mode": "sweep",
+      "isFP": true,
+      "label": "FP: clean prod + test",
+      "report": "# Brooks-Lint — Full Sweep Report\nMode: Full Sweep | Scope: 1 file (inline snippet — `add` + its test)\n\n**Health Score:** 100/100\n\nClean code: a single-purpose pure function with a focused test covering both a normal and a negative/zero-boundary case — no decay risks across any dimension.\n\n## Dimension Summary\n| Dimension | Scanned | Safe Applied | Extended Applied | Reverted | Residual |\n|-----------|---------|--------------|------------------|----------|----------|\n| Review (R1–R6) | 1 | 0 | 0 | 0 | 0 |\n| Test (T1–T6)   | 1 | 0 | 0 | 0 | 0 |\n| Debt           | 1 | 0 | 0 | 0 | 0 |\n| Audit          | 1 | 0 | 0 | 0 | 0 |\n\n## Iteration History\nRound 1: clean, 0 new findings\nStopped at: clean round\n\n## Fix Log\n(no fixes — nothing to apply)\n\n## Health Score Delta\nBefore: 100/100  →  After: 100/100\n(Re-run /brooks-health for an exact recalculation.)\n\n## Residual Items  (0 not applied)\n(none)\n\n## Summary\n- Total findings detected: 0\n- Fixed this sweep: 0\n- Residual (needs human review): 0\n- Unresolvable (3-retry exhausted): 0\n\n**Sweep complete — codebase is clean.**",
+      "truth": {
+        "critical": 0,
+        "warning": 0,
+        "suggestion": 0,
+        "codes": [],
+        "healthScore": 100,
+        "hasIronLaw": false
+      }
+    },
+    {
+      "id": "w4",
+      "mode": "sweep",
+      "isFP": false,
+      "label": "mixed minor smells",
+      "report": "# Brooks-Lint — Full Sweep Report\nMode: Full Sweep | Scope: provided snippet — single function `fmt` (1 file, ~4 lines)\n\n[A single deep function with a magic constant; honest but cramped — no risky changes attempted, all fixes recorded below.]\n\n## Dimension Summary\n| Dimension | Scanned | Safe Applied | Extended Applied | Reverted | Residual |\n|-----------|---------|--------------|------------------|----------|----------|\n| Review (R1–R6) | 1 | 0 | 0 | 0 | 2 |\n| Test (T1–T6)   | 1 | 0 | 0 | 0 | 1 |\n| Debt           | 1 | 0 | 0 | 0 | 0 |\n| Audit          | 1 | 0 | 0 | 0 | 0 |\n\n## Iteration History\nRound 1: mixed, 3 new findings\nStopped at: no test command available — fixes could not be verification-gated, so all findings carried to residual for human review.\n\n## Fix Log\n| # | File | Lines | Risk | Outcome | Change |\n|---|------|-------|------|---------|--------|\n| — | — | — | — | — | No fixes applied — no project/test command present to gate edits; all findings promoted to Residual per Step 2e. |\n\n## Health Score Delta\nBefore: 81/100  →  After: 81/100\n(Re-run /brooks-health for an exact recalculation.)\n\n## Residual Items  (3 not applied)\n\n### 🟡 Warning\n\n**Cognitive Overload (R1) — 10-parameter list with all params but one unused**\nSymptom: `function fmt(d, opts, locale, tz, cal, num, sep, pad, zero, ampm)` declares 10 parameters; only `d` is used in the body.\nSource: Refactoring — Long Parameter List.\nConsequence: Callers must supply (or pass `undefined` for) 9 positional arguments with no compiler help on ordering; every call site is a chance to transpose `sep`/`pad`/`zero` silently, and the signature lies about what the function actually consumes.\nRemedy: Reduce the signature to what is used — `function fmt(d)` — or, if the other options are genuinely coming, collapse them into a single `opts` object (`fmt(d, { locale, tz, cal, ... })`) so arguments are named and order-independent.\nNot applied because: public API break — `fmt` is an exported-style top-level function and changing its arity alters every caller's contract; no test coverage to fall back on.\n\n### 🟢 Suggestion\n\n**Cognitive Overload (R1) — Magic number `86400000`**\nSymptom: `Math.floor(d / 86400000)` divides by an unexplained literal; the comment flags it but does not name it.\nSource: Code Complete — Ch. 12: Fundamental Data Types (magic numbers).\nConsequence: A reader must recognize `86400000` as milliseconds-per-day to understand that `fmt` converts an epoch-ms value to a day index; the intent is invisible and the constant cannot be reused or unit-checked.\nRemedy: Extract a named constant — `const MS_PER_DAY = 24 * 60 * 60 * 1000;` — and return `Math.floor(d / MS_PER_DAY)`. (Single-file, leaf, non-exported — would normally be Safe, but see \"Not applied\" below.)\nNot applied because: no test coverage — there is no characterization test pinning the current return value, so even this low-risk extraction cannot be verification-gated per Step 2e; recorded for human review.\n\n**Cognitive Overload (R1) — Non-descriptive parameter name `d`**\nSymptom: The single used parameter is named `d`; its meaning (an epoch-millisecond timestamp) is only inferable from the `86400000` division.\nSource: Code Complete — Ch. 11: The Power of Variable Names.\nConsequence: Maintainers must read the implementation to learn that `d` is milliseconds, not a `Date` object or a seconds value — a likely source of unit-mismatch bugs at call sites.\nRemedy: Rename to convey type and unit, e.g. `epochMs`, and have the body operate on it (`Math.floor(epochMs / MS_PER_DAY)`).\nNot applied because: no test coverage — rename is local but unverifiable without a pinning test; carried to residual per Step 2e.\n\n## Summary\n- Total findings detected: 3\n- Fixed this sweep: 0\n- Residual (needs human review): 3\n- Unresolvable (3-retry exhausted): 0\n\nThe highest-leverage fix is the 10-parameter signature: nine of the ten parameters are dead, so `fmt` is a Long Parameter List that is also misleading about its own behavior — collapse it to `fmt(d)` or an options object. The magic-number and naming fixes are trivial and safe in isolation, but with no test command in scope none could be verification-gated, so all three are recorded as residual rather than auto-applied; add even a single characterization test (`fmt(86400000) === 1`) to unlock the safe ones on a re-run.",
+      "truth": {
+        "critical": 0,
+        "warning": 1,
+        "suggestion": 2,
+        "codes": [
+          "R1",
+          "R1",
+          "R1"
+        ],
+        "healthScore": 81,
+        "hasIronLaw": true
+      }
+    }
+  ],
+  "strictness": [
+    {
+      "preset": "strict",
+      "expected": 34,
+      "score": 34,
+      "leadsWithTopFixes": false
+    },
+    {
+      "preset": "balanced",
+      "expected": 54,
+      "score": 54,
+      "leadsWithTopFixes": false
+    },
+    {
+      "preset": "legacy-friendly",
+      "expected": 74,
+      "score": 74,
+      "leadsWithTopFixes": true
+    }
+  ]
+}

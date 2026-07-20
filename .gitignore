@@ -1,0 +1,10 @@
+# never commit credentials or machine-local state
+.DS_Store
+**/.credentials.json
+**/credentials*
+**/*token*
+**/session*
+dotfiles/claude-code/projects/
+dotfiles/claude-code/cache/
+dotfiles/claude-code/backups/
+dotfiles/claude-code/*.log

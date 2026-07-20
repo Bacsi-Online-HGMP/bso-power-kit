@@ -1,0 +1,85 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "notebooklm-mcp-cli"
+version = "0.8.1"
+description = "Unified CLI and MCP server for Google NotebookLM"
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.11"
+authors = [
+    { name = "Jacob Ben-David" }
+]
+keywords = ["notebooklm", "mcp", "cli", "google", "ai", "research", "podcast"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+]
+
+# Core dependencies (required for both CLI and MCP)
+# Core dependencies (required for both CLI and MCP)
+dependencies = [
+    "httpx[socks]>=0.27.0,<1.0",
+    "pydantic>=2.0.0,<3.0",
+    "typer>=0.9.0,<1.0",
+    "rich>=13.0.0,<15.0",
+    "websocket-client>=1.6.0,<2.0",  # CDP login
+    "platformdirs>=4.0.0,<5.0",
+    "fastmcp>=2.0.0,<4.0",
+    "pyyaml>=6.0,<7.0",
+    "typing_extensions>=4.4.0; python_version < '3.12'",
+]
+
+
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0.0",
+    "pytest-asyncio>=0.23.0",
+    "ruff>=0.1.0",
+    "mypy>=1.0.0",
+]
+
+[project.scripts]
+# CLI entry point
+nlm = "notebooklm_tools.cli.main:cli_main"
+
+# MCP server entry point
+notebooklm-mcp = "notebooklm_tools.mcp.server:main"
+
+[project.urls]
+Homepage = "https://github.com/jacob-bd/notebooklm-mcp-cli"
+Repository = "https://github.com/jacob-bd/notebooklm-mcp-cli"
+Issues = "https://github.com/jacob-bd/notebooklm-mcp-cli/issues"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/notebooklm_tools"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+ignore = ["E501"]
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+warn_return_any = true
+warn_unused_ignores = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+markers = [
+    "e2e: End-to-end tests requiring live authentication",
+    "integration: Integration tests for CLI functionality",
+]

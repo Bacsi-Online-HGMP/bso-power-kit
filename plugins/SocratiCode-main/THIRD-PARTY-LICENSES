@@ -1,0 +1,45 @@
+SocratiCode — Third-Party Licenses
+
+This project includes the following third-party open-source software.
+Each component is governed by its own license, not by SocratiCode's AGPL-3.0.
+
+RUNTIME DEPENDENCIES
+====================
+
+@ast-grep/napi                    MIT License
+@ast-grep/lang-bash               MIT License
+@ast-grep/lang-c                  MIT License
+@ast-grep/lang-cpp                MIT License
+@ast-grep/lang-csharp             MIT License
+@ast-grep/lang-go                 MIT License
+@ast-grep/lang-java               MIT License
+@ast-grep/lang-kotlin             MIT License
+@ast-grep/lang-php                MIT License
+@ast-grep/lang-python             MIT License
+@ast-grep/lang-ruby               MIT License
+@ast-grep/lang-rust               MIT License
+@ast-grep/lang-scala              MIT License
+@ast-grep/lang-swift              MIT License
+@google/generative-ai             Apache License 2.0
+@modelcontextprotocol/sdk         MIT License
+@parcel/watcher                   MIT License
+@qdrant/js-client-rest            Apache License 2.0
+glob                              ISC License
+ignore                            MIT License
+ollama (JS client)                MIT License
+openai                            Apache License 2.0
+proper-lockfile                   MIT License
+zod                               MIT License
+
+DEVELOPMENT DEPENDENCIES
+========================
+
+@biomejs/biome                    MIT License
+@release-it/conventional-changelog MIT License
+release-it                        MIT License
+@types/node                       MIT License
+@types/proper-lockfile             MIT License
+@vitest/coverage-v8               MIT License
+tsx                                MIT License
+typescript                        Apache License 2.0
+vitest                            MIT License

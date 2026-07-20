@@ -1,0 +1,78 @@
+//! Hook filter types for command filtering by source and name.
+//!
+//! These types are shared between `hooks.rs` (command preparation/execution)
+//! and `command_approval.rs` (approval flow). Re-exported from `hooks.rs`
+//! for backward compatibility.
+
+/// Whether a hook or alias body came from user config or project config.
+///
+/// Drives the per-step trust model: user-source bodies skip approval and
+/// pass EXEC through (the config is the user's own); project-source bodies
+/// require approval at the gate (command entry point) and scrub EXEC.
+#[derive(
+    Clone,
+    Copy,
+    Debug,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    serde::Serialize,
+    serde::Deserialize,
+    strum::Display,
+    strum::EnumString,
+)]
+#[serde(rename_all = "kebab-case")]
+#[strum(serialize_all = "kebab-case")]
+pub enum HookSource {
+    /// User config (~/.config/worktrunk/config.toml). No approval required;
+    /// EXEC directives pass through (alias steps).
+    User,
+    /// Project config (.config/wt.toml). Approval is handled at the gate;
+    /// EXEC directives are scrubbed.
+    Project,
+}
+
+/// A parsed name filter, optionally scoped to a specific source.
+///
+/// Supports formats:
+/// - `"foo"` - matches commands named "foo" from any source
+/// - `"user:foo"` - matches only user's command named "foo"
+/// - `"project:foo"` - matches only project's command named "foo"
+/// - `"user:"` or `"project:"` - matches all commands from that source
+pub struct ParsedFilter<'a> {
+    pub source: Option<HookSource>,
+    pub name: &'a str,
+}
+
+impl<'a> ParsedFilter<'a> {
+    pub fn parse(filter: &'a str) -> Self {
+        if let Some(name) = filter.strip_prefix("user:") {
+            Self {
+                source: Some(HookSource::User),
+                name,
+            }
+        } else if let Some(name) = filter.strip_prefix("project:") {
+            Self {
+                source: Some(HookSource::Project),
+                name,
+            }
+        } else {
+            Self {
+                source: None,
+                name: filter,
+            }
+        }
+    }
+
+    /// Check if this filter matches the given source.
+    pub(crate) fn matches_source(&self, source: HookSource) -> bool {
+        self.source.is_none() || self.source == Some(source)
+    }
+
+    /// Check if this filter matches a command from the given source.
+    pub(crate) fn matches_command(&self, source: HookSource, name: Option<&str>) -> bool {
+        self.matches_source(source)
+            && (self.name.is_empty() || name.is_some_and(|n| n == self.name))
+    }
+}

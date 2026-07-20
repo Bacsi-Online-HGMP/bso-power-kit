@@ -1,0 +1,238 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Twitter Thread Preview</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: system-ui, -apple-system, sans-serif; background: #fafafa; color: #1a1a1a; line-height: 1.5; }
+    body.dark { background: #1a1a1a; color: #e0e0e0; }
+
+    .header { position: sticky; top: 0; background: #fff; border-bottom: 1px solid #e5e5e5; padding: 12px 20px; display: flex; align-items: center; gap: 12px; z-index: 10; }
+    body.dark .header { background: #252525; border-color: #333; }
+    .header h1 { font-size: 16px; font-weight: 600; margin-right: auto; }
+
+    button { background: #fff; border: 1px solid #ddd; padding: 6px 14px; border-radius: 6px; cursor: pointer; font-size: 13px; }
+    button:hover { background: #f5f5f5; }
+    button.active { background: #0066cc; color: #fff; border-color: #0066cc; }
+    body.dark button { background: #333; border-color: #555; color: #e0e0e0; }
+    body.dark button:hover { background: #444; }
+    body.dark button.active { background: #0066cc; border-color: #0066cc; }
+
+    /* Thread view */
+    .thread-view { max-width: 700px; margin: 0 auto; padding: 20px; }
+    .tweet { background: #fff; border: 1px solid #e5e5e5; border-radius: 12px; padding: 16px; margin-bottom: 16px; }
+    body.dark .tweet { background: #252525; border-color: #333; }
+    .tweet-num { font-size: 12px; color: #666; margin-bottom: 8px; }
+    body.dark .tweet-num { color: #888; }
+    .tweet-num .chars { color: #999; margin-left: 8px; }
+    .tweet-text { font-size: 15px; white-space: pre-wrap; margin-bottom: 12px; }
+    .tweet-text code { background: #f0f0f0; padding: 1px 5px; border-radius: 3px; font-family: 'SF Mono', Menlo, monospace; font-size: 13px; }
+    body.dark .tweet-text code { background: #333; }
+    .tweet-text a { color: #1d9bf0; }
+    .gif-container { border-radius: 8px; overflow: hidden; border: 1px solid #e5e5e5; }
+    body.dark .gif-container { border-color: #333; }
+    .gif-container img { display: block; width: 100%; }
+    .gif-label { font-size: 11px; color: #888; margin-top: 6px; font-style: italic; }
+
+    /* Grid view */
+    .grid-view { display: none; padding: 20px; }
+    .grid-view.visible { display: block; }
+    .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(500px, 1fr)); gap: 20px; max-width: 1600px; margin: 0 auto; }
+    .demo { background: #fff; border: 1px solid #e5e5e5; border-radius: 8px; overflow: hidden; }
+    body.dark .demo { background: #252525; border-color: #333; }
+    .demo-header { padding: 12px 16px; background: #f8f8f8; display: flex; justify-content: space-between; align-items: center; }
+    body.dark .demo-header { background: #333; }
+    .demo-title { font-weight: 600; font-size: 14px; }
+    .demo-tweet { font-size: 12px; color: #888; }
+    .demo-content { padding: 10px; min-height: 300px; display: flex; align-items: center; justify-content: center; }
+    .demo-content img { max-width: 100%; height: auto; border-radius: 4px; }
+    .demo-content.missing { color: #666; font-style: italic; }
+    .demo-footer { padding: 8px 16px; background: #fafafa; font-size: 12px; color: #888; }
+    body.dark .demo-footer { background: #2a2a2a; }
+    .status { display: inline-block; padding: 2px 8px; border-radius: 3px; font-size: 11px; margin-left: 8px; }
+    .status.exists { background: #d1fae5; color: #065f46; }
+    .status.new { background: #fef3c7; color: #92400e; }
+    .status.missing { background: #fee2e2; color: #991b1b; }
+    body.dark .status.exists { background: #1a4d1a; color: #4ade80; }
+    body.dark .status.new { background: #4d3d1a; color: #fbbf24; }
+    body.dark .status.missing { background: #4d1a1a; color: #f87171; }
+
+    .error { color: #c00; padding: 20px; text-align: center; }
+    .loading { color: #666; padding: 40px; text-align: center; }
+    .refresh-note { text-align: center; color: #888; font-size: 12px; margin-top: 20px; }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <h1>Worktrunk Launch Thread</h1>
+    <button id="btn-thread" class="active" onclick="setView('thread')">Thread</button>
+    <button id="btn-grid" onclick="setView('grid')">Grid</button>
+    <button id="btn-light" class="active" onclick="setTheme('light')">Light</button>
+    <button id="btn-dark" onclick="setTheme('dark')">Dark</button>
+    <button onclick="reload()">Reload</button>
+  </div>
+
+  <div class="thread-view" id="thread"><div class="loading">Loading...</div></div>
+  <div class="grid-view" id="grid-view"></div>
+
+  <script>
+    // Demo metadata for grid view
+    const demos = [
+      { id: 'wt-core', title: 'wt-core.gif', tweet: 'Tweet 1: Intro', status: 'exists' },
+      { id: 'wt-switch', title: 'wt-switch.gif', tweet: 'Tweet 3: Switch', status: 'new' },
+      { id: 'wt-list-remove', title: 'wt-list-remove.gif', tweet: 'Tweet 4: List & Remove', status: 'new' },
+      { id: 'wt-hooks', title: 'wt-hooks.gif', tweet: 'Tweet 5: Hooks', status: 'new' },
+      { id: 'wt-devserver', title: 'wt-devserver.gif', tweet: 'Tweet 6: Dev Server URLs', status: 'new' },
+      { id: 'wt-list', title: 'wt-list.gif', tweet: 'Tweet 7: List Progressive', status: 'new' },
+      { id: 'wt-select-short', title: 'wt-select-short.gif', tweet: 'Tweet 9: Switch Picker', status: 'new' },
+      { id: 'wt-commit', title: 'wt-commit.gif', tweet: 'Tweet 10: Commit', status: 'new' },
+      { id: 'wt-merge', title: 'wt-merge.gif', tweet: 'Tweet 11: Merge', status: 'exists' },
+      { id: 'wt-zellij', title: 'wt-zellij.gif', tweet: 'Tweet 12: Zellij', status: 'new' },
+      { id: 'wt-zellij-omnibus', title: 'wt-zellij-omnibus.gif', tweet: 'Omnibus (Zellij + list + select + merge)', status: 'new' },
+    ];
+
+    // GIF name mapping (markdown uses different names than files)
+    const gifMap = {
+      'wt-demo': 'wt-core',
+      'wt-switch-picker': 'wt-select-short'
+    };
+
+    let currentTheme = 'light';
+    let currentView = 'thread';
+
+    function getGifPath(name) {
+      const suffix = currentTheme === 'dark' ? '-dark' : '';
+      return `/assets/${name}${suffix}.gif`;
+    }
+
+    function parseMarkdown(md) {
+      const tweets = [];
+      const parts = md.split(/\*\*(\d+)\/\*\*\s*\((\d+)\s*chars\)/);
+
+      for (let i = 1; i < parts.length; i += 3) {
+        const num = parseInt(parts[i]);
+        const chars = parseInt(parts[i + 1]);
+        let content = parts[i + 2] || '';
+        content = content.split(/<!--\s*=====/)[0].trim();
+
+        let gif = null, caption = null;
+        const gifMatch = content.match(/\[([^\]]+\.gif)(?:\s*—\s*([^\]]+))?\]/);
+        if (gifMatch) {
+          let gifName = gifMatch[1].replace('.gif', '');
+          gif = gifMap[gifName] || gifName;
+          caption = gifMatch[2] || null;
+          content = content.replace(gifMatch[0], '').trim();
+        }
+
+        const screenshotMatch = content.match(/\[screenshot[^\]]*\]/i);
+        if (screenshotMatch) {
+          if (content.includes('statusline')) {
+            gif = 'wt-statusline';
+            caption = 'Claude Code with worktrunk statusline';
+          }
+          content = content.replace(screenshotMatch[0], '').trim();
+        }
+
+        content = content
+          .replace(/`([^`]+)`/g, '<code>$1</code>')
+          .replace(/(https:\/\/[^\s]+)/g, '<a href="$1">$1</a>');
+
+        tweets.push({ num, chars, text: content, gif, caption });
+      }
+      return tweets;
+    }
+
+    async function loadThread() {
+      try {
+        const resp = await fetch('/demos/twitter/thread.md?t=' + Date.now());
+        if (!resp.ok) throw new Error('Failed to load thread.md');
+        return parseMarkdown(await resp.text());
+      } catch (e) {
+        console.error(e);
+        return null;
+      }
+    }
+
+    function renderTweets(tweets) {
+      const t = Date.now();
+      const total = tweets.length;
+      return tweets.map(tw => {
+        let media = '';
+        if (tw.gif) {
+          media = `
+            <div class="gif-container">
+              <img src="${getGifPath(tw.gif)}?t=${t}" onerror="this.outerHTML='<div class=error>Missing: ${tw.gif}.gif</div>'" />
+            </div>
+            ${tw.caption ? `<div class="gif-label">${tw.caption}</div>` : ''}
+          `;
+        }
+        return `
+          <div class="tweet">
+            <div class="tweet-num">${tw.num}/${total} <span class="chars">${tw.chars} chars</span></div>
+            <div class="tweet-text">${tw.text}</div>
+            ${media}
+          </div>
+        `;
+      }).join('');
+    }
+
+    function renderGrid() {
+      const t = Date.now();
+      return `
+        <div class="grid">
+          ${demos.map(demo => `
+            <div class="demo">
+              <div class="demo-header">
+                <span>
+                  <span class="demo-title">${demo.title}</span>
+                  <span class="status ${demo.status}">${demo.status}</span>
+                </span>
+                <span class="demo-tweet">${demo.tweet}</span>
+              </div>
+              <div class="demo-content">
+                <img src="${getGifPath(demo.id)}?t=${t}" alt="${demo.title}"
+                     onerror="this.parentElement.innerHTML='<span class=missing>Not yet created</span>'" />
+              </div>
+              <div class="demo-footer">${demo.id}.gif</div>
+            </div>
+          `).join('')}
+        </div>
+        <p class="refresh-note">Click Reload to refresh images</p>
+      `;
+    }
+
+    async function render() {
+      if (currentView === 'thread') {
+        const tweets = await loadThread();
+        document.getElementById('thread').innerHTML = tweets
+          ? renderTweets(tweets)
+          : '<div class="error">Failed to load thread.md</div>';
+      } else {
+        document.getElementById('grid-view').innerHTML = renderGrid();
+      }
+    }
+
+    function setView(view) {
+      currentView = view;
+      document.getElementById('btn-thread').classList.toggle('active', view === 'thread');
+      document.getElementById('btn-grid').classList.toggle('active', view === 'grid');
+      document.querySelector('.thread-view').style.display = view === 'thread' ? 'block' : 'none';
+      document.querySelector('.grid-view').classList.toggle('visible', view === 'grid');
+      render();
+    }
+
+    function setTheme(theme) {
+      currentTheme = theme;
+      document.body.classList.toggle('dark', theme === 'dark');
+      document.getElementById('btn-light').classList.toggle('active', theme === 'light');
+      document.getElementById('btn-dark').classList.toggle('active', theme === 'dark');
+      render();
+    }
+
+    function reload() { render(); }
+    render();
+  </script>
+</body>
+</html>

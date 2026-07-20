@@ -1,0 +1,12 @@
+# .socraticodeignore — additional ignore patterns for SocratiCode indexing
+# Place a copy of this file as .socraticodeignore in your project root.
+# Patterns follow the same syntax as .gitignore.
+
+# Example: ignore test fixtures
+# tests/fixtures/
+
+# Example: ignore generated code
+# generated/
+
+# Example: ignore specific large files
+# data/big-dataset.json

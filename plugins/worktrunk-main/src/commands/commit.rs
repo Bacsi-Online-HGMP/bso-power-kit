@@ -1,0 +1,335 @@
+use anyhow::Context;
+use color_print::cformat;
+use worktrunk::HookType;
+use worktrunk::config::CommitGenerationConfig;
+use worktrunk::styling::{
+    eprintln, format_with_gutter, hint_message, info_message, progress_message, success_message,
+};
+
+use super::command_executor::CommandContext;
+use super::command_executor::FailureStrategy;
+use super::hooks::{HookAnnouncer, execute_hook};
+use super::repository_ext::warn_about_untracked_files;
+use super::template_vars::TemplateVars;
+
+// Re-export StageMode from config for use by CLI
+pub use worktrunk::config::StageMode;
+
+/// Outcome of a successful commit operation. Returned so callers (e.g.
+/// `step commit --format=json`) can render structured output.
+///
+/// `stage_mode` is the *resolved* mode that was actually applied (CLI flag
+/// merged with config defaults), not the user-supplied flag.
+pub struct CommitOutcome {
+    pub sha: String,
+    pub message: String,
+    pub stage_mode: StageMode,
+}
+
+/// Whether pre/post-commit hooks run, and — if not — whether to print the skip message.
+/// Two distinct paths disable hooks: `--no-hooks` (we own the skip message) and declined
+/// approval (the caller already printed its own message).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum HookGate {
+    /// Run pre-commit and post-commit hooks normally.
+    Run,
+    /// Skip hooks because the user passed `--no-hooks`. `commit()` prints the skip message.
+    NoHooksFlag,
+    /// Skip hooks silently — caller has already explained why.
+    Silent,
+}
+
+impl HookGate {
+    /// Whether pre/post-commit hooks should execute.
+    pub(crate) fn run(self) -> bool {
+        matches!(self, Self::Run)
+    }
+
+    /// Build from an entry-point `verify` flag plus an approval-prompt result.
+    /// `verify=false` → `NoHooksFlag`; declined → `Silent`; approved → `Run`.
+    pub(crate) fn from_approval(verify: bool, approved: bool) -> Self {
+        if !verify {
+            Self::NoHooksFlag
+        } else if approved {
+            Self::Run
+        } else {
+            Self::Silent
+        }
+    }
+}
+
+/// Options for committing current changes.
+pub struct CommitOptions<'a> {
+    pub ctx: &'a CommandContext<'a>,
+    pub target_branch: Option<&'a str>,
+    pub hooks: HookGate,
+    pub stage_mode: StageMode,
+    pub warn_about_untracked: bool,
+    pub show_no_squash_note: bool,
+    /// Whether `commit()` runs its own guidance approval gate or trusts a
+    /// value supplied by the caller (`wt merge` resolves the guidance via
+    /// `approve_commit_template_append` up front and passes it through).
+    pub guidance: super::step::PreApprovedGuidance,
+}
+
+impl<'a> CommitOptions<'a> {
+    /// Convenience constructor for the common case where untracked files should trigger a warning.
+    pub fn new(ctx: &'a CommandContext<'a>) -> Self {
+        Self {
+            ctx,
+            target_branch: None,
+            hooks: HookGate::Run,
+            stage_mode: StageMode::All,
+            warn_about_untracked: true,
+            show_no_squash_note: false,
+            guidance: super::step::PreApprovedGuidance::RunOwnGate,
+        }
+    }
+}
+
+pub(crate) struct CommitGenerator<'a> {
+    config: &'a CommitGenerationConfig,
+    /// Approved project-level append fragment for the LLM prompt. `None` if
+    /// not configured or the user declined approval. The user-level
+    /// `template-append` rides along inside `config` and needs no approval.
+    project_append: Option<&'a str>,
+}
+
+impl<'a> CommitGenerator<'a> {
+    pub fn new(config: &'a CommitGenerationConfig, project_append: Option<&'a str>) -> Self {
+        Self {
+            config,
+            project_append,
+        }
+    }
+
+    pub fn format_message_for_display(&self, message: &str) -> String {
+        let lines: Vec<&str> = message.lines().collect();
+
+        if lines.is_empty() {
+            return String::new();
+        }
+
+        let mut result = cformat!("<bold>{}</>", lines[0]);
+
+        if lines.len() > 1 {
+            for line in &lines[1..] {
+                result.push('\n');
+                result.push_str(line);
+            }
+        }
+
+        result
+    }
+
+    pub fn emit_hint_if_needed(&self) {
+        if !self.config.is_configured() {
+            eprintln!(
+                "{}",
+                hint_message(cformat!(
+                    "Using fallback commit message. For LLM setup guide, run <underline>wt config --help</>"
+                ))
+            );
+        }
+    }
+
+    /// Commit staged changes in the given worktree.
+    ///
+    /// When `show_progress` is true, displays a progress message with diff stats
+    /// before committing. Set to false for bulk operations where each worktree
+    /// is handled individually (e.g., `step relocate --commit`).
+    pub fn commit_staged_changes(
+        &self,
+        wt: &worktrunk::git::WorkingTree<'_>,
+        show_progress: bool,
+        show_no_squash_note: bool,
+        stage_mode: StageMode,
+    ) -> anyhow::Result<CommitOutcome> {
+        // Fail early if nothing is staged (avoids confusing LLM prompt with empty diff)
+        if !wt.has_staged_changes()? {
+            anyhow::bail!("Nothing to commit");
+        }
+
+        if show_progress {
+            let stats_parts = wt
+                .repo()
+                .diff_stats_summary(&["diff", "--staged", "--shortstat"]);
+
+            let changes_type = match stage_mode {
+                StageMode::Tracked => "tracked changes",
+                _ => "changes",
+            };
+
+            let action = if self.config.is_configured() {
+                format!("Generating commit message and committing {changes_type}...")
+            } else {
+                format!("Committing {changes_type} with default message...")
+            };
+
+            let mut parts = vec![];
+            if !stats_parts.is_empty() {
+                parts.extend(stats_parts);
+            }
+            if show_no_squash_note {
+                parts.push("no squashing needed".to_string());
+            }
+
+            let full_progress_msg = if parts.is_empty() {
+                action
+            } else {
+                // Gray parenthetical with separate cformat for closing paren (avoids optimizer)
+                let parts_str = parts.join(", ");
+                let paren_close = cformat!("<bright-black>)</>");
+                cformat!("{action} <bright-black>({parts_str}</>{paren_close}")
+            };
+
+            eprintln!("{}", progress_message(full_progress_msg));
+        }
+
+        self.emit_hint_if_needed();
+        let commit_message =
+            crate::llm::generate_commit_message(self.config, None, self.project_append)?;
+
+        let formatted_message = self.format_message_for_display(&commit_message);
+        eprintln!("{}", format_with_gutter(&formatted_message, None));
+
+        wt.run_command(&["commit", "-m", &commit_message])
+            .context("Failed to commit")?;
+
+        let commit_sha = wt.run_command(&["rev-parse", "HEAD"])?.trim().to_string();
+        // Display uses `Repository::short_sha`; the JSON payload carries the full SHA.
+        let commit_hash = wt.repo().short_sha(&commit_sha)?;
+
+        eprintln!(
+            "{}",
+            success_message(cformat!("Committed changes @ <dim>{commit_hash}</>"))
+        );
+
+        Ok(CommitOutcome {
+            sha: commit_sha,
+            message: commit_message,
+            stage_mode,
+        })
+    }
+}
+
+impl CommitOptions<'_> {
+    /// Commit uncommitted changes with the shared commit pipeline.
+    ///
+    /// Post-commit pipelines are registered onto the caller's announcer; the
+    /// caller decides when to flush. Multi-phase callers (e.g. `wt merge
+    /// --squash` batching post-commit + post-remove + post-switch + post-merge)
+    /// share one announce line; standalone callers (e.g. `wt commit`)
+    /// construct an announcer of their own and flush right after.
+    pub fn commit(self, announcer: &mut HookAnnouncer<'_>) -> anyhow::Result<CommitOutcome> {
+        let project_config = self.ctx.repo.load_project_config()?;
+        let user_hooks = self.ctx.config.hooks(self.ctx.project_id().as_deref());
+        let any_hooks_exist = user_hooks.get(HookType::PreCommit).is_some()
+            || project_config
+                .as_ref()
+                .is_some_and(|c| c.hooks.get(HookType::PreCommit).is_some());
+
+        // Only print "Skipping pre-commit hooks (--no-hooks)" when --no-hooks was actually
+        // passed. If hooks are disabled because the caller declined an approval prompt
+        // (HookGate::Silent), the caller has already printed its own message.
+        if self.hooks == HookGate::NoHooksFlag && any_hooks_exist {
+            eprintln!("{}", info_message("Skipping pre-commit hooks (--no-hooks)"));
+        }
+
+        let template_vars = self
+            .target_branch
+            .map_or_else(TemplateVars::new, |t| TemplateVars::new().with_target(t));
+
+        if self.hooks.run() {
+            // Run pre-commit hooks (user first, then project).
+            execute_hook(
+                self.ctx,
+                HookType::PreCommit,
+                &template_vars.as_extra_vars(),
+                FailureStrategy::FailFast,
+            )?;
+        }
+
+        // Use the worktree path from context — this is the target worktree when
+        // --branch is specified, or the current worktree otherwise.
+        let wt = self.ctx.repo.worktree_at(self.ctx.worktree_path);
+
+        if self.warn_about_untracked && self.stage_mode == StageMode::All {
+            let status = wt
+                .run_command(&["status", "--porcelain", "-z"])
+                .context("Failed to get status")?;
+            warn_about_untracked_files(&status)?;
+        }
+
+        // Stage changes based on mode
+        match self.stage_mode {
+            StageMode::All => {
+                // Stage everything: tracked modifications + untracked files
+                wt.run_command(&["add", "-A"])
+                    .context("Failed to stage changes")?;
+            }
+            StageMode::Tracked => {
+                // Stage tracked modifications only (no untracked files)
+                wt.run_command(&["add", "-u"])
+                    .context("Failed to stage tracked changes")?;
+            }
+            StageMode::None => {
+                // Stage nothing - commit only what's already in the index
+            }
+        }
+
+        let effective_config = self.ctx.commit_generation();
+        // Skip the approval gate when the LLM isn't configured — the fallback
+        // message generator doesn't render the prompt template, so guidance
+        // would never reach an LLM anyway.
+        let project_append = match self.guidance {
+            super::step::PreApprovedGuidance::Resolved(value) => value,
+            super::step::PreApprovedGuidance::RunOwnGate if effective_config.is_configured() => {
+                super::command_approval::approve_commit_template_append(self.ctx)?
+            }
+            super::step::PreApprovedGuidance::RunOwnGate => None,
+        };
+        let outcome = CommitGenerator::new(&effective_config, project_append.as_deref())
+            .commit_staged_changes(
+                &wt,
+                true, // show_progress
+                self.show_no_squash_note,
+                self.stage_mode,
+            )?;
+
+        // Register post-commit hooks onto the caller's announcer (respects --no-hooks).
+        if self.hooks.run() {
+            let extra_vars = template_vars.as_extra_vars();
+            announcer.register(self.ctx, HookType::PostCommit, &extra_vars, None)?;
+        }
+
+        Ok(outcome)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_format_message_for_display() {
+        use insta::assert_snapshot;
+        let config = CommitGenerationConfig::default();
+        let generator = CommitGenerator::new(&config, None);
+
+        assert_snapshot!(generator.format_message_for_display("Simple commit message"), @"[1mSimple commit message[22m");
+        assert_snapshot!(generator.format_message_for_display("First line\nSecond line\nThird line"), @"
+        [1mFirst line[22m
+        Second line
+        Third line
+        ");
+    }
+
+    #[test]
+    fn test_format_message_for_display_empty() {
+        let config = CommitGenerationConfig::default();
+        let generator = CommitGenerator::new(&config, None);
+        let result = generator.format_message_for_display("");
+        assert_eq!(result, "");
+    }
+}

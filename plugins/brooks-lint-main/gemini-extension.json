@@ -1,0 +1,74 @@
+{
+  "name": "brooks-lint",
+  "version": "1.4.0",
+  "description": "AI code reviews grounded in twelve classic engineering books — decay risk diagnostics with book citations, severity labels, and six analysis modes (PR review, architecture audit, tech debt, test quality, health dashboard, full-sweep auto-fix)",
+  "author": "hyhmrright",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/hyhmrright/brooks-lint.git"
+  },
+  "engines": {
+    "gemini": ">=0.30.0"
+  },
+  "contribution": {
+    "skills": [
+      {
+        "id": "brooks-review",
+        "path": "skills/brooks-review"
+      },
+      {
+        "id": "brooks-audit",
+        "path": "skills/brooks-audit"
+      },
+      {
+        "id": "brooks-debt",
+        "path": "skills/brooks-debt"
+      },
+      {
+        "id": "brooks-test",
+        "path": "skills/brooks-test"
+      },
+      {
+        "id": "brooks-health",
+        "path": "skills/brooks-health"
+      },
+      {
+        "id": "brooks-sweep",
+        "path": "skills/brooks-sweep"
+      }
+    ],
+    "commands": [
+      {
+        "id": "brooks-review",
+        "description": "PR-level code review across six decay risk dimensions",
+        "path": "commands/brooks-review.md"
+      },
+      {
+        "id": "brooks-audit",
+        "description": "Full architecture audit with module dependency map",
+        "path": "commands/brooks-audit.md"
+      },
+      {
+        "id": "brooks-debt",
+        "description": "Tech debt classification ranked by Pain × Spread",
+        "path": "commands/brooks-debt.md"
+      },
+      {
+        "id": "brooks-test",
+        "description": "Test suite health review across six test decay risks",
+        "path": "commands/brooks-test.md"
+      },
+      {
+        "id": "brooks-health",
+        "description": "Combined health dashboard aggregating all four quality dimensions (PR review, architecture, tech debt, test quality) into a single weighted score",
+        "path": "commands/brooks-health.md"
+      },
+      {
+        "id": "brooks-sweep",
+        "description": "Full sweep: run all analysis dimensions in one pass and auto-fix safe findings, confirming risky ones",
+        "path": "commands/brooks-sweep.md"
+      }
+    ]
+  }
+}

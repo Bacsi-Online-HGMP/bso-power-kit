@@ -1,0 +1,85 @@
+{
+  "image_type": "hand_drawn_sketch",
+  "medium": "colored_pencil",
+  "style_descriptors": {
+    "color_palette": ["warm amber orange"],
+    "texture": "heavy grain, visible pencil strokes with uneven pressure, creating a textured, slightly waxy fill",
+    "line_quality": "organic, slightly imperfect, sketched, thick (approx 4-6mm stroke width), consistent density",
+    "background": "CRITICAL: The background MUST be perfectly uniform, flat, solid white (#FFFFFF) with ZERO variation, NO texture, NO grain, NO gradients, NO shadows, NO vignetting - just a completely flat uniform white that is identical in every pixel",
+    "stroke_style": "hand-drawn technical diagram, precise start and end points"
+  },
+  "subject_matter": {
+    "description": "A symmetrical abstract graph structure centered on a square canvas. It resembles a stylized trident or a branching tree. It is strictly defined by exactly 7 nodes and exactly 6 connecting lines.",
+    "spatial_definition": {
+      "aspect_ratio": {
+        "overall_target": "Square canvas (1:1)",
+        "grid_system": "Cartesian grid centered at (0,0). Y-axis is vertical, X-axis is horizontal."
+      },
+      "nodes": {
+        "count": 7,
+        "appearance": "Solid amber orange circular nodes, approx 0.6 units diameter, filled with dense scribbled pencil texture.",
+        "list": [
+          { "id": "n1_root", "grid_location": {"x": 0, "y": -5}, "role": "Root Node (Bottom)" },
+          { "id": "n2_hub", "grid_location": {"x": 0, "y": 0}, "role": "Central Junction (Hub)" },
+          { "id": "n3_left_elbow", "grid_location": {"x": -2, "y": 0}, "role": "Left Crossbar End" },
+          { "id": "n4_right_elbow", "grid_location": {"x": 2, "y": 0}, "role": "Right Crossbar End" },
+          { "id": "n5_top_center", "grid_location": {"x": 0, "y": 5}, "role": "Top Center Tip" },
+          { "id": "n6_top_left", "grid_location": {"x": -3.5, "y": 5}, "role": "Top Left Tip" },
+          { "id": "n7_top_right", "grid_location": {"x": 3.5, "y": 5}, "role": "Top Right Tip" }
+        ]
+      },
+      "edges": {
+        "strict_count": 6,
+        "note": "Connect ONLY the specific coordinates listed below. Do not assume any other connections.",
+        "connections": [
+          {
+            "id": "edge_1_trunk",
+            "source": "n1_root",
+            "target": "n2_hub",
+            "vector_description": "Vertical line starting at (0, -5) and ending at (0, 0)."
+          },
+          {
+            "id": "edge_2_left_arm",
+            "source": "n3_left_elbow",
+            "target": "n2_hub",
+            "vector_description": "Horizontal line starting at (-2, 0) and ending at (0, 0)."
+          },
+          {
+            "id": "edge_3_right_arm",
+            "source": "n2_hub",
+            "target": "n4_right_elbow",
+            "vector_description": "Horizontal line starting at (0, 0) and ending at (2, 0)."
+          },
+          {
+            "id": "edge_4_center_stem",
+            "source": "n2_hub",
+            "target": "n5_top_center",
+            "vector_description": "Vertical line starting at (0, 0) and ending at (0, 5). This line passes between the other two upper stems without touching them."
+          },
+          {
+            "id": "edge_5_left_stem",
+            "source": "n3_left_elbow",
+            "target": "n6_top_left",
+            "vector_description": "Steep diagonal line starting at (-2, 0) and angling outwards to (-3.5, 5)."
+          },
+          {
+            "id": "edge_6_right_stem",
+            "source": "n4_right_elbow",
+            "target": "n7_top_right",
+            "vector_description": "Steep diagonal line starting at (2, 0) and angling outwards to (3.5, 5)."
+          }
+        ]
+      },
+      "negative_constraints": {
+        "CRITICAL_AVOIDANCE": "The structure must NOT form triangles. The three upward stems are independent.",
+        "forbidden_vectors": [
+          "NO LINE from (-2, 0) to (0, 5)",
+          "NO LINE from (2, 0) to (0, 5)",
+          "NO LINE from (-3.5, 5) to (0, 5)",
+          "NO LINE from (3.5, 5) to (0, 5)"
+        ]
+      }
+    }
+  },
+  "annotations_present": false
+}

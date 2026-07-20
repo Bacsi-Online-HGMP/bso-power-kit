@@ -1,0 +1,201 @@
+// Copyright 2026 Google LLC
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     https://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+import { readFileSync } from 'node:fs';
+
+export type StdinStream = AsyncIterable<Buffer | string> & { isTTY?: boolean };
+
+export class FileReadError extends Error {
+  readonly code = 'FILE_READ_ERROR' as const;
+  constructor(public readonly filePath: string, cause: unknown) {
+    super(cause instanceof Error ? cause.message : String(cause), { cause });
+    this.name = 'FileReadError';
+  }
+
+  get friendlyMessage(): string {
+    const errCode = (this.cause as { code?: string })?.code;
+    if (errCode === 'ENOENT') {
+      return `"${this.filePath}" not found. Create a DESIGN.md file or pass "-" to read from stdin.`;
+    }
+    if (errCode === 'EACCES') {
+      return `"${this.filePath}" could not be read: permission denied.`;
+    }
+    return `"${this.filePath}" could not be read: ${this.message}`;
+  }
+}
+
+/**
+ * Read input from a file path or stdin ("-").
+ * Throws FileReadError if the file cannot be read.
+ */
+export async function readInput(filePath: string, stdin: StdinStream = process.stdin): Promise<string> {
+  if (filePath === '-') {
+    if (stdin.isTTY) {
+      process.stderr.write('Reading from stdin… Press Ctrl+D when done.\n');
+    }
+    const chunks: Buffer[] = [];
+    for await (const chunk of stdin) {
+      chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+    }
+    return Buffer.concat(chunks).toString('utf-8');
+  }
+
+  try {
+    return readFileSync(filePath, 'utf-8');
+  } catch (error) {
+    throw new FileReadError(filePath, error);
+  }
+}
+
+/**
+ * Format output as JSON or human-readable text.
+ */
+export function formatOutput(data: unknown, args: { format?: string }): string {
+  if (args.format === 'markdown' || args.format === 'md') {
+    return formatAsMarkdown(data);
+  }
+  return JSON.stringify(data, null, 2);
+}
+
+function formatAsMarkdown(data: unknown): string {
+  if (typeof data !== 'object' || data === null) {
+    return String(data);
+  }
+
+  const obj = data as Record<string, unknown>;
+
+  // Lint output: { findings: [...], summary: { errors, warnings, infos } }
+  if (isLintOutput(obj)) {
+    return formatLintAsMarkdown(obj);
+  }
+
+  // Legacy fixer/diff shape: { summary: string, details?, patches? }
+  let result = '';
+  if (typeof obj.summary === 'string') {
+    result += `# ${obj.summary}\n\n`;
+  }
+  if (obj.details) {
+    result += `## Details\n\n`;
+    result += formatAsText(obj.details);
+    result += '\n';
+  }
+  if (obj.patches && Array.isArray(obj.patches) && obj.patches.length > 0) {
+    result += `## Patches\n\n`;
+    result += formatAsText(obj.patches);
+    result += '\n';
+  }
+  return result || formatAsText(data);
+}
+
+interface LintSummary {
+  errors: number;
+  warnings: number;
+  infos: number;
+}
+
+interface LintFinding {
+  severity: string;
+  message: string;
+  path?: string;
+}
+
+function isLintOutput(obj: Record<string, unknown>): boolean {
+  if (!Array.isArray(obj.findings)) return false;
+  if (typeof obj.summary !== 'object' || obj.summary === null) return false;
+  const s = obj.summary as Record<string, unknown>;
+  return typeof s.errors === 'number'
+    && typeof s.warnings === 'number'
+    && typeof s.infos === 'number';
+}
+
+function formatLintAsMarkdown(obj: Record<string, unknown>): string {
+  const summary = obj.summary as LintSummary;
+  const findings = obj.findings as LintFinding[];
+
+  let result = '# Lint Report\n\n';
+  result += `**${summary.errors} errors**, **${summary.warnings} warnings**, **${summary.infos} infos**\n`;
+
+  if (findings.length > 0) {
+    result += '\n## Findings\n\n';
+    for (const f of findings) {
+      const location = f.path ? ` \`${f.path}\`:` : ':';
+      result += `- **${f.severity}**${location} ${f.message}\n`;
+    }
+  }
+
+  return result;
+}
+
+function formatAsText(data: unknown, indent = 0): string {
+  if (data === null || data === undefined) return 'null';
+  if (typeof data === 'string') return data;
+  if (typeof data === 'number' || typeof data === 'boolean') return String(data);
+  if (Array.isArray(data)) {
+    return data.map(item => `${'  '.repeat(indent)}- ${formatAsText(item, indent + 1)}`).join('\n');
+  }
+  if (typeof data === 'object') {
+    return Object.entries(data as Record<string, unknown>)
+      .map(([key, val]) => {
+        const valStr = typeof val === 'object' && val !== null
+          ? '\n' + formatAsText(val, indent + 1)
+          : ' ' + formatAsText(val, indent + 1);
+        return `${'  '.repeat(indent)}${key}:${valStr}`;
+      })
+      .join('\n');
+  }
+  return String(data);
+}
+
+/**
+ * Serialize a Map-based DesignSystemState to plain objects for JSON output.
+ */
+export function serializeDesignSystem(state: Record<string, unknown>): Record<string, unknown> {
+  const result: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(state)) {
+    if (value instanceof Map) {
+      result[key] = Object.fromEntries(value);
+    } else {
+      result[key] = value;
+    }
+  }
+  return result;
+}
+
+/**
+ * Diff two Maps — returns added, removed, and modified keys.
+ */
+export function diffMaps<V>(
+  before: Map<string, V>,
+  after: Map<string, V>,
+): { added: string[]; removed: string[]; modified: string[] } {
+  const added: string[] = [];
+  const removed: string[] = [];
+  const modified: string[] = [];
+
+  for (const key of after.keys()) {
+    if (!before.has(key)) {
+      added.push(key);
+    } else if (JSON.stringify(before.get(key)) !== JSON.stringify(after.get(key))) {
+      modified.push(key);
+    }
+  }
+
+  for (const key of before.keys()) {
+    if (!after.has(key)) {
+      removed.push(key);
+    }
+  }
+
+  return { added, removed, modified };
+}

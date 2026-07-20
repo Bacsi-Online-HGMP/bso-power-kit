@@ -1,0 +1,86 @@
+name: Release Gate
+
+on:
+  release:
+    types: [published]
+
+jobs:
+  lint:
+    name: Ruff lint and format
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@94527f2e458b27549849d47d273a16bec83a01e9  # v7
+
+      - name: Run ruff linting
+        run: uv run --dev ruff check . --output-format=github
+
+      - name: Run ruff format check
+        run: uv run --dev ruff format --check .
+
+  test:
+    name: Run tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@94527f2e458b27549849d47d273a16bec83a01e9  # v7
+
+      - name: Run tests
+        run: uv run --dev --with pytest-github-actions-annotate-failures --with pytest-asyncio pytest -v --tb=short -m "not e2e"
+
+  version-alignment:
+    name: Verify version alignment
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
+
+      - name: Check all version strings match
+        run: |
+          set -euo pipefail
+
+          TOML_VERSION=$(grep '^version = ' pyproject.toml | head -1 | sed 's/version = "\(.*\)"/\1/')
+          INIT_VERSION=$(grep '^__version__' src/notebooklm_tools/__init__.py | head -1 | sed 's/__version__ = "\(.*\)"/\1/')
+          SKILL_VERSION=$(grep '^version:' src/notebooklm_tools/data/SKILL.md | head -1 | sed 's/version: "\(.*\)"/\1/')
+          AGENTS_VERSION=$(grep 'nlm-version:' src/notebooklm_tools/data/AGENTS_SECTION.md | head -1 | sed 's/.*nlm-version: \(.*\) -->/\1/')
+          MANIFEST_VERSION=$(grep '"version"' desktop-extension/manifest.json | head -1 | sed 's/.*"version": "\(.*\)".*/\1/')
+
+          TAG_VERSION="${GITHUB_REF#refs/tags/v}"
+
+          echo "🏷️  Git tag:               $TAG_VERSION"
+          echo "📦 pyproject.toml:        $TOML_VERSION"
+          echo "🐍 __init__.py:           $INIT_VERSION"
+          echo "🤖 SKILL.md:              $SKILL_VERSION"
+          echo "📄 AGENTS_SECTION.md:     $AGENTS_VERSION"
+          echo "🧩 manifest.json:         $MANIFEST_VERSION"
+
+          FAILED=0
+
+          for PAIR in \
+            "pyproject.toml:$TOML_VERSION" \
+            "__init__.py:$INIT_VERSION" \
+            "SKILL.md:$SKILL_VERSION" \
+            "AGENTS_SECTION.md:$AGENTS_VERSION" \
+            "manifest.json:$MANIFEST_VERSION"; do
+            FILE="${PAIR%%:*}"
+            VER="${PAIR#*:}"
+            if [ "$TAG_VERSION" != "$VER" ]; then
+              echo "❌ MISMATCH: tag v$TAG_VERSION ≠ $FILE ($VER)"
+              FAILED=1
+            fi
+          done
+
+          if [ "$FAILED" -eq 1 ]; then
+            echo ""
+            echo "🛑 Release gate FAILED — tag does not match all version files."
+            exit 1
+          fi
+
+          echo ""
+          echo "✅ Tag v$TAG_VERSION matches all 5 version files"

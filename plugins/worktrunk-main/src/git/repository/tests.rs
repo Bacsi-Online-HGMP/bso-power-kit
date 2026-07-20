@@ -1,0 +1,1167 @@
+use std::path::PathBuf;
+
+use super::super::{DefaultBranchName, WorktreeInfo, finalize_worktree};
+
+#[test]
+fn test_parse_worktree_list() {
+    let output = "worktree /path/to/main
+HEAD abcd1234
+branch refs/heads/main
+
+worktree /path/to/feature
+HEAD efgh5678
+branch refs/heads/feature
+
+";
+
+    let worktrees = WorktreeInfo::parse_porcelain_list(output).unwrap();
+    let [main_wt, feature_wt]: [WorktreeInfo; 2] = worktrees.try_into().unwrap();
+
+    assert_eq!(main_wt.path, PathBuf::from("/path/to/main"));
+    assert_eq!(main_wt.head, "abcd1234");
+    assert_eq!(main_wt.branch, Some("main".to_string()));
+    assert!(!main_wt.bare);
+    assert!(!main_wt.detached);
+
+    assert_eq!(feature_wt.path, PathBuf::from("/path/to/feature"));
+    assert_eq!(feature_wt.head, "efgh5678");
+    assert_eq!(feature_wt.branch, Some("feature".to_string()));
+}
+
+#[test]
+fn test_parse_detached_worktree() {
+    let output = "worktree /path/to/detached
+HEAD abcd1234
+detached
+
+";
+
+    let worktrees = WorktreeInfo::parse_porcelain_list(output).unwrap();
+    let [wt]: [WorktreeInfo; 1] = worktrees.try_into().unwrap();
+    assert!(wt.detached);
+    assert_eq!(wt.branch, None);
+}
+
+#[test]
+fn test_finalize_worktree_with_branch() {
+    // Worktree with a branch should not be modified
+    let wt = WorktreeInfo {
+        path: PathBuf::from("/path/to/worktree"),
+        head: "abcd1234".to_string(),
+        branch: Some("feature".to_string()),
+        bare: false,
+        detached: false,
+        locked: None,
+        prunable: None,
+    };
+
+    let finalized = finalize_worktree(wt.clone());
+    assert_eq!(finalized.branch, Some("feature".to_string()));
+}
+
+#[test]
+fn test_finalize_worktree_detached_with_branch() {
+    // Detached worktree with a branch (unusual but possible) should keep the branch
+    let wt = WorktreeInfo {
+        path: PathBuf::from("/path/to/worktree"),
+        head: "abcd1234".to_string(),
+        branch: Some("feature".to_string()),
+        bare: false,
+        detached: true,
+        locked: None,
+        prunable: None,
+    };
+
+    let finalized = finalize_worktree(wt.clone());
+    assert_eq!(finalized.branch, Some("feature".to_string()));
+}
+
+#[test]
+fn test_finalize_worktree_detached_no_branch() {
+    // Detached worktree with no branch should attempt rebase detection
+    // Note: This test validates the logic flow but doesn't test actual file reading
+    // since that would require setting up git rebase state files.
+    // Actual rebase detection has been manually verified.
+    let wt = WorktreeInfo {
+        path: PathBuf::from("/nonexistent/path"),
+        head: "abcd1234".to_string(),
+        branch: None,
+        bare: false,
+        detached: true,
+        locked: None,
+        prunable: None,
+    };
+
+    let finalized = finalize_worktree(wt);
+    // With a nonexistent path, rebase detection should fail gracefully
+    // and branch should remain None
+    assert_eq!(finalized.branch, None);
+}
+
+#[test]
+fn test_parse_locked_worktree() {
+    let output = "worktree /path/to/locked
+HEAD abcd1234
+branch refs/heads/main
+locked reason for lock
+
+";
+
+    let worktrees = WorktreeInfo::parse_porcelain_list(output).unwrap();
+    let [wt]: [WorktreeInfo; 1] = worktrees.try_into().unwrap();
+    assert_eq!(wt.locked, Some("reason for lock".to_string()));
+}
+
+#[test]
+fn test_parse_bare_worktree() {
+    let output = "worktree /path/to/bare
+HEAD abcd1234
+bare
+
+";
+
+    let worktrees = WorktreeInfo::parse_porcelain_list(output).unwrap();
+    let [wt]: [WorktreeInfo; 1] = worktrees.try_into().unwrap();
+    assert!(wt.bare);
+}
+
+#[test]
+fn test_parse_local_default_branch_with_prefix() {
+    let output = "origin/main\n";
+    let branch = DefaultBranchName::from_local("origin", output)
+        .map(DefaultBranchName::into_string)
+        .unwrap();
+    assert_eq!(branch, "main");
+}
+
+#[test]
+fn test_parse_local_default_branch_without_prefix() {
+    let output = "main\n";
+    let branch = DefaultBranchName::from_local("origin", output)
+        .map(DefaultBranchName::into_string)
+        .unwrap();
+    assert_eq!(branch, "main");
+}
+
+#[test]
+fn test_parse_local_default_branch_master() {
+    let output = "origin/master\n";
+    let branch = DefaultBranchName::from_local("origin", output)
+        .map(DefaultBranchName::into_string)
+        .unwrap();
+    assert_eq!(branch, "master");
+}
+
+#[test]
+fn test_parse_local_default_branch_custom_name() {
+    let output = "origin/develop\n";
+    let branch = DefaultBranchName::from_local("origin", output)
+        .map(DefaultBranchName::into_string)
+        .unwrap();
+    assert_eq!(branch, "develop");
+}
+
+#[test]
+fn test_parse_local_default_branch_custom_remote() {
+    let output = "upstream/main\n";
+    let branch = DefaultBranchName::from_local("upstream", output)
+        .map(DefaultBranchName::into_string)
+        .unwrap();
+    assert_eq!(branch, "main");
+}
+
+#[test]
+fn test_parse_local_default_branch_empty() {
+    let output = "";
+    let result =
+        DefaultBranchName::from_local("origin", output).map(DefaultBranchName::into_string);
+    assert!(result.is_err());
+}
+
+#[test]
+fn test_parse_local_default_branch_whitespace_only() {
+    let output = "  \n  ";
+    let result =
+        DefaultBranchName::from_local("origin", output).map(DefaultBranchName::into_string);
+    assert!(result.is_err());
+}
+
+#[test]
+fn test_parse_remote_default_branch_main() {
+    let output = "ref: refs/heads/main\tHEAD
+85a1ce7c7182540f9c02453441cb3e8bf0ced214\tHEAD
+";
+    let branch = DefaultBranchName::from_remote(output)
+        .map(DefaultBranchName::into_string)
+        .unwrap();
+    assert_eq!(branch, "main");
+}
+
+#[test]
+fn test_parse_remote_default_branch_master() {
+    let output = "ref: refs/heads/master\tHEAD
+abcd1234567890abcd1234567890abcd12345678\tHEAD
+";
+    let branch = DefaultBranchName::from_remote(output)
+        .map(DefaultBranchName::into_string)
+        .unwrap();
+    assert_eq!(branch, "master");
+}
+
+#[test]
+fn test_parse_remote_default_branch_custom() {
+    let output = "ref: refs/heads/develop\tHEAD
+1234567890abcdef1234567890abcdef12345678\tHEAD
+";
+    let branch = DefaultBranchName::from_remote(output)
+        .map(DefaultBranchName::into_string)
+        .unwrap();
+    assert_eq!(branch, "develop");
+}
+
+#[test]
+fn test_parse_remote_default_branch_only_symref_line() {
+    let output = "ref: refs/heads/main\tHEAD\n";
+    let branch = DefaultBranchName::from_remote(output)
+        .map(DefaultBranchName::into_string)
+        .unwrap();
+    assert_eq!(branch, "main");
+}
+
+#[test]
+fn test_parse_remote_default_branch_missing_symref() {
+    let output = "85a1ce7c7182540f9c02453441cb3e8bf0ced214\tHEAD\n";
+    let result = DefaultBranchName::from_remote(output).map(DefaultBranchName::into_string);
+    assert!(result.is_err());
+}
+
+#[test]
+fn test_parse_remote_default_branch_empty() {
+    let output = "";
+    let result = DefaultBranchName::from_remote(output).map(DefaultBranchName::into_string);
+    assert!(result.is_err());
+}
+
+#[test]
+fn test_parse_remote_default_branch_malformed_ref() {
+    // Missing refs/heads/ prefix
+    let output = "ref: main\tHEAD\n";
+    let result = DefaultBranchName::from_remote(output).map(DefaultBranchName::into_string);
+    assert!(result.is_err());
+}
+
+#[test]
+fn test_parse_remote_default_branch_with_spaces() {
+    // Space instead of tab - should be rejected as malformed input
+    let output = "ref: refs/heads/main HEAD\n";
+    let result = DefaultBranchName::from_remote(output).map(DefaultBranchName::into_string);
+    // Using split_once correctly rejects malformed input with spaces instead of tabs
+    assert!(result.is_err());
+}
+
+#[test]
+fn test_parse_remote_default_branch_branch_with_slash() {
+    let output = "ref: refs/heads/feature/new-ui\tHEAD\n";
+    let branch = DefaultBranchName::from_remote(output)
+        .map(DefaultBranchName::into_string)
+        .unwrap();
+    assert_eq!(branch, "feature/new-ui");
+}
+
+use super::ResolvedWorktree;
+
+#[test]
+fn test_resolved_worktree_clone() {
+    let wt = ResolvedWorktree::Worktree {
+        path: PathBuf::from("/path/to/worktree"),
+        branch: Some("feature".to_string()),
+    };
+    let cloned = wt.clone();
+    if let ResolvedWorktree::Worktree { path, branch } = cloned {
+        assert_eq!(path, PathBuf::from("/path/to/worktree"));
+        assert_eq!(branch, Some("feature".to_string()));
+    } else {
+        panic!("Expected Worktree variant");
+    }
+}
+
+#[test]
+fn test_resolved_worktree_none_branch() {
+    // Worktree with detached HEAD (no branch)
+    let wt = ResolvedWorktree::Worktree {
+        path: PathBuf::from("/path/to/worktree"),
+        branch: None,
+    };
+    if let ResolvedWorktree::Worktree { path, branch } = wt {
+        assert_eq!(path, PathBuf::from("/path/to/worktree"));
+        assert!(branch.is_none());
+    } else {
+        panic!("Expected Worktree variant");
+    }
+}
+
+#[test]
+fn test_worktree_locked_empty_reason() {
+    let output = "worktree /path/to/locked
+HEAD abcd1234
+branch refs/heads/main
+locked
+
+";
+
+    let worktrees = WorktreeInfo::parse_porcelain_list(output).unwrap();
+    let [wt]: [WorktreeInfo; 1] = worktrees.try_into().unwrap();
+    // Empty lock reason should still be recorded
+    assert_eq!(wt.locked, Some(String::new()));
+}
+
+#[test]
+fn test_worktree_prunable() {
+    let output = "worktree /path/to/prunable
+HEAD abcd1234
+detached
+prunable gitdir file points to non-existent location
+
+";
+
+    let worktrees = WorktreeInfo::parse_porcelain_list(output).unwrap();
+    let [wt]: [WorktreeInfo; 1] = worktrees.try_into().unwrap();
+    assert!(wt.prunable.is_some());
+    assert!(wt.prunable.as_ref().unwrap().contains("non-existent"));
+}
+
+#[test]
+fn test_parse_multiple_worktrees() {
+    let output = "worktree /main
+HEAD 1111111111111111111111111111111111111111
+branch refs/heads/main
+
+worktree /feature-a
+HEAD 2222222222222222222222222222222222222222
+branch refs/heads/feature-a
+
+worktree /feature-b
+HEAD 3333333333333333333333333333333333333333
+branch refs/heads/feature-b
+
+worktree /detached
+HEAD 4444444444444444444444444444444444444444
+detached
+
+";
+
+    let worktrees = WorktreeInfo::parse_porcelain_list(output).unwrap();
+    let [main_wt, feature_a, feature_b, detached_wt]: [WorktreeInfo; 4] =
+        worktrees.try_into().unwrap();
+    assert_eq!(main_wt.branch, Some("main".to_string()));
+    assert_eq!(feature_a.branch, Some("feature-a".to_string()));
+    assert_eq!(feature_b.branch, Some("feature-b".to_string()));
+    assert!(detached_wt.detached);
+    assert_eq!(detached_wt.branch, None);
+}
+
+#[test]
+fn test_default_branch_name_display() {
+    // Test that DefaultBranchName properly extracts branch names
+    let cases = [
+        ("origin/main\n", "main"),
+        ("upstream/develop\n", "develop"),
+        ("origin/master\n", "master"),
+    ];
+
+    for (input, expected) in cases {
+        let remote = input.split('/').next().unwrap();
+        let branch = DefaultBranchName::from_local(remote, input)
+            .map(DefaultBranchName::into_string)
+            .unwrap();
+        assert_eq!(branch, expected);
+    }
+}
+
+#[test]
+fn repo_path_error_when_is_bare_fails() {
+    use super::RepoCache;
+    use std::sync::Arc;
+
+    // Create a Repository with a non-existent git_common_dir.
+    // is_bare() fails because the bulk config read can't run in a missing dir.
+    let repo = super::Repository {
+        discovery_path: PathBuf::from("/nonexistent/repo"),
+        git_common_dir: PathBuf::from("/nonexistent/.git"),
+        cache: Arc::new(RepoCache::default()),
+    };
+
+    let err = repo.repo_path().unwrap_err();
+    let msg = format!("{err:#}");
+    // The OS error text is platform-specific (e.g., "No such file or directory" on Unix,
+    // "The directory name is invalid." on Windows), so only assert the stable prefix.
+    assert!(
+        msg.starts_with("failed to read git config: "),
+        "unexpected error message: {msg}"
+    );
+}
+
+#[test]
+fn repo_path_ignores_non_local_core_worktree() {
+    use super::RepoCache;
+    use indexmap::IndexMap;
+    use std::sync::{Arc, RwLock};
+
+    // Regression test: `git config --list -z` merges system + global + local
+    // scope, but git only honors `core.worktree` from local config. A user
+    // with a stray global `core.worktree` in a normal repo should still see
+    // `parent(.git)` as the repo root — `rev-parse --show-toplevel` fails
+    // from inside `.git` in that case and we fall through.
+    let tmp = tempfile::tempdir().unwrap();
+    let git_dir = tmp.path().join(".git");
+    std::fs::create_dir(&git_dir).unwrap();
+
+    let cache = RepoCache::default();
+    let mut map: IndexMap<String, Vec<String>> = IndexMap::new();
+    map.insert("core.bare".to_string(), vec!["false".to_string()]);
+    // Simulate a `core.worktree` picked up from global config. The path
+    // doesn't have to exist — it only has to be present in the bulk map.
+    map.insert(
+        "core.worktree".to_string(),
+        vec!["/nonexistent/global/worktree".to_string()],
+    );
+    cache.all_config.set(RwLock::new(map)).unwrap();
+
+    let repo = super::Repository {
+        discovery_path: tmp.path().to_path_buf(),
+        git_common_dir: git_dir.clone(),
+        cache: Arc::new(cache),
+    };
+
+    // Should fall through to parent(git_common_dir), ignoring the bulk value.
+    assert_eq!(repo.repo_path().unwrap(), tmp.path());
+}
+
+#[test]
+fn parse_config_list_z_basic() {
+    let input = b"core.bare\nfalse\0remote.origin.url\nhttps://example.com/a.git\0";
+    let map = super::parse_config_list_z(input);
+    assert_eq!(map["core.bare"], vec!["false"]);
+    assert_eq!(map["remote.origin.url"], vec!["https://example.com/a.git"]);
+}
+
+#[test]
+fn parse_config_list_z_multivar() {
+    let input =
+        b"remote.origin.fetch\n+refs/heads/*:refs/remotes/origin/*\0remote.origin.fetch\n+refs/tags/*:refs/tags/*\0";
+    let map = super::parse_config_list_z(input);
+    assert_eq!(
+        map["remote.origin.fetch"],
+        vec![
+            "+refs/heads/*:refs/remotes/origin/*",
+            "+refs/tags/*:refs/tags/*"
+        ]
+    );
+}
+
+#[test]
+fn parse_config_list_z_newline_in_value() {
+    // A value with embedded newlines is preserved verbatim because -z uses
+    // NUL as the record separator. The split_once('\n') only splits on the
+    // first newline (which separates key from value).
+    let input = b"commit.template\nline1\nline2\0core.bare\nfalse\0";
+    let map = super::parse_config_list_z(input);
+    assert_eq!(map["commit.template"], vec!["line1\nline2"]);
+    assert_eq!(map["core.bare"], vec!["false"]);
+}
+
+#[test]
+fn parse_config_list_z_equals_in_value() {
+    // Values containing `=` are preserved — no splitting on `=` because
+    // the key/value separator under `-z` is `\n`.
+    let input = b"user.email\nme=you@example.com\0";
+    let map = super::parse_config_list_z(input);
+    assert_eq!(map["user.email"], vec!["me=you@example.com"]);
+}
+
+#[test]
+fn parse_config_list_z_empty() {
+    let map = super::parse_config_list_z(b"");
+    assert!(map.is_empty());
+}
+
+#[test]
+fn parse_config_list_z_entry_without_newline_tolerates_key_only() {
+    // `git config --list -z` always emits `key\nvalue\0`, but the parser
+    // tolerates bare `key\0` by mapping it to `key -> ""` rather than
+    // dropping the entry. Lets a future git oddity be diagnosed at the
+    // use-site instead of silently missing.
+    let input = b"core.bare\0other.key\nfalse\0";
+    let map = super::parse_config_list_z(input);
+    assert_eq!(map["core.bare"], vec![""]);
+    assert_eq!(map["other.key"], vec!["false"]);
+}
+
+#[test]
+fn canonical_config_key_cases() {
+    // section + variable: both lowercased
+    assert_eq!(
+        super::canonical_config_key("init.defaultBranch"),
+        "init.defaultbranch"
+    );
+    assert_eq!(
+        super::canonical_config_key("checkout.defaultRemote"),
+        "checkout.defaultremote"
+    );
+    assert_eq!(super::canonical_config_key("core.Bare"), "core.bare");
+    // 3+ parts: section + variable lowercased, subsection preserved
+    assert_eq!(
+        super::canonical_config_key("remote.MyFork.url"),
+        "remote.MyFork.url"
+    );
+    assert_eq!(
+        super::canonical_config_key("branch.MyBranch.pushRemote"),
+        "branch.MyBranch.pushremote"
+    );
+    // 4+ parts: subsection is the middle (spanning dots); only first and last lowercase
+    assert_eq!(
+        super::canonical_config_key("worktrunk.state.MyBranch.marker"),
+        "worktrunk.state.MyBranch.marker"
+    );
+}
+
+#[test]
+fn parse_git_bool_variants() {
+    for truthy in ["true", "TRUE", "True", "1", "yes", "YES", "on", "ON"] {
+        assert!(super::parse_git_bool(truthy), "{truthy} should be true");
+    }
+    for falsy in ["false", "0", "no", "off", "", "anything-else"] {
+        assert!(!super::parse_git_bool(falsy), "{falsy} should be false");
+    }
+}
+
+#[test]
+fn worktree_config_enabled_detects_extension() {
+    // The detector keys on the lowercased canonical form that git emits in
+    // `--list -z` output. Both git-bool truthy spellings and the absent/
+    // explicitly-false cases must classify correctly — getting either wrong
+    // breaks the prewarm-skip in `prewarm_git_config` (see issue #2779).
+    use indexmap::IndexMap;
+
+    let mut empty: IndexMap<String, Vec<String>> = IndexMap::new();
+    assert!(!super::worktree_config_enabled(&empty));
+
+    empty.insert(
+        "extensions.worktreeconfig".to_string(),
+        vec!["false".to_string()],
+    );
+    assert!(!super::worktree_config_enabled(&empty));
+
+    for truthy in ["true", "1", "yes", "on"] {
+        let mut map: IndexMap<String, Vec<String>> = IndexMap::new();
+        map.insert(
+            "extensions.worktreeconfig".to_string(),
+            vec![truthy.to_string()],
+        );
+        assert!(
+            super::worktree_config_enabled(&map),
+            "{truthy} should be truthy"
+        );
+    }
+
+    // Multivar: the *last* value wins, matching git's own semantics.
+    let mut map: IndexMap<String, Vec<String>> = IndexMap::new();
+    map.insert(
+        "extensions.worktreeconfig".to_string(),
+        vec!["true".to_string(), "false".to_string()],
+    );
+    assert!(!super::worktree_config_enabled(&map));
+    let mut map: IndexMap<String, Vec<String>> = IndexMap::new();
+    map.insert(
+        "extensions.worktreeconfig".to_string(),
+        vec!["false".to_string(), "true".to_string()],
+    );
+    assert!(super::worktree_config_enabled(&map));
+}
+
+#[test]
+fn extract_failed_command_from_stream_error() {
+    use crate::shell_exec::StreamCommandError;
+
+    let err: anyhow::Error = StreamCommandError {
+        output: "fatal: ref exists".into(),
+        command: "git worktree add /path".into(),
+        exit_info: "exit code 128".into(),
+    }
+    .into();
+
+    let (output, cmd) = super::Repository::extract_failed_command(&err);
+    assert_eq!(output, "fatal: ref exists");
+    let cmd = cmd.unwrap();
+    assert_eq!(cmd.command, "git worktree add /path");
+    assert_eq!(cmd.exit_info, "exit code 128");
+}
+
+#[test]
+fn extract_failed_command_from_other_error() {
+    let err = anyhow::anyhow!("some other error");
+
+    let (output, cmd) = super::Repository::extract_failed_command(&err);
+    assert_eq!(output, "some other error");
+    assert!(cmd.is_none());
+}
+
+#[test]
+fn extract_failed_command_from_command_error() {
+    // A buffered `git` failure (Repository::run_command,
+    // WorkingTree::run_command) surfaces as a typed CommandError, possibly
+    // wrapped by `.context(...)`. extract_failed_command must walk the
+    // chain so callers like switch::worktree_creation_error keep working.
+    use crate::git::CommandError;
+    use anyhow::Context;
+
+    let inner = CommandError {
+        program: "git".into(),
+        args: vec!["worktree".into(), "add".into(), "/path".into()],
+        stderr: "fatal: invalid reference: foo".into(),
+        stdout: String::new(),
+        exit_code: Some(128),
+    };
+    let err: anyhow::Error = Err::<(), _>(inner)
+        .context("creating worktree")
+        .unwrap_err();
+
+    let (output, cmd) = super::Repository::extract_failed_command(&err);
+    assert_eq!(output, "fatal: invalid reference: foo");
+    let cmd = cmd.unwrap();
+    assert_eq!(cmd.command, "git worktree add /path");
+    assert_eq!(cmd.exit_info, "exit code 128");
+}
+
+#[test]
+fn is_builtin_fsmonitor_enabled_variants() {
+    use super::RepoCache;
+    use indexmap::IndexMap;
+    use std::sync::{Arc, RwLock};
+
+    fn repo_with_fsmonitor(value: Option<&str>) -> super::Repository {
+        let cache = RepoCache::default();
+        let mut map: IndexMap<String, Vec<String>> = IndexMap::new();
+        if let Some(v) = value {
+            map.insert("core.fsmonitor".to_string(), vec![v.to_string()]);
+        }
+        cache.all_config.set(RwLock::new(map)).unwrap();
+        super::Repository {
+            discovery_path: PathBuf::from("/nonexistent/repo"),
+            git_common_dir: PathBuf::from("/nonexistent/.git"),
+            cache: Arc::new(cache),
+        }
+    }
+
+    // Builtin daemon: any git-bool truthy value enables it.
+    for truthy in ["true", "1", "yes", "on", "TRUE"] {
+        assert!(
+            repo_with_fsmonitor(Some(truthy)).is_builtin_fsmonitor_enabled(),
+            "{truthy} should enable builtin fsmonitor"
+        );
+    }
+
+    // Watchman hook path is NOT the builtin daemon — must return false even
+    // though the value is non-empty and truthy in the colloquial sense.
+    assert!(
+        !repo_with_fsmonitor(Some("/usr/local/bin/git-fsmonitor-watchman.sh"))
+            .is_builtin_fsmonitor_enabled()
+    );
+
+    // Explicitly disabled and unset both report false.
+    for falsy in ["false", "0", "no", "off"] {
+        assert!(
+            !repo_with_fsmonitor(Some(falsy)).is_builtin_fsmonitor_enabled(),
+            "{falsy} should disable builtin fsmonitor"
+        );
+    }
+    assert!(!repo_with_fsmonitor(None).is_builtin_fsmonitor_enabled());
+}
+
+#[test]
+fn commit_details_many_returns_subject_with_spaces() {
+    use crate::testing::TestRepo;
+
+    let test = TestRepo::new();
+    // Commit with a multi-word subject — regression against parsers that split
+    // on the first space and treat "word1" as the timestamp.
+    test.commit_with_message("first commit with spaces");
+    let sha1 = test.repo.run_command(&["rev-parse", "HEAD"]).unwrap();
+    let sha1 = sha1.trim().to_string();
+
+    test.commit_with_message("second commit");
+    let sha2 = test.repo.run_command(&["rev-parse", "HEAD"]).unwrap();
+    let sha2 = sha2.trim().to_string();
+
+    let result = test
+        .repo
+        .commit_details_many(&[sha1.as_str(), sha2.as_str()])
+        .unwrap();
+
+    assert_eq!(result.len(), 2);
+    let (short1, ts1, subject1) = &result[&sha1];
+    let (short2, ts2, subject2) = &result[&sha2];
+    assert_eq!(subject1, "first commit with spaces");
+    assert_eq!(subject2, "second commit");
+    assert!(*ts1 > 0);
+    assert!(*ts2 > 0);
+    // Short SHAs are a prefix of the full SHA; default `core.abbrev` is 7,
+    // and a fresh test repo never needs more than that.
+    assert!(sha1.starts_with(short1.as_str()));
+    assert!(sha2.starts_with(short2.as_str()));
+}
+
+#[test]
+fn commit_details_many_empty_input_is_noop() {
+    use crate::testing::TestRepo;
+
+    let test = TestRepo::with_initial_commit();
+    let result = test.repo.commit_details_many(&[]).unwrap();
+    assert!(result.is_empty());
+}
+
+#[test]
+fn commit_details_many_primes_commit_tree_cache() {
+    use crate::testing::TestRepo;
+
+    // The batch reads `%T` so the `wt list` per-row tree lookups
+    // (CommittedTreesMatch / WouldMergeAdd) hit memory instead of forking
+    // `git rev-parse <sha>^{tree}` each.
+    let test = TestRepo::new();
+    test.commit_with_message("first");
+    let sha = test.repo.run_command(&["rev-parse", "HEAD"]).unwrap();
+    let sha = sha.trim().to_string();
+    let tree = test.git_output(&["rev-parse", "HEAD^{tree}"]);
+
+    // Cold before the batch.
+    assert!(!test.repo.cache.commit_tree.contains_key(&sha));
+
+    test.repo.commit_details_many(&[sha.as_str()]).unwrap();
+
+    let cached = test
+        .repo
+        .cache
+        .commit_tree
+        .get(&sha)
+        .map(|e| e.value().clone());
+    assert_eq!(cached, Some(tree));
+}
+
+#[test]
+fn prime_worktree_path_caches_matches_subprocess() {
+    use crate::git::Repository;
+    use crate::testing::TestRepo;
+    use dunce::canonicalize;
+
+    let test = TestRepo::with_initial_commit();
+    // A linked worktree as a sibling of the main worktree.
+    let linked = test.root_path().parent().unwrap().join("linked-feature");
+    test.run_git(&["worktree", "add", "-b", "feature", linked.to_str().unwrap()]);
+
+    let repo = Repository::at(test.root_path()).unwrap();
+    let worktrees: Vec<_> = repo.list_worktrees().unwrap().to_vec();
+    assert!(worktrees.len() >= 2, "main + linked worktree");
+
+    repo.prime_worktree_path_caches(&worktrees);
+
+    for wt in &worktrees {
+        let key = canonicalize(&wt.path).unwrap();
+        // Priming actually populated both maps (no silent skip).
+        let primed_root = super::WORKTREE_ROOTS
+            .get(&key)
+            .map(|e| e.value().clone())
+            .expect("root primed");
+        let primed_git_dir = super::GIT_DIRS
+            .get(&key)
+            .map(|e| e.value().clone())
+            .expect("git_dir primed");
+
+        // Oracle: drop the primed entries, then let the production `root()` /
+        // `git_dir()` recompute via `git rev-parse`. The primed values must
+        // match what the subprocess path produces.
+        super::WORKTREE_ROOTS.remove(&key);
+        super::GIT_DIRS.remove(&key);
+        let wtree = repo.worktree_at(&wt.path);
+        assert_eq!(primed_root, wtree.root().unwrap(), "root for {key:?}");
+        assert_eq!(
+            primed_git_dir,
+            wtree.git_dir().unwrap(),
+            "git_dir for {key:?}"
+        );
+    }
+}
+
+#[test]
+fn commit_details_many_fails_loudly_on_unknown_sha() {
+    // `git log --no-walk` refuses the whole batch on a single bad ref. The
+    // error surfaces as an `Err`, which `collect()` turns into a user-facing
+    // warning. Pin this behavior so we don't silently fall back to
+    // empty-map defaults.
+    use crate::testing::TestRepo;
+
+    let test = TestRepo::with_initial_commit();
+    let bogus = "0000000000000000000000000000000000000001";
+    let err = test.repo.commit_details_many(&[bogus]).unwrap_err();
+    let msg = format!("{err:#}");
+    assert!(
+        msg.contains("git") || msg.contains("unknown") || msg.contains("bad"),
+        "error message should surface git's complaint about the bogus SHA, got: {msg}"
+    );
+}
+
+#[test]
+fn commit_details_many_preserves_multibyte_utf8_subject() {
+    // Pin that multibyte UTF-8 round-trips through the NUL-delimited parser —
+    // `splitn(5, '\0')` works on byte positions, so char boundaries inside the
+    // subject must be preserved intact.
+    use crate::testing::TestRepo;
+
+    let test = TestRepo::new();
+    let subject = "Add support for 日本語 and émoji 🎉";
+    test.commit_with_message(subject);
+    let sha = test
+        .repo
+        .run_command(&["rev-parse", "HEAD"])
+        .unwrap()
+        .trim()
+        .to_string();
+
+    let result = test.repo.commit_details_many(&[sha.as_str()]).unwrap();
+
+    assert_eq!(result[&sha].2, subject);
+}
+
+#[test]
+fn commit_details_many_deduplicates_repeated_sha() {
+    // `git log --no-walk SHA SHA` emits each commit once; pin that the batch
+    // returns a single entry for a duplicated input SHA.
+    use crate::testing::TestRepo;
+
+    let test = TestRepo::new();
+    test.commit_with_message("only commit");
+    let sha = test
+        .repo
+        .run_command(&["rev-parse", "HEAD"])
+        .unwrap()
+        .trim()
+        .to_string();
+
+    let result = test
+        .repo
+        .commit_details_many(&[sha.as_str(), sha.as_str(), sha.as_str()])
+        .unwrap();
+
+    assert_eq!(result.len(), 1);
+    assert_eq!(result[&sha].2, "only commit");
+}
+
+#[test]
+fn commit_message_details_returns_subjects_and_bodies_in_git_order() {
+    use super::CommitMessageDetail;
+    use crate::testing::TestRepo;
+
+    let test = TestRepo::new();
+    test.commit_with_message("base");
+
+    test.commit_in_worktree(
+        test.root_path(),
+        "first.txt",
+        "first content",
+        "first subject\n\nline 1\nline 2\n\nTrailer: value",
+    );
+    test.commit_in_worktree(
+        test.root_path(),
+        "second.txt",
+        "second content",
+        "second subject",
+    );
+
+    let range = "HEAD~2..HEAD";
+    let result = test.repo.commit_message_details(range).unwrap();
+
+    assert_eq!(
+        result,
+        vec![
+            CommitMessageDetail {
+                subject: "second subject".to_string(),
+                body: String::new(),
+            },
+            CommitMessageDetail {
+                subject: "first subject".to_string(),
+                body: "line 1\nline 2\n\nTrailer: value\n".to_string(),
+            },
+        ]
+    );
+}
+
+#[test]
+#[cfg(unix)]
+fn worktree_at_path_resolves_symlinked_path() {
+    // Reproduction for issue #2460: `wt switch` fails to resolve existing
+    // worktrees through symlink paths because `worktree_at_path` compares
+    // paths lexically and misses symlink-equivalent spellings.
+    use crate::testing::TestRepo;
+
+    let mut test = TestRepo::with_initial_commit();
+    let worktree_path = test.add_worktree("feature");
+
+    let parent = worktree_path.parent().unwrap();
+    let symlink_path = parent.join("feature-link");
+    std::os::unix::fs::symlink(&worktree_path, &symlink_path).unwrap();
+
+    let resolved = test.repo.worktree_at_path(&symlink_path).unwrap();
+    assert!(
+        resolved.is_some(),
+        "worktree_at_path should resolve a symlinked path to its target worktree, got None for {symlink_path:?} -> {worktree_path:?}"
+    );
+    let (_, branch) = resolved.unwrap();
+    assert_eq!(branch.as_deref(), Some("feature"));
+}
+
+#[test]
+fn current_worktree_anchors_to_repository_discovery_path() {
+    // `Repository::at(p).current_worktree()` must resolve relative to `p`,
+    // not to the test process's CWD. PR #2625 fixed one symptom of the
+    // opposite behavior (`infer_default_branch_locally` calling
+    // `current_worktree().is_linked()` and reaching for process CWD); the
+    // structural fix anchored `current_worktree` to `self.discovery_path`,
+    // which this test pins down so the bug class can't regress.
+    use super::Repository;
+    use crate::testing::TestRepo;
+    use dunce::canonicalize;
+
+    let test = TestRepo::with_initial_commit();
+    let repo = Repository::at(test.repo.discovery_path().to_path_buf()).unwrap();
+
+    let wt_path = repo.current_worktree().path().to_path_buf();
+    let expected = canonicalize(test.repo.discovery_path()).unwrap();
+    assert_eq!(
+        wt_path, expected,
+        "current_worktree() should resolve to the Repository's discovery path, not the process CWD",
+    );
+    // The bug we're guarding against: `current_worktree()` previously used
+    // the process CWD (`base_path()`), which for unit tests is the cargo
+    // working directory — different from any test repo's tempdir.
+    let process_cwd = canonicalize(std::env::current_dir().unwrap()).unwrap();
+    assert_ne!(
+        wt_path, process_cwd,
+        "current_worktree() must not resolve to the process CWD when Repository::at(p) was given a different path",
+    );
+}
+
+/// Build the bare-style `myproject/.git` layout with
+/// `extensions.worktreeConfig = true` that triggers issue #2779.
+///
+/// Returns `(temp_dir, project_root, main_worktree_path, linked_worktree_path)`.
+/// The bare git data lives in `<project>/.git` (no separate `.bare/` subdir);
+/// `extensions.worktreeConfig` is set on shared config, and `core.bare = true`
+/// is set on the main worktree's per-worktree config. The main and linked
+/// worktrees sit beside `.git/` as sibling subdirectories.
+#[cfg(test)]
+fn build_worktree_config_bare_layout() -> (tempfile::TempDir, std::path::PathBuf, PathBuf, PathBuf)
+{
+    use super::canonicalize;
+    use crate::shell_exec::Cmd;
+
+    let tmp = tempfile::tempdir().unwrap();
+    let project_root = canonicalize(tmp.path()).unwrap().join("myproject");
+    std::fs::create_dir_all(&project_root).unwrap();
+    let git_dir = project_root.join(".git");
+
+    let gitconfig = tmp.path().join("test-gitconfig");
+    std::fs::write(
+        &gitconfig,
+        "[init]\n\tdefaultBranch = main\n[user]\n\tname = test\n\temail = test@test\n",
+    )
+    .unwrap();
+    let git = || {
+        Cmd::new("git")
+            .env("GIT_CONFIG_GLOBAL", &gitconfig)
+            .env("GIT_CONFIG_SYSTEM", "/dev/null")
+            .env("GIT_TERMINAL_PROMPT", "0")
+            .env("LC_ALL", "C")
+            .env("LANG", "C")
+            .env("GIT_AUTHOR_DATE", "2025-01-01T00:00:00Z")
+            .env("GIT_COMMITTER_DATE", "2025-01-01T00:00:00Z")
+    };
+
+    let path_str = |p: &std::path::Path| p.to_str().unwrap().to_owned();
+
+    // Bare repo at `myproject/.git` (no sibling `.bare/` — minimal layout
+    // from issue #2779).
+    let out = git()
+        .args(["init", "--bare", "-b", "main", &path_str(&git_dir)])
+        .run()
+        .unwrap();
+    assert!(out.status.success(), "git init --bare failed");
+
+    // Flip the trio: bare = false in shared config, worktreeConfig enabled,
+    // bare = true in the *main worktree's* per-worktree config (which lives
+    // at `.git/config.worktree`).
+    let shared_config = path_str(&git_dir.join("config"));
+    git()
+        .args(["config", "--file", &shared_config, "core.bare", "false"])
+        .run()
+        .unwrap();
+    git()
+        .args([
+            "config",
+            "--file",
+            &shared_config,
+            "extensions.worktreeConfig",
+            "true",
+        ])
+        .run()
+        .unwrap();
+    std::fs::write(git_dir.join("config.worktree"), "[core]\n\tbare = true\n").unwrap();
+
+    // Make HEAD resolvable and add a commit so worktree add can check out.
+    let commit_sha = git()
+        .current_dir(&git_dir)
+        .args([
+            "commit-tree",
+            "-m",
+            "init",
+            super::integration::EMPTY_TREE_SHA,
+        ])
+        .run()
+        .unwrap();
+    assert!(commit_sha.status.success(), "commit-tree failed");
+    let sha = String::from_utf8(commit_sha.stdout)
+        .unwrap()
+        .trim()
+        .to_string();
+    git()
+        .current_dir(&git_dir)
+        .args(["update-ref", "refs/heads/main", &sha])
+        .run()
+        .unwrap();
+
+    let main_worktree = project_root.join("main");
+    let out = git()
+        .current_dir(&git_dir)
+        .args(["worktree", "add", &path_str(&main_worktree), "main"])
+        .run()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "worktree add main: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+
+    let linked = project_root.join("feature");
+    let out = git()
+        .current_dir(&git_dir)
+        .args(["worktree", "add", "-b", "feature", &path_str(&linked)])
+        .run()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "worktree add feature: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+
+    (
+        tmp,
+        project_root,
+        canonicalize(&main_worktree).unwrap(),
+        canonicalize(&linked).unwrap(),
+    )
+}
+
+#[test]
+fn prewarm_from_linked_worktree_under_worktree_config_preserves_is_bare() {
+    // Regression for issue #2779. The bare-style `myproject/.git + sibling
+    // worktrees` layout with `extensions.worktreeConfig = true` parks
+    // `core.bare = true` in the *main worktree's* `config.worktree`. Git's
+    // `config --list` run from a linked worktree merges only the linked
+    // worktree's own per-worktree config, so it sees `core.bare = false`
+    // and misses the `true`. Before the fix, `prewarm_git_config` cached
+    // that incomplete map; `Repository::at` then short-circuited
+    // `all_config()` with the stale value, and `is_bare()` returned
+    // `false` from the linked worktree.
+    //
+    // After the fix, the prewarm detects `extensions.worktreeconfig=true`
+    // and skips the preload — `all_config()` re-forks from
+    // `git_common_dir`, which sees the merged set.
+    use super::Repository;
+
+    let (_tmp, _project, _main, linked) = build_worktree_config_bare_layout();
+
+    Repository::prewarm_at(&linked);
+    let repo = Repository::at(&linked).unwrap();
+
+    assert!(
+        repo.is_bare().unwrap(),
+        "is_bare must read core.bare=true from the main worktree's config.worktree, \
+         even when prewarm ran from a linked worktree"
+    );
+}
+
+#[test]
+fn repo_path_from_linked_worktree_under_worktree_config_is_git_common_dir() {
+    // Companion to the is_bare regression above: once `is_bare()` reads
+    // correctly, `repo_path()` returns `git_common_dir` (the bare branch
+    // of the match). Before the fix it fell through to
+    // `parent(git_common_dir)`, walking one level too high and producing
+    // the "wt switch creates worktree in the parent dir" symptom from
+    // issue #2779. Pin both paths.
+    use super::Repository;
+    use super::canonicalize;
+
+    let (_tmp, _project, _main, linked) = build_worktree_config_bare_layout();
+
+    Repository::prewarm_at(&linked);
+    let repo = Repository::at(&linked).unwrap();
+    let expected = canonicalize(repo.git_common_dir()).unwrap();
+    let actual = canonicalize(repo.repo_path().unwrap()).unwrap();
+    assert_eq!(actual, expected);
+}
+
+#[test]
+fn prewarm_skips_preload_when_worktree_config_enabled() {
+    // Direct test of the prewarm skip: with the extension on, the preload
+    // map for the linked worktree must stay empty so `all_config()`
+    // re-forks from `git_common_dir` instead of consuming a stale map.
+    let (_tmp, _project, _main, linked) = build_worktree_config_bare_layout();
+
+    super::Repository::prewarm_at(&linked);
+    assert!(
+        super::GIT_CONFIG_PRELOAD.get(&linked).is_none(),
+        "prewarm must skip GIT_CONFIG_PRELOAD when extensions.worktreeConfig=true"
+    );
+}
+
+#[test]
+fn prewarm_still_caches_preload_when_worktree_config_disabled() {
+    // The skip is targeted: normal repos (no worktreeConfig extension)
+    // still benefit from the prewarm preload. This guards against
+    // regressing the optimization for the common case while fixing #2779.
+    //
+    // Build a fresh repo directly (bypass `TestRepo`, whose constructor
+    // calls `Repository::at` and populates `GIT_COMMON_DIR_CACHE` — that
+    // short-circuits `prewarm_at` before it can run the config preload).
+    use super::canonicalize;
+    use crate::shell_exec::Cmd;
+
+    let tmp = tempfile::tempdir().unwrap();
+    let root = canonicalize(tmp.path()).unwrap().join("normal");
+    std::fs::create_dir_all(&root).unwrap();
+    let gitconfig = tmp.path().join("test-gitconfig");
+    std::fs::write(&gitconfig, "[init]\n\tdefaultBranch = main\n").unwrap();
+
+    let out = Cmd::new("git")
+        .env("GIT_CONFIG_GLOBAL", &gitconfig)
+        .env("GIT_CONFIG_SYSTEM", "/dev/null")
+        .env("LC_ALL", "C")
+        .args(["init", "-b", "main", root.to_str().unwrap()])
+        .run()
+        .unwrap();
+    assert!(out.status.success(), "git init failed");
+
+    super::Repository::prewarm_at(&root);
+    assert!(
+        super::GIT_CONFIG_PRELOAD.get(&root).is_some(),
+        "prewarm should preload normal repos (no extensions.worktreeConfig)"
+    );
+}
