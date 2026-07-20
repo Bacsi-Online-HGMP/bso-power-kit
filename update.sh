@@ -9,8 +9,14 @@ cd "$HERE"
 echo "==> git pull"
 git pull --rebase --autostash
 
-# Config dirs to keep in sync. Add more as you create accounts.
-TARGETS=( "$HOME/.claude" "$HOME/.claude-pro2" )
+# Config dirs to keep in sync. Add more as you create accounts/profiles.
+# (bacsi-online + science are claude-multiprofile / launcher profiles)
+TARGETS=(
+  "$HOME/.claude"
+  "$HOME/.claude-bacsi-online"
+  "$HOME/.claude-science"
+  "$HOME/.claude-pro2"
+)
 
 for T in "${TARGETS[@]}"; do
   [ -d "$T" ] || continue
@@ -25,13 +31,18 @@ for T in "${TARGETS[@]}"; do
   echo "==> dotfiles refreshed: $T"
 done
 
-# Marketplace update per account (non-fatal if CLI absent or logged out)
-command -v claude >/dev/null 2>&1 && {
-  claude plugin marketplace update claude-power-kit 2>/dev/null \
-    && echo "==> marketplace updated: default account" || true
-  [ -d "$HOME/.claude-pro2" ] && CLAUDE_CONFIG_DIR="$HOME/.claude-pro2" \
-    claude plugin marketplace update claude-power-kit 2>/dev/null \
-    && echo "==> marketplace updated: pro2 account" || true
-}
+# Marketplace update per config dir (non-fatal if CLI absent or logged out)
+if command -v claude >/dev/null 2>&1; then
+  for T in "${TARGETS[@]}"; do
+    [ -d "$T" ] || continue
+    if [ "$T" = "$HOME/.claude" ]; then
+      claude plugin marketplace update claude-power-kit 2>/dev/null \
+        && echo "==> marketplace updated: default" || true
+    else
+      CLAUDE_CONFIG_DIR="$T" claude plugin marketplace update claude-power-kit 2>/dev/null \
+        && echo "==> marketplace updated: $(basename "$T")" || true
+    fi
+  done
+fi
 
 echo "==> update complete $(date '+%Y-%m-%d %H:%M')"
