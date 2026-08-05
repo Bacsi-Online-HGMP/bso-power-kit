@@ -73,3 +73,5 @@ huggingface-zerogpu	huggingface-skills	PH1	huan luyen/trien khai mo hinh ML; BSO
 train-sentence-transformers	huggingface-skills	PH1	huan luyen/trien khai mo hinh ML; BSO dung mo hinh qua API
 transformers-js	huggingface-skills	PH1	huan luyen/trien khai mo hinh ML; BSO dung mo hinh qua API
 trl-training	huggingface-skills	PH1	huan luyen/trien khai mo hinh ML; BSO dung mo hinh qua API
+superpowers	claude-plugins-official	trung	mattpocock-skills phu grilling/diagnosing/writing-skills; verification-before-completion da tach ra rieng
+ecc	ecc	catB	NG=1 va khong skill nao dung duoc: verification-loop doi build/test BSO khong co, security-review 494 dong trung security-guidance

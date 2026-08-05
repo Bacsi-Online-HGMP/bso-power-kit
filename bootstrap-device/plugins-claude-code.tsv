@@ -15,6 +15,7 @@ marketplace	ecc	https://github.com/affaan-m/ECC.git
 marketplace	huggingface-skills	huggingface/skills	
 marketplace	karpathy-skills	multica-ai/andrej-karpathy-skills	
 marketplace	ponytail	DietrichGebert/ponytail	
+plugin	andrej-karpathy-skills	karpathy-skills	code
 plugin	caveman	caveman	vanphong
 plugin	chrome-devtools-mcp	claude-plugins-official	seo
 plugin	claude-md-management	claude-plugins-official	core
@@ -23,11 +24,10 @@ plugin	commit-commands	claude-plugins-official	core
 plugin	desktop-commander	claude-plugins-official	core
 plugin	github	claude-plugins-official	code
 plugin	hookify	claude-plugins-official	core
+plugin	mattpocock-skills	claude-power-kit	code
 plugin	plugin-dev	claude-plugins-official	core
+plugin	ponytail	ponytail	vanphong
 plugin	pyright-lsp	claude-plugins-official	code
 plugin	security-guidance	claude-plugins-official	core
 plugin	skill-creator	claude-plugins-official	core
-plugin	superpowers	claude-plugins-official	code
-plugin	ecc	ecc	code
-plugin	andrej-karpathy-skills	karpathy-skills	code
-plugin	ponytail	ponytail	vanphong
+plugin	verification-before-completion	claude-power-kit	core

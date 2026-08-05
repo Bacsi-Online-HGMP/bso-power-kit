@@ -61,7 +61,7 @@
     {
       "name": "mattpocock-skills",
       "source": "./plugins/mattpocock-skills-main",
-      "description": "C · Discipline — TypeScript engineering skills."
+      "description": "C · Discipline — 19 engineering & productivity skills: grilling, diagnosing-bugs, writing-great-skills."
     },
     {
       "name": "caveman",
@@ -122,6 +122,11 @@
       "name": "handoff",
       "source": "./plugins/handoff",
       "description": "P · Productivity — write a session handoff doc instead of /compact."
+    },
+    {
+      "name": "verification-before-completion",
+      "source": "./plugins/verification-before-completion",
+      "description": "C · Discipline — evidence before assertions; rescued from superpowers (MIT, Jesse Vincent)."
     }
   ]
 }

@@ -1,6 +1,6 @@
 ---
 name: handoff
-description: Generate a session handoff document that captures project state, key decisions with rationale, open items, and the next step so work can resume in a fresh session without losing context. Use when the user says "handoff", "hand off", "create a handoff", "session handoff", "save my context", "before I compact / instead of compacting", "resume file", or otherwise wants to preserve reasoning rather than run /compact.
+description: Generate a session handoff document that captures project state, key decisions with rationale, open items, and the next step so work can resume in a fresh session without losing context. Use when the user says "handoff", "hand off", "create a handoff", "session handoff", "save my context", "before I compact / instead of compacting", "resume file", or otherwise wants to preserve reasoning rather than run /compact. THIS is the handoff to use when the handoff file must live in the working folder alongside the project — prefer it over any handoff skill that writes to a temporary directory.
 ---
 
 # Handoff
@@ -51,3 +51,13 @@ Fill every section; write "none" if empty. Keep it skimmable — bullets over pr
 - Convert relative dates ("yesterday", "last week") to absolute dates.
 - **Never overwrite** an existing handoff — date or version it.
 - Match length to the work: a small task gets a short handoff; don't pad.
+- **Don't duplicate what another artifact already holds.** If a decision is already in a commit
+  message, an ADR, a plan or a spec, reference it by path or URL instead of restating it.
+- **Redact secrets.** No API keys, tokens, passwords or personal data in the handoff file.
+
+## Suggested skills
+
+End the document with a short `## Suggested skills` section naming the skills the next session
+should reach for, so a fresh agent does not have to rediscover them.
+
+*The last three rules are adapted from the `handoff` skill in mattpocock/skills (MIT).*

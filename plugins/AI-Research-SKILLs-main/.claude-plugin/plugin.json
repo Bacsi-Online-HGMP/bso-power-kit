@@ -9,8 +9,6 @@
     "./01-model-architecture/nanogpt",
     "./01-model-architecture/rwkv",
     "./01-model-architecture/torchtitan",
-    "./02-tokenization/huggingface-tokenizers",
-    "./02-tokenization/sentencepiece",
     "./03-fine-tuning/axolotl",
     "./03-fine-tuning/llama-factory",
     "./03-fine-tuning/peft",

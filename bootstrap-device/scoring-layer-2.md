@@ -205,13 +205,93 @@ từng có trong TSV Lớp 2.
 dùng được thành một bộ gộp. `mattpocock` là nguồn thứ ba của bộ đó, không phải một plugin nữa
 để bật.
 
+## Lượt 2026-08-06, phiên ba — sửa một lỗi chấm, chốt bộ gộp
+
+### ⚠ Sửa điểm `mattpocock/skills`: `NG` 2 → 3, tổng 33 → **34**
+
+Lần chấm trước đếm **36 skill** bằng cách `find` file `SKILL.md` trên đĩa. Sai. Đọc
+`.claude-plugin/plugin.json` cho thấy plugin chỉ ship **19 skill** — `deprecated/` (4),
+`in-progress/` (6), `misc/` (4), `personal/` (2) **không có trong manifest**, chúng nằm trong
+repo nhưng không được đóng gói.
+
+Tỉ lệ dùng được là **11/19**, không phải 8/36. `NG` = 3.
+
+*Bài học, ghi để không lặp: **đếm skill bằng manifest của plugin, không bằng `find` trên đĩa.**
+Repo chứa nhiều hơn thứ nó phát hành.*
+
+### Bộ gộp: bỏ ý tưởng gộp, cài thẳng `mattpocock-skills`
+
+Ba trong bốn skill định lấy đều từ mattpocock. Với 11/19 dùng được, tách ra là **dựng một bản
+fork phải tự bảo trì** để đổi lấy rất ít — trái thẳng luật *"mở rộng cái đang chạy, đừng dựng
+cái thứ hai"*. Nên cài nguyên bộ, pack `code`.
+
+Đối chiếu từng cặp trùng, và vì sao mattpocock thắng:
+
+| Việc | Bản thắng | Bản thua | Lý do |
+|---|---|---|---|
+| Chốt kế hoạch | `grilling` (10 dòng) | `brainstorming` (159) | Hỏi từng câu · mỗi câu tự đề xuất đáp án · tra được trong code thì tra. Bản superpowers có `<HARD-GATE>` cấm viết code trước khi có design doc commit vào `docs/superpowers/specs/` — quá nặng, và ghi vào đường dẫn riêng của nó |
+| Tìm lỗi | `diagnosing-bugs` (134) | `systematic-debugging` (296) | Dạy phần khó thật: dựng vòng lặp pass/fail trước, 10 cách cụ thể, cấm đoán khi chưa có loop |
+| Viết skill | `writing-great-skills` (82) | `writing-skills` (689) | Cùng việc, 1/8 kích thước |
+| Viết test | *(bỏ cả hai)* | `tdd` · `test-driven-development` | BSO không có test suite |
+
+### `verification-before-completion` tách ra thành plugin lẻ
+
+Mattpocock không có skill nào tương đương, và đây là thứ chặn đúng lỗi BSO **đã mắc thật** —
+bản handoff cũ từng ghi sai danh sách "chưa commit", bài học trong file đó là *"đọc `git status`
+trước khi tin"*.
+
+Giữ cả `superpowers` chỉ vì một skill trong mười bốn thì không đáng, nên chép riêng nó ra
+`plugins/verification-before-completion/`: **nguyên văn, chỉ thêm frontmatter ghi công**
+(`license: MIT` · `source` · `author: Jesse Vincent`) và kèm `LICENSE`. Thân file có dòng cấm sửa —
+cần cập nhật thì chép lại từ nguồn, đừng vá tay.
+
+`superpowers` và `ecc` nay nằm ở `plugins-loai.tsv`.
+
+### Va chạm hai skill `handoff` — xử bằng mô tả, không fork
+
+Bản mattpocock ghi handoff vào **thư mục tạm của hệ điều hành**; bản power-kit ghi
+`HANDOFF-<ngày>.md` vào thư mục làm việc. `CLAUDE.md` của BSO chốt file trạng thái phiên sống ở
+gốc dự án, nên bản power-kit đúng.
+
+Không fork mattpocock để gỡ skill kia. Thay vào đó **làm mô tả bản power-kit thắng rõ ràng**:
+thêm câu *"THIS is the handoff to use when the handoff file must live in the working folder …
+prefer it over any handoff skill that writes to a temporary directory."*
+
+Nhân tiện nhặt ba ý của bản mattpocock vào bản power-kit: mục `## Suggested skills` cuối tài
+liệu · không chép lại thứ đã nằm trong commit/ADR/plan mà trỏ đường dẫn · che thông tin nhạy cảm.
+
+### Sửa kèm: marketplace power-kit đang hỏng
+
+`claude plugin validate .` báo **2 lỗi có sẵn từ trước**, không do lượt này: `ai-research-skills`
+khai `./02-tokenization/huggingface-tokenizers` và `./02-tokenization/sentencepiece`, nhưng thư
+mục `02-tokenization/` **không tồn tại**. `build-standalone.sh` chỉ `cp -R` nguyên thư mục, không
+loại trừ gì — nên đây là lỗi của bản upstream, không phải lỗi bước đóng gói.
+
+Đã gỡ hai mục chết (98 → 96 skill). Validate nay **pass**. Đây là sửa vào file của bên thứ ba,
+ghi lại ở đây để lần sau đối chiếu khi cập nhật bản upstream.
+
 ## Còn treo
 
-1. **Bộ skill gộp chưa dựng.** Ba nguồn `superpowers` (14 skill, MIT) · `ecc` (47 skill ở
+1. ~~**Bộ skill gộp chưa dựng.**~~ **ĐÓNG (2026-08-06)** — bỏ ý tưởng gộp, cài thẳng
+   `mattpocock-skills`, tách riêng `verification-before-completion`. Xem phiên ba bên trên.
+   *Ghi lại phần cũ để đối chiếu:* Ba nguồn `superpowers` (14 skill, MIT) · `ecc` (47 skill ở
    `.agents/skills/`, MIT) · `mattpocock` (36 skill, MIT) — cả ba MIT nên tách được, chỉ cần giữ
    dòng ghi công. Mỗi chức năng **phải chọn một bản**, nếu không bộ mới lại đẻ ra đúng cái mâu
    thuẫn mà `CLAUDE.root.md` cấm. Dựng xong thì gỡ được `superpowers` (`NG`=2) và `ecc` (`NG`=1)
    khỏi danh sách cài.
-2. **`ecc` vào kho nhưng chưa quyết bật** — `NG`=1.
-3. **`mattpocock/skills` chưa vào TSV** — chờ quyết ở mục 1.
+2. ~~**`ecc` vào kho nhưng chưa quyết bật**~~ **ĐÓNG** — loại hẳn, vào `plugins-loai.tsv`.
+3. ~~**`mattpocock/skills` chưa vào TSV**~~ **ĐÓNG** — đã vào, pack `code`.
 4. **`andrej-karpathy-skills` vẫn không có license.** Nguồn đã trỏ đúng, nhưng chưa ghim commit.
+5. **`ai-research-skills` đã bị sửa tay** (gỡ 2 đường dẫn chết). Cập nhật bản upstream lần sau
+   phải kiểm lại `02-tokenization/` đã có chưa, đừng để bản sửa bị đè mất.
+
+## Danh sách cài cuối cùng — 16 plugin
+
+| Pack | Số | Plugin |
+|---|:--:|---|
+| `core` | 8 | claude-md-management · plugin-dev · skill-creator · commit-commands · desktop-commander · hookify · security-guidance · **verification-before-completion** |
+| `code` | 5 | pyright-lsp · code-review · github · andrej-karpathy-skills · **mattpocock-skills** |
+| `seo` | 1 | chrome-devtools-mcp |
+| `vanphong` | 2 | caveman · ponytail |
+
+67 mục ở `plugins-loai.tsv`. Tổng 83 = 81 đã chấm + `mattpocock-skills` + `verification-before-completion`.

@@ -1,0 +1,9 @@
+{
+  "name": "verification-before-completion",
+  "description": "Evidence before assertions: run the check and read the output before claiming work is done.",
+  "version": "1.0.0",
+  "author": { "name": "Jesse Vincent" },
+  "homepage": "https://github.com/obra/superpowers",
+  "license": "MIT",
+  "skills": ["./skills/verification-before-completion"]
+}
