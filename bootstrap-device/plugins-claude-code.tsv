@@ -1,0 +1,33 @@
+# Sinh tu dong boi export-plugins.sh — dung sua tay, TRU cot `pack`.
+# Cot: loai<TAB>ten<TAB>nguon<TAB>pack
+#
+# pack: core | code | web | vanphong | video | noidung | design | seo | ? (chua phan loai)
+# Chi ap cho dong `plugin`. Marketplace luon them het — kho rong tay, bat chat.
+#
+# ⚠ LOP 2 (plugin Claude Code). Da cham 81 muc ngay 2026-08-06 theo thuoc 9 truc.
+#   Giu 16, loai 65. Ly do tung muc: scoring-layer-2.md
+#   Muc bi loai nam o plugins-loai.tsv — export-plugins.sh doc file do de khong keo chung ve.
+#   Lop 1 (Cowork) theo tai khoan, khong script duoc. Xem docs/thiet-bi-moi.md.
+marketplace	caveman	JuliusBrussee/caveman	
+marketplace	claude-plugins-official	anthropics/claude-plugins-official	
+marketplace	claude-power-kit	https://github.com/Bacsi-Online-HGMP/claude-power-kit.git	
+marketplace	ecc	https://github.com/affaan-m/ECC.git	
+marketplace	huggingface-skills	huggingface/skills	
+marketplace	karpathy-skills	forrestchang/andrej-karpathy-skills	
+marketplace	ponytail	DietrichGebert/ponytail	
+plugin	caveman	caveman	vanphong
+plugin	chrome-devtools-mcp	claude-plugins-official	web
+plugin	claude-md-management	claude-plugins-official	core
+plugin	code-review	claude-plugins-official	code
+plugin	commit-commands	claude-plugins-official	code
+plugin	desktop-commander	claude-plugins-official	core
+plugin	github	claude-plugins-official	code
+plugin	hookify	claude-plugins-official	core
+plugin	plugin-dev	claude-plugins-official	core
+plugin	pyright-lsp	claude-plugins-official	code
+plugin	security-guidance	claude-plugins-official	core
+plugin	skill-creator	claude-plugins-official	core
+plugin	superpowers	claude-plugins-official	code
+plugin	ecc	ecc	code
+plugin	andrej-karpathy-skills	karpathy-skills	code
+plugin	ponytail	ponytail	vanphong

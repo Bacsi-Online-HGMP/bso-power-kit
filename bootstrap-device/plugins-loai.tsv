@@ -1,0 +1,75 @@
+# Plugin DA BI LOAI — giu de khong quyet lai tu dau.
+# Cot: ten<TAB>marketplace<TAB>luat<TAB>ly do
+#
+# luat: PH1  = san cung PH=1 (luat cat, doc lap tier)
+#       catB = luat cat thuong (tier B kem co, hoac PH=2 khong co viec that)
+#       trung= luat trung "trung nhieu bat mot" — KHONG phai luat cat, diem van cao
+#
+# export-plugins.sh doc file nay: plugin nao co ten o day thi khong keo tro lai TSV cai dat.
+# Muon phuc hoi mot muc: xoa dong cua no o day, chay lai export-plugins.sh, gan pack.
+# Cham diem day du: scoring-layer-2.md
+frontend-design	claude-plugins-official	trung	bso-design mang nhan dien BSO, da gop bon nguon
+claude-code-setup	claude-plugins-official	trung	bootstrap-device la bo cai nha, co cot pack
+playwright	claude-plugins-official	trung	chrome-devtools-mcp doc duoc console va network
+remember	claude-plugins-official	trung	tri nho Cowork da co san theo tai khoan
+huggingface-skills	claude-plugins-official	trung	keo 19 skill ML, ca 19 deu bi san PH loai
+csharp-lsp	claude-plugins-official	PH1	BSO khong viet C#
+jdtls-lsp	claude-plugins-official	PH1	BSO khong viet Java
+php-lsp	claude-plugins-official	PH1	BSO khong viet PHP
+clangd-lsp	claude-plugins-official	PH1	BSO khong viet C/C++
+typescript-lsp	claude-plugins-official	PH1	BSO khong viet TypeScript
+auth0	claude-plugins-official	PH1	ha tang dang nhap ung dung web
+firebase	claude-plugins-official	PH1	ha tang ung dung, BSO khong co san pham phan mem
+supabase	claude-plugins-official	PH1	ha tang ung dung
+vercel	claude-plugins-official	PH1	ha tang trien khai web
+expo	claude-plugins-official	PH1	React Native, khong co app di dong
+coderabbit	claude-plugins-official	PH1	review code SaaS tra phi
+greptile	claude-plugins-official	PH1	review code SaaS tra phi
+circleback	claude-plugins-official	PH1	ghi chu hop dang SaaS
+mintlify	claude-plugins-official	PH1	docs SaaS
+datarobot-agent-skills	claude-plugins-official	PH1	AutoML
+dataverse	claude-plugins-official	PH1	CRM Microsoft
+fiftyone	claude-plugins-official	PH1	dataset thi giac may tinh
+discord	claude-plugins-official	PH1	khong phai kenh cua BSO
+telegram	claude-plugins-official	PH1	khong phai kenh cua BSO
+imessage	claude-plugins-official	PH1	khong phai kenh cua BSO
+fakechat	claude-plugins-official	PH1	gia lap hoi thoai, khong cham viec nao
+data	claude-plugins-official	PH1	kho du lieu, BSO khong co
+data-engineering	claude-plugins-official	PH1	ETL, BSO khong co
+agent-sdk-dev	claude-plugins-official	PH1	dung agent de phat hanh; BSO chi tieu thu
+atomic-agents	claude-plugins-official	PH1	framework agent
+mcp-server-dev	claude-plugins-official	PH1	viet MCP server
+mcp-tunnels	claude-plugins-official	PH1	duong ham MCP
+mcp-apps	claude-plugins-official	PH1	ung dung MCP
+microsoft-docs	claude-plugins-official	PH1	tra tai lieu Microsoft
+math-olympiad	claude-plugins-official	PH1	toan thi, lech han mien
+playground	claude-plugins-official	PH1	thu nghiem, khong gan viec nao
+ralph-loop	claude-plugins-official	PH1	vong lap agent thu nghiem
+firecrawl	claude-plugins-official	PH1	scraping can key tra phi; canh bao ToS muc 2 cua thuoc
+pr-review-toolkit	claude-plugins-official	catB	PH2 — BSO push thang main, chua co luong PR
+code-modernization	claude-plugins-official	catB	PH2 — khong co codebase cu can hien dai hoa
+feature-dev	claude-plugins-official	catB	PH2 — khong phat trien tinh nang phan mem
+code-simplifier	claude-plugins-official	catB	PH2 — trung code-review, ma BSO la script ngan
+session-report	claude-plugins-official	catB	PH2 — HANDOFF-*.md viet tay dang lam dung viec nay
+explanatory-output-style	claude-plugins-official	catB	PH2 — doi giong dau ra, khong cham san xuat
+learning-output-style	claude-plugins-official	catB	PH2 — doi giong dau ra, khong cham san xuat
+ai-plugins	claude-plugins-official	catB	PH2 — khong cham viec san xuat
+hf-cli	huggingface-skills	PH1	huan luyen/trien khai mo hinh ML; BSO dung mo hinh qua API
+hf-mem	huggingface-skills	PH1	huan luyen/trien khai mo hinh ML; BSO dung mo hinh qua API
+huggingface-best	huggingface-skills	PH1	huan luyen/trien khai mo hinh ML; BSO dung mo hinh qua API
+huggingface-community-evals	huggingface-skills	PH1	huan luyen/trien khai mo hinh ML; BSO dung mo hinh qua API
+huggingface-datasets	huggingface-skills	PH1	huan luyen/trien khai mo hinh ML; BSO dung mo hinh qua API
+huggingface-gradio	huggingface-skills	PH1	huan luyen/trien khai mo hinh ML; BSO dung mo hinh qua API
+huggingface-llm-trainer	huggingface-skills	PH1	huan luyen/trien khai mo hinh ML; BSO dung mo hinh qua API
+huggingface-local-models	huggingface-skills	PH1	huan luyen/trien khai mo hinh ML; BSO dung mo hinh qua API
+huggingface-lora-space-builder	huggingface-skills	PH1	huan luyen/trien khai mo hinh ML; BSO dung mo hinh qua API
+huggingface-paper-publisher	huggingface-skills	PH1	huan luyen/trien khai mo hinh ML; BSO dung mo hinh qua API
+huggingface-papers	huggingface-skills	PH1	huan luyen/trien khai mo hinh ML; BSO dung mo hinh qua API
+huggingface-spaces	huggingface-skills	PH1	huan luyen/trien khai mo hinh ML; BSO dung mo hinh qua API
+huggingface-tool-builder	huggingface-skills	PH1	huan luyen/trien khai mo hinh ML; BSO dung mo hinh qua API
+huggingface-trackio	huggingface-skills	PH1	huan luyen/trien khai mo hinh ML; BSO dung mo hinh qua API
+huggingface-vision-trainer	huggingface-skills	PH1	huan luyen/trien khai mo hinh ML; BSO dung mo hinh qua API
+huggingface-zerogpu	huggingface-skills	PH1	huan luyen/trien khai mo hinh ML; BSO dung mo hinh qua API
+train-sentence-transformers	huggingface-skills	PH1	huan luyen/trien khai mo hinh ML; BSO dung mo hinh qua API
+transformers-js	huggingface-skills	PH1	huan luyen/trien khai mo hinh ML; BSO dung mo hinh qua API
+trl-training	huggingface-skills	PH1	huan luyen/trien khai mo hinh ML; BSO dung mo hinh qua API
