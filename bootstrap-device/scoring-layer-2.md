@@ -132,9 +132,86 @@ Không chạm sàn `PH` nhưng rơi tier B kèm cờ, hoặc `PH` = 2 mà không
 | `firecrawl` | Cách nó tách nội dung chính khỏi khung trang — hữu ích nếu tự viết bước đọc nghị định |
 | `caveman` | Đã cài. Nguyên tắc "bỏ từ nối, giữ danh từ" đáng soi lại `vietnamese-anti-slop` |
 
+## Lượt 2026-08-06, phiên hai — sửa bốn quyết định
+
+### `chrome-devtools-mcp` giữ lại, chuyển pack `web` → `seo`
+
+Suýt bị loại vì tưởng Claude in Chrome đã phủ. **Kiểm `~/.claude/plugins/installed_plugins.json`
+cho thấy Claude Code không có Claude in Chrome** — Claude in Chrome là Lớp 3, theo tài khoản, chỉ
+sống ở Cowork/Desktop. Bỏ nó là để Claude Code mù hẳn trình duyệt.
+
+Và nó không trùng hoàn toàn kể cả ở Cowork. Claude in Chrome có `read_console_messages` và
+`read_network_requests`, nhưng **không có** `lighthouse_audit`, `performance_start_trace`,
+`take_heapsnapshot`, `emulate`. Đó là toàn bộ phần đo Core Web Vitals mà `searchfit-seo:technical-seo`
+cần — nên pack đúng của nó là `seo`, không phải `web`.
+
+*Bài học: trước khi loại một mục vì "đã có thứ khác phủ", phải kiểm thứ kia có ở đúng lớp đó không.*
+
+### `playwright` giữ nguyên quyết định loại
+
+Phần tương tác Claude in Chrome làm được hết. Cái Playwright còn hơn là chạy ngầm, kịch bản test,
+đa trình duyệt, CI — BSO không viết test cho web app.
+
+### Nguồn `andrej-karpathy-skills` đã sửa
+
+`forrestchang/andrej-karpathy-skills` → **`multica-ai/andrej-karpathy-skills`**. Tra GitHub search
+xác nhận đây là repo gốc đã đổi tên tổ chức (199.884 sao, 20.560 fork), không phải fork.
+Vẫn **không có license** — sự thật đó không đổi, chỉ là nguồn nay trỏ đúng chỗ.
+
+Bản `0xwilliamortiz/andrej-karpathy-skills` có MIT và đóng gói sẵn thành plugin Claude Code, nhưng
+551 sao — là nhánh, không phải bản chuẩn.
+
+### `frontend-design` đã nhặt xong, vẫn loại
+
+Bốn ý đã vào `bso-marketing/assets/skills/bso-design/SKILL.md`, ghi rõ nguồn:
+
+| Ý | Vì sao đáng nhặt |
+|---|---|
+| Ba cụm mặc định của ảnh AI, kèm mã màu `#F4F1EA` | Cụ thể hơn hẳn danh sách "dấu hiệu máy làm" cũ — gọi được tên mã màu |
+| Mục 10 `Chữ ký` trong `DESIGN.md` | Chín mục cũ tả cái *đúng*; mục này tả cái *đáng nhớ* |
+| Cấu trúc phải mã hoá sự thật (phép thử đánh số `01/02/03`) | Chặn đúng lỗi hay gặp ở thumbnail và lower third |
+| Chữ trên giao diện: một hành động một tên, lỗi không xin lỗi | Khoảng trống thật — `bso-design` chưa có mục nào về chữ trên nút |
+
+Đây đúng ô thứ ba của bảng `harvest`: **đọc, rút ý, bỏ repo.**
+
+## `mattpocock/skills` — chấm bổ sung
+
+97.679 sao · 8.638 fork · MIT · push 2026-05-20 · 36 skill. Đang bật ở **Lớp 1 (Cowork)**, chưa
+từng có trong TSV Lớp 2.
+
+| PH | CP | AT | FR | ĐL | VH | NG | PB | TR | Tổng | Tier |
+|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|---|
+| 3 | 5 | 4 | 5 | 3 | 4 | 2 | 5 | 2 | **33** | A |
+
+- **`PH`=3** — chia đôi rõ rệt. Trúng: `handoff` (BSO đã dùng đúng lối này), `writing-great-skills`,
+  `grilling`, `diagnosing-bugs`, `code-review`, `teach`, `edit-article`. Trượt: `to-issues`,
+  `to-prd`, `triage`, `implement`, `setup-matt-pocock-skills` đều giả định có issue tracker mà BSO
+  không có; `migrate-to-shoehorn`, `setup-pre-commit`, `scaffold-exercises` là hệ sinh thái
+  TypeScript; `obsidian-vault` không dùng vì kho tri thức BSO chạy OKF.
+- **`AT`=4** — MIT, tác giả rõ danh tính. Trừ một điểm vì đường cài mặc định là
+  `npx skills@latest add` (chạy mã mạng của bên thứ ba), và vài skill dựng hook Husky, sinh script bash.
+- **`ĐL`=3** — README dẫn về newsletter `aihero.dev` và badge `skills.sh`. Không phải SaaS trả phí,
+  nhưng có phễu và có phụ thuộc trình cài.
+- **`NG`=2** — 36 skill, trong đó **4 `deprecated` + 6 `in-progress` vẫn được ship**, cộng `ask-matt`
+  là router chạy trên toàn bộ. Nhiều bề mặt mô tả cho khoảng 8 skill thật sự dùng.
+- **`TR`=2** — trùng ba đường: `diagnosing-bugs` ↔ `systematic-debugging`, `tdd` ↔
+  `test-driven-development`, `writing-great-skills` ↔ `writing-skills`, `handoff` ↔ plugin `handoff`
+  power-kit đang dùng, `code-review` ↔ `code-review` official + `brooks-lint`.
+
+**Không bị luật cắt** (`PH`≠1, `PB`≠1, tier A). Nhưng hai điểm 2 — nếu rơi tier B thì đã bị cắt.
+Đây là lỗ hổng cũ ở dạng nhẹ: sàn cứng `PH` không bắt được thứ *nửa hợp nhưng cồng kềnh*.
+
+**Kết luận: đừng cài cả 36.** Đúng cách xử là thứ đã định cho `superpowers` và `ecc` — rút phần
+dùng được thành một bộ gộp. `mattpocock` là nguồn thứ ba của bộ đó, không phải một plugin nữa
+để bật.
+
 ## Còn treo
 
-1. **Nguồn `andrej-karpathy-skills` chưa sửa** — vẫn trỏ `forrestchang/...`. Quyết rồi mới sửa.
+1. **Bộ skill gộp chưa dựng.** Ba nguồn `superpowers` (14 skill, MIT) · `ecc` (47 skill ở
+   `.agents/skills/`, MIT) · `mattpocock` (36 skill, MIT) — cả ba MIT nên tách được, chỉ cần giữ
+   dòng ghi công. Mỗi chức năng **phải chọn một bản**, nếu không bộ mới lại đẻ ra đúng cái mâu
+   thuẫn mà `CLAUDE.root.md` cấm. Dựng xong thì gỡ được `superpowers` (`NG`=2) và `ecc` (`NG`=1)
+   khỏi danh sách cài.
 2. **`ecc` vào kho nhưng chưa quyết bật** — `NG`=1.
-3. **`assets/tools/index.md` bên `bso-marketing` ghi `bootstrap-device — empty`** — index sinh tự động
-   đã sai từ trước, nay thư mục đã chuyển đi hẳn nên phải sinh lại.
+3. **`mattpocock/skills` chưa vào TSV** — chờ quyết ở mục 1.
+4. **`andrej-karpathy-skills` vẫn không có license.** Nguồn đã trỏ đúng, nhưng chưa ghim commit.

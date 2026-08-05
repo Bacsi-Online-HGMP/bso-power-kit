@@ -1,7 +1,7 @@
 # Sinh tu dong boi export-plugins.sh — dung sua tay, TRU cot `pack`.
 # Cot: loai<TAB>ten<TAB>nguon<TAB>pack
 #
-# pack: core | code | web | vanphong | video | noidung | design | seo | ? (chua phan loai)
+# pack: core | code | seo | vanphong | video | noidung | design | ? (chua phan loai)
 # Chi ap cho dong `plugin`. Marketplace luon them het — kho rong tay, bat chat.
 #
 # ⚠ LOP 2 (plugin Claude Code). Da cham 81 muc ngay 2026-08-06 theo thuoc 9 truc.
@@ -13,10 +13,10 @@ marketplace	claude-plugins-official	anthropics/claude-plugins-official
 marketplace	claude-power-kit	https://github.com/Bacsi-Online-HGMP/claude-power-kit.git	
 marketplace	ecc	https://github.com/affaan-m/ECC.git	
 marketplace	huggingface-skills	huggingface/skills	
-marketplace	karpathy-skills	forrestchang/andrej-karpathy-skills	
+marketplace	karpathy-skills	multica-ai/andrej-karpathy-skills	
 marketplace	ponytail	DietrichGebert/ponytail	
 plugin	caveman	caveman	vanphong
-plugin	chrome-devtools-mcp	claude-plugins-official	web
+plugin	chrome-devtools-mcp	claude-plugins-official	seo
 plugin	claude-md-management	claude-plugins-official	core
 plugin	code-review	claude-plugins-official	code
 plugin	commit-commands	claude-plugins-official	core
