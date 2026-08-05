@@ -19,7 +19,7 @@ plugin	caveman	caveman	vanphong
 plugin	chrome-devtools-mcp	claude-plugins-official	web
 plugin	claude-md-management	claude-plugins-official	core
 plugin	code-review	claude-plugins-official	code
-plugin	commit-commands	claude-plugins-official	code
+plugin	commit-commands	claude-plugins-official	core
 plugin	desktop-commander	claude-plugins-official	core
 plugin	github	claude-plugins-official	code
 plugin	hookify	claude-plugins-official	core

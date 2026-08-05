@@ -124,4 +124,4 @@ fi
 echo "✔ Xong. Mở lại Claude Code hoặc chạy /reload-plugins."
 echo
 echo "Nhắc: đây là LỚP 2 (plugin Claude Code). Plugin Cowork ở LỚP 1 theo tài khoản Claude,"
-echo "không script được — phải bật tay trong UI. Danh sách ở docs/chon-cong-cu-2026-08-05.md."
+echo "không script được — phải bật tay trong UI. Danh sách ở bso-marketing/docs/chon-cong-cu-2026-08-05.md."
