@@ -270,6 +270,69 @@ loại trừ gì — nên đây là lỗi của bản upstream, không phải l�
 Đã gỡ hai mục chết (98 → 96 skill). Validate nay **pass**. Đây là sửa vào file của bên thứ ba,
 ghi lại ở đây để lần sau đối chiếu khi cập nhật bản upstream.
 
+## Ba công cụ nén token — chấm 2026-08-06, loại cả ba
+
+Ứng viên do người dùng đưa. **Không phải bản thay `caveman`** — `caveman` cắt chữ Claude *viết ra*,
+ba cái này nén thứ *đi vào*. Khác khâu, nên `TR` chỉ ở mức 3, không phải cuộc đấu trùng lặp.
+
+| Repo | Sao | License | PH CP AT FR ĐL VH NG PB | TR | Tổng | Tier | Bị loại vì |
+|---|:--:|---|---|:--:|:--:|:--:|---|
+| `alexgreensh/token-optimizer` | 1.811 | **PolyForm NC 1.0.0** | 3 5 2 **1** 3 4 4 4 | 3 | **29** | B | `FR`=1 |
+| `headroomlabs-ai/headroom` | 65.018 | Apache-2.0 | **2** 4 **2** 5 3 4 **2** 5 | 3 | **30** | B | ba điểm 2 |
+| `ooples/token-optimizer-mcp` | 466 | MIT | 2 **1** 2 5 4 4 2 3 | 3 | **26** | B | `CP`=1 |
+
+### `alexgreensh/token-optimizer` — giấy phép cấm dùng thương mại
+
+GitHub hiển thị `NOASSERTION`; đọc thẳng file `LICENSE` thì là **PolyForm Noncommercial License 1.0.0**.
+
+BSO bán thực phẩm bảo vệ sức khoẻ. Dùng công cụ cấm thương mại vào dây chuyền sản xuất nội dung
+bán hàng là **vi phạm giấy phép**, không phải chuyện khẩu vị. `FR`=1 vì miễn phí nhưng BSO không
+dùng hợp pháp được nếu không mua giấy phép riêng.
+
+*Đây là lần đầu luật cắt bắt một mục vì giấy phép. Ghi lại: `NOASSERTION` trên GitHub không có
+nghĩa "không có license" — nó có nghĩa **GitHub không nhận dạng được**, và phải mở file ra đọc.*
+
+### `headroomlabs-ai/headroom` — proxy chắn giữa mọi request
+
+65k sao, Apache-2.0, push 2026-08-05, có `.claude-plugin/marketplace.json`. Repo mạnh. Vẫn loại.
+
+- **`AT`=2** — `headroom wrap` dựng một **proxy cục bộ**, **tự cài Serena**, rồi chạy agent qua
+  proxy đó. Mọi request đi qua một lớp trung gian, kể cả nội dung `core/claims-matrix/`. Repo có
+  ghi *local-first* và *reversible*, nhưng vẫn là thêm một chỗ dữ liệu compliance chảy qua và tự
+  cài thêm một công cụ thứ hai mà không hỏi.
+- **`PH`=2** — con số quảng cáo là *60–95% cho JSON*, còn *15–20% cho coding agent*. Ngữ cảnh nặng
+  của BSO là **markdown tiếng Việt** — luật, claim, handoff — không phải JSON. BSO rơi đúng vào
+  vạch thấp.
+- **`NG`=2** — thư viện + proxy + MCP, hàng loạt extras, một extras cần cả toolchain C++.
+
+Bản `SCORING.md` cũ đã gặp `headroom` một lần và xếp *MESH → caveman* với 63 điểm. Thước mới cho 30
+và loại hẳn. Hai lần đo độc lập ra cùng một kết luận.
+
+### `ooples/token-optimizer-mcp` — `CP`=1, chặn cứng
+
+Đây là mục duy nhất chạm trục compliance, và nó chạm rất mạnh. README nói thẳng cơ chế:
+
+> *"It makes the expensive call impossible. Install the plugin and a built-in `Read` of a 200 KB
+> file is **denied**, with the refusal naming the cached, [summarised] record."*
+
+`CLAUDE.md` của BSO có một luật không được phép sai: **chỉ trích nguyên văn từ `core/claims-matrix/`;
+diễn đạt lại claim đã duyệt cũng là tạo claim mới.** Một lớp cache **từ chối `Read` và trả về bản
+tóm tắt** là nguyên tắc cốt lõi đẩy thẳng tới vi phạm — đúng định nghĩa `CP`=1 trong thước.
+
+Thêm nữa: 466 sao là mức xác nhận quá mỏng cho một thứ chặn tool built-in của agent.
+
+### Ý nhặt được — `harvest`
+
+| Nguồn | Ý |
+|---|---|
+| `alexgreensh` | *"Find the ghost tokens"* — **đo cái gì đang ăn ngữ cảnh trước khi tối ưu.** Cowork đã có sẵn skill `explain-usage` làm đúng việc này, không cần cài gì |
+| `headroom` | Nén phải **đảo ngược được**. Bất kỳ bước rút gọn nào trong dây chuyền BSO cũng phải giữ đường về bản gốc |
+| `ooples` | Đọc thống kê cache từ **transcript của chính client**, không tự khai — nguyên tắc đo lường tốt |
+
+**Kết luận: không cài gì. `caveman` giữ nguyên.** Ba cái này giải bài toán ngữ cảnh bằng cách xen
+một lớp vào giữa Claude và dữ liệu. Với một repo mà sai một chữ trong claim là vi phạm nghị định,
+lớp xen giữa ấy là rủi ro chứ không phải tiện ích.
+
 ## Còn treo
 
 1. ~~**Bộ skill gộp chưa dựng.**~~ **ĐÓNG (2026-08-06)** — bỏ ý tưởng gộp, cài thẳng

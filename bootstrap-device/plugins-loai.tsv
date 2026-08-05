@@ -75,3 +75,6 @@ transformers-js	huggingface-skills	PH1	huan luyen/trien khai mo hinh ML; BSO dun
 trl-training	huggingface-skills	PH1	huan luyen/trien khai mo hinh ML; BSO dung mo hinh qua API
 superpowers	claude-plugins-official	trung	mattpocock-skills phu grilling/diagnosing/writing-skills; verification-before-completion da tach ra rieng
 ecc	ecc	catB	NG=1 va khong skill nao dung duoc: verification-loop doi build/test BSO khong co, security-review 494 dong trung security-guidance
+alexgreensh/token-optimizer	-	catB	FR=1 PolyForm Noncommercial 1.0.0 — BSO ban hang, dung la vi pham giay phep
+headroomlabs-ai/headroom	-	catB	PH2 AT2 NG2 — proxy chan giua moi request + tu cai Serena; loi ich 60-95% la cho JSON, context BSO la markdown tieng Viet nen chi vao khoang 15-20%
+ooples/token-optimizer-mcp	-	catB	CP=1 — chan Read built-in va phuc vu ban cache thay nguyen van; claims-matrix bat buoc trich nguyen van
