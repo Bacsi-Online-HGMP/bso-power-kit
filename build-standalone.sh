@@ -1,12 +1,42 @@
 #!/usr/bin/env bash
-# Vendors the keeper repos INTO this bundle so the folder is standalone/giftable.
-# Run once from the Ultimate-Bundle folder:   bash build-standalone.sh
-# Fast on your own Mac (a few seconds). Safe to re-run — it starts clean.
+# HISTORICAL — this is not how you set up a new machine any more. Use: git clone.
+#
+# It was the original one-time bootstrapper, back when the plugin repos lived in a sibling
+# folder and this bundle was empty. Since then `plugins/` and `tools/` have been committed,
+# so the repo already carries everything and a clone is all you need.
+#
+# Kept because re-vendoring is still the way to pull an upstream update: refresh the source
+# folder, run this, commit the diff. Nothing else calls it.
+#
+# ⚠ It starts with `rm -rf plugins tools`. Run it with a stale source folder and you will
+#   delete vendored plugins that exist only in git. The guard below refuses to run inside a
+#   git repo unless you pass --force.
 set -euo pipefail
+
+FORCE=0
+[ "${1:-}" = "--force" ] && FORCE=1
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
 # Source repos. If you move this bundle, point SRC at wherever the repo folders live.
 SRC="$HERE/../Turn these to skill bundles"
+
+if [ -d "$HERE/.git" ] && [ "$FORCE" -eq 0 ]; then
+  cat >&2 <<'MSG'
+REFUSING TO RUN — this is a git repo, and plugins/ and tools/ are committed to it.
+
+This script deletes both directories and rebuilds them from a local source folder. If that
+folder is missing or out of date, you lose vendored plugins that exist nowhere else.
+
+To set up a new machine, you do not need this script:
+    git clone https://github.com/Bacsi-Online-HGMP/claude-power-kit.git
+    claude plugin marketplace add Bacsi-Online-HGMP/claude-power-kit
+
+To genuinely re-vendor from upstream, check `git status` is clean first, then:
+    bash build-standalone.sh --force
+and review the diff before committing.
+MSG
+  exit 1
+fi
 
 PLUGINS=(
   academic-research-skills-main idea-validation-agents

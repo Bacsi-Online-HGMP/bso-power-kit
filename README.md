@@ -104,24 +104,46 @@ Four repos are marketplaces or frameworks in their own right. Vendoring them wou
 
 ## Install
 
-**1 — Make it standalone (once).** Copies each tool's repo into the bundle so the folder works on any machine:
+`plugins/` and `tools/` are committed, so the repo carries everything. A clone is the whole setup — **do not run `build-standalone.sh`**, see the warning below.
+
+**1 — Authenticate.** The repo is private and org-owned, so git has to be able to reach it before Claude can pull the marketplace:
 
 ```bash
-bash build-standalone.sh
+gh auth status        # must show an account with access to Bacsi-Online-HGMP
+gh auth setup-git     # writes the credential helper, once per machine
 ```
 
-Populates `./plugins` (installable plugins) and `./tools` (CLIs and templates). Run it once, then zip and share.
-
-**2 — Add the marketplace and install** (Claude Code; Cowork via its plugin manager):
+**2 — Clone:**
 
 ```bash
-/plugin marketplace add Bacsi-Online-HGMP/claude-power-kit
-/plugin install <name>@claude-power-kit
+git clone https://github.com/Bacsi-Online-HGMP/claude-power-kit.git
 ```
 
-The repo is private and org-owned, so `gh auth status` must show an account with access before Claude can pull the marketplace. Background auto-update drops the git credential helper on HTTPS, so either set `CLAUDE_CODE_PLUGIN_KEEP_MARKETPLACE_ON_FAILURE=1`, use an SSH remote with a loaded key, or just run `claude plugin marketplace update claude-power-kit` by hand.
+**3 — Add the marketplace and install what you need.** In Claude Code, or in Cowork via its plugin manager:
 
-**3 — `./tools` items install their own way:** `notebooklm-mcp-cli` (pip) · `Agent-Reach` (read its `docs/install.md` first — it auto-runs installers) · `ai-website-cloner` (fork → `/clone-website`) · `agentskills` (skill-authoring spec, read-only) · `agency-agents` (agent definitions, copy what you need) · `design.md` · `vercel-labs-skills` (see each README).
+```bash
+claude plugin marketplace add Bacsi-Online-HGMP/claude-power-kit
+claude plugin install anti-slop@claude-power-kit
+claude plugin install mattpocock-skills@claude-power-kit
+```
+
+Plugin names are the `name` fields in `.claude-plugin/marketplace.json` — the same names used in the sections above. Install the group you are working in, not the whole catalogue.
+
+**4 — Keep it updated:**
+
+```bash
+claude plugin marketplace update claude-power-kit
+```
+
+Do this by hand. Background auto-update drops the git credential helper on HTTPS, so on a private repo it can fail silently and fall back to re-cloning from scratch. If you would rather it worked unattended, either set `CLAUDE_CODE_PLUGIN_KEEP_MARKETPLACE_ON_FAILURE=1` or use an SSH remote with a key loaded in `ssh-agent`.
+
+**`./tools` items install their own way:** `notebooklm-mcp-cli` (pip) · `Agent-Reach` (read its `docs/install.md` first — it auto-runs installers) · `ai-website-cloner` (fork → `/clone-website`) · `agentskills` (skill-authoring spec, read-only) · `agency-agents` (agent definitions, copy what you need) · `design.md` · `vercel-labs-skills` (see each README).
+
+### Do not run `build-standalone.sh`
+
+It was the one-time bootstrapper from when this folder was empty and the plugin repos lived in a sibling directory. It opens with `rm -rf plugins tools` and rebuilds both from that local folder — which no longer exists. Run it on a clone and you delete vendored plugins that exist nowhere else.
+
+The script now refuses to run inside a git repo. It is kept only for re-vendoring an upstream update: refresh the source folder, confirm `git status` is clean, run `bash build-standalone.sh --force`, then review the diff before committing.
 
 ## Notes
 
