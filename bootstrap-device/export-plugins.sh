@@ -31,14 +31,19 @@ if os.path.exists(out):
 
 # Plugin đã bị loại theo thước — đọc để KHÔNG kéo chúng trở lại danh sách cài.
 # Không có file này thì mọi quyết định loại sẽ bị xoá sạch ở lần export sau.
+# Dòng có tên `*` loại cả marketplace: không ghi dòng marketplace, bỏ mọi plugin từ nó.
 deny = {}
+deny_mk = {}
 if os.path.exists(deny_path):
     for line in open(deny_path):
         if line.startswith('#'):
             continue
         f = line.rstrip('\n').split('\t')
         if len(f) >= 3 and f[0]:
-            deny[f[0]] = f[2]
+            if f[0] == '*':
+                deny_mk[f[1]] = f[2]
+            else:
+                deny[f[0]] = f[2]
 
 lines = [
     '# Sinh tự động bởi export-plugins.sh — đừng sửa tay, TRỪ cột `pack`.',
@@ -53,7 +58,11 @@ lines = [
 ]
 
 local = []
+skipped_mk = []
 for name, info in sorted(km.items()):
+    if name in deny_mk:
+        skipped_mk.append((name, deny_mk[name]))
+        continue
     s = info.get('source', {})
     kind = s.get('source')
     if kind == 'github':
@@ -71,6 +80,9 @@ rows = sorted((k.partition('@')[2], k.partition('@')[0]) for k in ip)
 new = []
 blocked = []
 for mk, n in rows:
+    if mk in deny_mk:
+        blocked.append((n, deny_mk[mk] + ' (ca marketplace)'))
+        continue
     if n in deny:
         blocked.append((n, deny[n]))
         continue
@@ -82,7 +94,12 @@ for mk, n in rows:
 open(out, 'w').write('\n'.join(lines) + '\n')
 written = len(rows) - len(blocked)
 print(f'Đã ghi {out}')
-print(f'  {len(km)} marketplace, {written} plugin (bỏ qua {len(blocked)} mục đã loại)')
+print(f'  {len(km) - len(skipped_mk)} marketplace, {written} plugin (bỏ qua {len(blocked)} mục đã loại)')
+if skipped_mk:
+    print(f'  ⓘ {len(skipped_mk)} marketplace bị loại cả cụm — không ghi vào TSV:')
+    for n, rule in skipped_mk:
+        print(f'    - {n}  [{rule}]')
+    print('    Máy này vẫn đang đăng ký chúng. Gỡ bằng: claude plugin marketplace remove <tên>')
 
 kept = written - len(new)
 print(f'  giữ pack cũ cho {kept} plugin')

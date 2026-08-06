@@ -9,11 +9,9 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 SRC="$HERE/../Turn these to skill bundles"
 
 PLUGINS=(
-  AI-Research-SKILLs-main academic-research-skills-main huggingface-skills-main
-  idea-validation-agents
-  Understand-Anything-main SocratiCode-main agentmemory-main
-  superpowers-main brooks-lint-main andrej-karpathy-skills-main ponytail-main
-  mattpocock-skills-main caveman-main verification-before-completion ECC-main
+  academic-research-skills-main idea-validation-agents
+  mattpocock-skills-main brooks-lint-main andrej-karpathy-skills-main
+  verification-before-completion ponytail-main caveman-main
   anti-slop impeccable-main ui-ux-pro-max-skill taste-skill
   threads-carousel-claude-skill modern-web-guidance-main
   watch mcp-video-analyzer
@@ -28,7 +26,14 @@ TOOLS=(
   design.md ai-website-cloner-template-master vercel-labs-skills-main
 )
 
-# Dropped in 0.2.0 — do not re-add:
+# Dropped in 0.2.0 — do not re-add. Reasons: bootstrap-device/plugins-loai.tsv
+#   superpowers-main           mattpocock-skills covers it; verification-before-completion split out
+#   ECC-main                   NG=1, no usable skill
+#   huggingface-skills-main    19 ML skills, all hit the PH floor
+#   AI-Research-SKILLs-main    model training, not content work
+#   SocratiCode-main           duplicate job, unused
+#   Understand-Anything-main   duplicate job, unused
+#   agentmemory-main           Cowork has memory per account
 #   chrome-devtools-mcp-main   Claude in Chrome covers it
 #   youtube-video-perception   superseded by `watch`
 #   agent-skills-main (Apify)  whole scraping group dropped

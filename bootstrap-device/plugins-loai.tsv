@@ -1,6 +1,10 @@
 # Plugin DA BI LOAI — giu de khong quyet lai tu dau.
 # Cot: ten<TAB>marketplace<TAB>luat<TAB>ly do
 #
+# ten = "*"  : loai CA MARKETPLACE. export-plugins.sh se khong ghi dong marketplace do,
+#              va bo moi plugin den tu no. Dung khi khong con muc nao trong marketplace
+#              con dung duoc — neu chi loai vai plugin thi liet ke tung ten nhu binh thuong.
+#
 # luat: PH1  = san cung PH=1 (luat cat, doc lap tier)
 #       catB = luat cat thuong (tier B kem co, hoac PH=2 khong co viec that)
 #       trung= luat trung "trung nhieu bat mot" — KHONG phai luat cat, diem van cao
@@ -75,6 +79,7 @@ transformers-js	huggingface-skills	PH1	huan luyen/trien khai mo hinh ML; BSO dun
 trl-training	huggingface-skills	PH1	huan luyen/trien khai mo hinh ML; BSO dung mo hinh qua API
 superpowers	claude-plugins-official	trung	mattpocock-skills phu grilling/diagnosing/writing-skills; verification-before-completion da tach ra rieng
 ecc	ecc	catB	NG=1 va khong skill nao dung duoc: verification-loop doi build/test BSO khong co, security-review 494 dong trung security-guidance
+*	ecc	catB	marketplace chi chua plugin `ecc`, ma plugin do da loai — go luon dang ky. Go tren may that: claude plugin marketplace remove ecc
 alexgreensh/token-optimizer	-	catB	FR=1 PolyForm Noncommercial 1.0.0 — BSO ban hang, dung la vi pham giay phep
 headroomlabs-ai/headroom	-	catB	PH2 AT2 NG2 — proxy chan giua moi request + tu cai Serena; loi ich 60-95% la cho JSON, context BSO la markdown tieng Viet nen chi vao khoang 15-20%
 ooples/token-optimizer-mcp	-	catB	CP=1 — chan Read built-in va phuc vu ban cache thay nguyen van; claims-matrix bat buoc trich nguyen van

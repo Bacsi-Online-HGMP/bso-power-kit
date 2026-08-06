@@ -1,6 +1,6 @@
 # Syncing this setup across accounts, devices, and apps
 
-This repo is both a **plugin marketplace** (`claude-power-kit`, 38 plugins) and a
+This repo is both a **plugin marketplace** (`claude-power-kit`, 31 plugins) and a
 **dotfiles source** (`dotfiles/claude-code/`). One repo = one source of truth.
 
 ## Second Pro account (this Mac)
@@ -51,7 +51,7 @@ Keep it **private** — dotfiles include your CLAUDE.md and settings.
 ## Repo layout
 
 ```
-.claude-plugin/marketplace.json   # 38 plugins, paths verified
+.claude-plugin/marketplace.json   # 31 plugins, paths verified
 plugins/                          # vendored plugin repos
 dotfiles/claude-code/             # CLAUDE.md, settings.json, agents/, commands/
 bootstrap.sh                      # one-command setup for a config dir
