@@ -1,0 +1,31 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:ai-marketing-hub:claude-ads:schema:control:v1:product-status.v1.json",
+  "title": "Claude Ads repository artifact status",
+  "type": "object",
+  "required": ["schema_version", "evidence_class", "as_of", "selection_policy", "maturity", "evidence", "capabilities", "scoring_profiles", "release_gate", "next_blocker"],
+  "properties": {
+    "schema_version": {"const": "1.0.0"},
+    "evidence_class": {"const": "repository-artifact-status"},
+    "as_of": {"type": "string", "format": "date"},
+    "selection_policy": {"const": "artifact-order-v1"},
+    "maturity": {"type": "object"},
+    "evidence": {"type": "object"},
+    "capabilities": {"type": "object"},
+    "scoring_profiles": {"type": "object"},
+    "release_gate": {"type": ["object", "null"]},
+    "next_blocker": {
+      "type": "object",
+      "required": ["kind", "id", "summary", "rationale", "evidence_paths"],
+      "properties": {
+        "kind": {"enum": ["unverified-load-bearing-claim", "stale-load-bearing-claim", "maturity-blocker", "release-gate-check", "disabled-scoring-profile", "disabled-capability", "unsatisfied-maturity-level", "none"]},
+        "id": {"type": "string", "minLength": 1},
+        "summary": {"type": "string", "minLength": 1},
+        "rationale": {"type": "string", "minLength": 1},
+        "evidence_paths": {"type": "array", "minItems": 1, "items": {"type": "string", "minLength": 1}, "uniqueItems": true}
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

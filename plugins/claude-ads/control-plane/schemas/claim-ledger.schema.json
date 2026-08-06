@@ -1,0 +1,45 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:ai-marketing-hub:claude-ads:schema:control:v1:claim-ledger.v1.json",
+  "title": "Claude Ads claim ledger",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "generated_at", "claims"],
+  "properties": {
+    "schema_version": {"const": "1.0.0"},
+    "generated_at": {"type": "string", "format": "date"},
+    "claims": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/claim"}
+    }
+  },
+  "$defs": {
+    "claim": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id", "statement", "scope", "classification", "verdict", "source_ids",
+        "load_bearing", "last_verified", "refresh_due", "owner"
+      ],
+      "properties": {
+        "id": {"type": "string", "pattern": "^CLM-[0-9]{4}$"},
+        "statement": {"type": "string", "minLength": 1},
+        "scope": {"type": "string", "minLength": 1},
+        "classification": {"enum": ["evidence-based", "practitioner", "contested", "folklore"]},
+        "verdict": {"enum": ["verified", "provisional", "contested", "retracted", "demoted"]},
+        "source_ids": {
+          "type": "array",
+          "items": {"type": "string", "pattern": "^[a-z0-9][a-z0-9-]*$"},
+          "minItems": 1,
+          "uniqueItems": true
+        },
+        "load_bearing": {"type": "boolean"},
+        "last_verified": {"type": "string", "format": "date"},
+        "refresh_due": {"type": "string", "format": "date"},
+        "owner": {"type": "string", "minLength": 1},
+        "contradiction": {"type": "string"},
+        "notes": {"type": "string"}
+      }
+    }
+  }
+}

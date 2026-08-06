@@ -1,0 +1,213 @@
+import type { FastMCP } from 'fastmcp';
+import { UserError, imageContent } from 'fastmcp';
+import { z } from 'zod';
+import { getAdapter } from '../adapters/adapter.interface.js';
+import { buildAnnotatedTimeline } from '../processors/annotated-timeline.js';
+import { deduplicateFrames } from '../processors/frame-dedup.js';
+import { extractFrameBurst, parseTimestamp } from '../processors/frame-extractor.js';
+import { extractTextFromFrames } from '../processors/frame-ocr.js';
+import { ocrSourceFrames, optimizeFramesKeepingOriginals } from '../processors/image-optimizer.js';
+import { createProgressReporter } from '../utils/progress.js';
+import { createTempDir } from '../utils/temp-files.js';
+import { isVideoSource } from '../utils/url-detector.js';
+import { maxWidthParam } from './frame-options.js';
+
+const AnalyzeMomentSchema = z.object({
+  url: z
+    .string()
+    .refine(isVideoSource, {
+      message:
+        'Must be a supported video URL (Loom, YouTube, Vimeo, TikTok, Instagram, X/Twitter, Twitch, Dailymotion, Facebook), a direct .mp4/.webm/.mov URL, or an absolute path / file:// URI to a local video file',
+    })
+    .describe(
+      'Video source: Loom share link, platform video URL (YouTube, Vimeo, TikTok, Instagram, X, Twitch, Dailymotion, Facebook), direct .mp4/.webm/.mov URL, or absolute path to a local video file',
+    ),
+  from: z.string().describe('Start timestamp (e.g., "1:30")'),
+  to: z.string().describe('End timestamp (e.g., "2:00")'),
+  count: z
+    .number()
+    .min(2)
+    .max(30)
+    .default(10)
+    .optional()
+    .describe('Number of frames to extract in the range (default: 10)'),
+  ocrLanguage: z
+    .string()
+    .optional()
+    .describe(
+      'Tesseract OCR language codes (default: "eng+por"). Use "+" to combine: "eng+spa", "eng+fra+deu".',
+    ),
+  maxWidth: maxWidthParam,
+});
+
+export function registerAnalyzeMoment(server: FastMCP): void {
+  server.addTool({
+    name: 'analyze_moment',
+    description: `Deep-dive analysis of a specific time range in a video.
+
+Combines burst frame extraction + transcript filtering + OCR + annotated timeline
+for a focused segment of the video.
+
+Use this when you need to understand exactly what happens between two timestamps:
+- What's on screen (frames + OCR text extraction)
+- What's being said (transcript filtered to the range)
+- Unified timeline merging visual and audio content
+
+Example: analyze_moment(url, "1:30", "2:00", 10) → 10 frames + transcript + OCR for that 30s window
+
+Supports: Loom (loom.com/share/...), YouTube/Vimeo/TikTok/Instagram/X/Twitch/Dailymotion/Facebook (requires yt-dlp), direct video URLs (.mp4, .webm, .mov), and local video files (absolute path or file:// URI).`,
+    parameters: AnalyzeMomentSchema,
+    annotations: {
+      title: 'Analyze Moment',
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: true,
+    },
+    execute: async (args, { reportProgress }) => {
+      const progress = createProgressReporter(reportProgress);
+      const { url, from, to, maxWidth } = args;
+      const count = args.count ?? 10;
+      const ocrLanguage = args.ocrLanguage ?? 'eng+por';
+
+      // Validate timestamps
+      const fromSeconds = parseTimestamp(from);
+      const toSeconds = parseTimestamp(to);
+
+      if (fromSeconds >= toSeconds) {
+        throw new UserError(
+          `"from" timestamp (${from} = ${fromSeconds}s) must be before "to" timestamp (${to} = ${toSeconds}s)`,
+        );
+      }
+
+      let adapter;
+      try {
+        adapter = getAdapter(url);
+      } catch (error) {
+        if (error instanceof UserError) throw error;
+        throw new UserError(`Failed to detect video platform for URL: ${url}`);
+      }
+
+      const warnings: string[] = [];
+      const tempDir = await createTempDir();
+
+      await progress(0, `Starting moment analysis (${from} → ${to})...`);
+
+      // Fetch transcript and filter to time range
+      const fullTranscript = await adapter.getTranscript(url).catch((e: unknown) => {
+        warnings.push(`Failed to fetch transcript: ${e instanceof Error ? e.message : String(e)}`);
+        return [];
+      });
+
+      const transcriptSegment = fullTranscript.filter((entry) => {
+        const entrySeconds = parseTimestampLoose(entry.time);
+        return entrySeconds !== null && entrySeconds >= fromSeconds && entrySeconds <= toSeconds;
+      });
+
+      await progress(15, 'Transcript filtered to time range');
+
+      // Download video and extract burst frames
+      if (!adapter.capabilities.videoDownload) {
+        throw new UserError(
+          'Moment analysis requires video download capability. Use a direct video URL (.mp4, .webm, .mov).',
+        );
+      }
+
+      const downloadWarnings: string[] = [];
+      const videoPath = await adapter.downloadVideo(url, tempDir, (w) => downloadWarnings.push(w));
+      if (!videoPath) {
+        throw new UserError(
+          ['Failed to download video for moment analysis.', ...downloadWarnings].join(' '),
+        );
+      }
+
+      await progress(35, 'Video downloaded, extracting burst frames...');
+
+      // Degrade like analyze_video rather than throwing: extractFrameBurst
+      // raises a raw ffmpeg Error (which leaks its command line) on a corrupt
+      // or undecodable clip. Catching it keeps the transcript segment already
+      // fetched above, instead of failing the whole moment (issue #26 sibling).
+      const rawFrames = await extractFrameBurst(videoPath, tempDir, from, to, count).catch(
+        (e: unknown) => {
+          warnings.push(
+            `Could not extract frames for this range — the video may be corrupt, truncated, or in an unsupported format (${e instanceof Error ? e.name : 'error'}).`,
+          );
+          return [];
+        },
+      );
+
+      await progress(55, `Extracted ${rawFrames.length} frames, optimizing...`);
+
+      // Optimize frames, keeping the mapping back to the full-resolution
+      // originals so OCR below reads those and not the emitted downscale.
+      const optimized = await optimizeFramesKeepingOriginals(rawFrames, tempDir, {
+        maxWidth,
+        onWarning: (w) => warnings.push(w),
+      });
+      const frameOriginals = optimized.originals;
+      let frames = optimized.frames;
+
+      // Dedup
+      const beforeDedup = frames.length;
+      frames = await deduplicateFrames(frames).catch(() => frames);
+      if (frames.length < beforeDedup) {
+        warnings.push(
+          `Removed ${beforeDedup - frames.length} near-duplicate frames (${beforeDedup} → ${frames.length})`,
+        );
+      }
+
+      await progress(70, 'Filtering and deduplicating frames...');
+
+      // OCR
+      await progress(75, `Running OCR on ${frames.length} frames...`);
+      const ocrSource = ocrSourceFrames(frames, frameOriginals);
+      const ocrResults = await extractTextFromFrames(ocrSource, ocrLanguage, (completed, total) => {
+        const pct = 75 + Math.round((completed / total) * 15);
+        progress(pct, `OCR: processing frame ${completed}/${total}...`);
+      }).catch((e: unknown) => {
+        warnings.push(`OCR failed: ${e instanceof Error ? e.message : String(e)}`);
+        return [];
+      });
+
+      await progress(92, 'Building annotated timeline...');
+
+      // Build mini-timeline for this range
+      const timeline = buildAnnotatedTimeline(transcriptSegment, frames, ocrResults);
+
+      await progress(100, 'Moment analysis complete');
+
+      // Build response
+      const textData = {
+        range: { from, to, fromSeconds, toSeconds },
+        transcriptSegment,
+        frameCount: frames.length,
+        ocrResults,
+        timeline,
+        warnings,
+      };
+
+      const content: ({ type: 'text'; text: string } | Awaited<ReturnType<typeof imageContent>>)[] =
+        [{ type: 'text' as const, text: JSON.stringify(textData, null, 2) }];
+
+      for (const frame of frames) {
+        content.push(await imageContent({ path: frame.filePath }));
+      }
+
+      return { content };
+    },
+  });
+}
+
+/**
+ * Loosely parse a transcript timestamp to seconds.
+ * Returns null if parsing fails (instead of throwing).
+ */
+function parseTimestampLoose(ts: string): number | null {
+  try {
+    return parseTimestamp(ts);
+  } catch {
+    // Try parsing as plain number (seconds)
+    const n = parseFloat(ts);
+    return isNaN(n) ? null : n;
+  }
+}

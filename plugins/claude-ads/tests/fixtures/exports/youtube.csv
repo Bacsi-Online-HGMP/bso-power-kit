@@ -1,0 +1,2 @@
+date,account_id,account_name,campaign_id,campaign_name,campaign_status,creative_id,creative_name,conversion_action,conversions,budget,spend,currency
+2026-06-15,demo-youtube-account,Sanitized YouTube Demo,demo-youtube-campaign,Sanitized Video Campaign,paused,demo-youtube-creative,Sanitized Video Ad,lead,10,100.00,40.50,USD

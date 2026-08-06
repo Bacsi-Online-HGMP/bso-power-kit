@@ -1,0 +1,11 @@
+{
+  "project": ["src/**/*.ts", "test/**/*.ts", "scripts/**/*.ts"],
+  "ignoreDependencies": ["cheerio"],
+  "rules": {
+    "unlisted": "error",
+    "binaries": "error",
+    "unresolved": "error",
+    "exports": "warn",
+    "types": "warn"
+  }
+}

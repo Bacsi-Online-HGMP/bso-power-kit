@@ -1,0 +1,65 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:ai-marketing-hub:claude-ads:schema:control:v1:browser-capture-receipt.v1.json",
+  "title": "Claude Ads browser capture receipt",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "operation",
+    "privacy_class",
+    "data_lifecycle",
+    "recorded_at",
+    "target",
+    "artifact",
+    "egress_attestation"
+  ],
+  "properties": {
+    "schema_version": {"const": "1.0.0"},
+    "operation": {"const": "browser-screenshot-capture"},
+    "privacy_class": {"const": "confidential"},
+    "data_lifecycle": {"$ref": "urn:ai-marketing-hub:claude-ads:schema:core:v1:data-lifecycle.schema.json"},
+    "recorded_at": {"type": "string", "format": "date-time"},
+    "target": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["origin", "url_sha256"],
+      "properties": {
+        "origin": {"type": "string", "pattern": "^https?://[^/?#]+$"},
+        "url_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+      }
+    },
+    "artifact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["locator", "sha256", "size"],
+      "properties": {
+        "locator": {"type": "string", "minLength": 1, "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.(?:/|$)).+$"},
+        "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "size": {"type": "integer", "minimum": 1}
+      }
+    },
+    "egress_attestation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "attestation_id",
+        "issuer_id",
+        "key_id",
+        "environment_id",
+        "issued_at",
+        "expires_at",
+        "document_sha256"
+      ],
+      "properties": {
+        "attestation_id": {"type": "string", "minLength": 3},
+        "issuer_id": {"type": "string", "minLength": 3},
+        "key_id": {"type": "string", "minLength": 3},
+        "environment_id": {"type": "string", "minLength": 3},
+        "issued_at": {"type": "string", "format": "date-time"},
+        "expires_at": {"type": "string", "format": "date-time"},
+        "document_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+      }
+    }
+  }
+}

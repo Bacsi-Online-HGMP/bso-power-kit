@@ -1,0 +1,1376 @@
+{
+  "schema_version": "1.0.0",
+  "reviewed_at": "2026-07-11",
+  "clean_room_policy": "concepts-only-no-code-or-prose",
+  "disposition_semantics": {
+    "adopt": "Approve the concept for an independent implementation backed by first-party evidence, product contracts, fixtures, and tests.",
+    "already-addressed": "Retain the current independently implemented behavior; do not import the reviewed material.",
+    "defer": "Keep the concept in the evidence backlog until scope, authority, sources, security, and test gates are satisfied.",
+    "reject": "Do not incorporate the reviewed behavior because it conflicts with product, evidence, privacy, security, or maintenance boundaries."
+  },
+  "fork_survey": {
+    "upstream_repository": "AgriciDaniel/claude-ads",
+    "upstream_default_branch": "main",
+    "upstream_head_sha": "283d9d4917cb7c4f2ce9181e125bb1970f74ab04",
+    "enumerated_at": "2026-07-11",
+    "method": "github-rest-paginated-forks-and-default-head-ancestry",
+    "paginated_fork_count": 1026,
+    "repository_counter_observed": 1023,
+    "ancestor_or_equal_count": 1009,
+    "non_ancestor_count": 17,
+    "completeness": "complete",
+    "non_ancestor_repository_ids": [
+      "fork-andersonamaral2-claude-ads",
+      "fork-xmilresearch-lab-claude-ads",
+      "fork-louisgiuliani-claude-ads",
+      "fork-chizee-claude-ads",
+      "fork-zoeresonance-claude-ads",
+      "fork-seeksi-claude-ads",
+      "fork-imitrushi-claude-ads",
+      "fork-qant-au-claude-ads",
+      "fork-pankajthakur1907-claude-ads",
+      "fork-tiqamitsharma-claude-ads",
+      "fork-haruki1987-claude-ads",
+      "fork-juliandickie-pro-marketing-ads",
+      "fork-emolina95-claude-ads",
+      "fork-josephcrown920-claude-ads",
+      "fork-kutzki-antigravity-ads",
+      "fork-ltshabari-claude-ads",
+      "fork-redpointgroup-claude-ads"
+    ]
+  },
+  "repositories": [
+    {
+      "id": "fork-andersonamaral2-claude-ads",
+      "repository": "andersonamaral2/claude-ads",
+      "relationship": "fork",
+      "source_url": "https://github.com/andersonamaral2/claude-ads",
+      "default_branch": "main",
+      "reviewed_head_sha": "b661972ae2daadac5f8331fa7e6a8bf699c8fc53",
+      "reviewed_at": "2026-07-11",
+      "license_spdx": "MIT",
+      "license_use": "same-project-metadata-only",
+      "copy_policy": "concepts-only-no-code-or-prose",
+      "head_review": {
+        "method": "github-rest-compare",
+        "compare_status": "ahead",
+        "upstream_base_sha": "283d9d4917cb7c4f2ce9181e125bb1970f74ab04",
+        "merge_base_sha": "283d9d4917cb7c4f2ce9181e125bb1970f74ab04",
+        "ahead_by": 9,
+        "behind_by": 0,
+        "commit_count": 9,
+        "changed_files": 1,
+        "additions": 22,
+        "deletions": 0,
+        "surfaces": ["documentation", "verification-badge"]
+      },
+      "primary_disposition": "reject",
+      "rationale": "The only surviving delta is recurring promotional verification markup without repository-local evidence for its score.",
+      "actionable_concepts": [
+        {
+          "id": "RC-0001",
+          "summary": "Continuously refreshed repository assurance claims",
+          "disposition": "reject",
+          "rationale": "Assurance must come from reproducible checks and retained evidence, not externally asserted badges or daily documentation churn.",
+          "requirement_ids": ["REQ-CI-001", "REQ-EVL-001"]
+        }
+      ]
+    },
+    {
+      "id": "fork-xmilresearch-lab-claude-ads",
+      "repository": "xmilresearch-lab/claude-ads",
+      "relationship": "fork",
+      "source_url": "https://github.com/xmilresearch-lab/claude-ads",
+      "default_branch": "main",
+      "reviewed_head_sha": "4f70490445d71ebdd13012e907b531874e510747",
+      "reviewed_at": "2026-07-11",
+      "license_spdx": "NOASSERTION",
+      "license_use": "unverified-metadata-only",
+      "copy_policy": "concepts-only-no-code-or-prose",
+      "head_review": {
+        "method": "github-rest-compare",
+        "compare_status": "diverged",
+        "upstream_base_sha": "283d9d4917cb7c4f2ce9181e125bb1970f74ab04",
+        "merge_base_sha": "80420c1205dc4775ddf84324b602079163fdd3a5",
+        "ahead_by": 110,
+        "behind_by": 47,
+        "commit_count": 110,
+        "changed_files": 101,
+        "additions": 5,
+        "deletions": 16007,
+        "surfaces": ["destructive-replacement", "placeholder"]
+      },
+      "primary_disposition": "reject",
+      "rationale": "The reviewed head removes the product and license and replaces the repository with a placeholder, so no usable product delta survives at the pinned head.",
+      "actionable_concepts": [
+        {
+          "id": "RC-0002",
+          "summary": "Whole-repository replacement unrelated to the portable paid-media skill",
+          "disposition": "reject",
+          "rationale": "A destructive placeholder head cannot supply independently testable product behavior and has no asserted license at the reviewed revision.",
+          "requirement_ids": ["REQ-PKG-001", "REQ-SCP-001"]
+        }
+      ]
+    },
+    {
+      "id": "fork-louisgiuliani-claude-ads",
+      "repository": "louisgiuliani/claude-ads",
+      "relationship": "fork",
+      "source_url": "https://github.com/louisgiuliani/claude-ads",
+      "default_branch": "main",
+      "reviewed_head_sha": "d20b304c9320aea84d6cf9683351739d300d23f7",
+      "reviewed_at": "2026-07-11",
+      "license_spdx": "MIT",
+      "license_use": "same-project-metadata-only",
+      "copy_policy": "concepts-only-no-code-or-prose",
+      "head_review": {
+        "method": "github-rest-compare",
+        "compare_status": "ahead",
+        "upstream_base_sha": "283d9d4917cb7c4f2ce9181e125bb1970f74ab04",
+        "merge_base_sha": "283d9d4917cb7c4f2ce9181e125bb1970f74ab04",
+        "ahead_by": 2,
+        "behind_by": 0,
+        "commit_count": 2,
+        "changed_files": 1,
+        "additions": 25,
+        "deletions": 0,
+        "surfaces": ["upstream-sync", "workflow"]
+      },
+      "primary_disposition": "defer",
+      "rationale": "Scheduled write-enabled merges reduce drift but bypass the deliberate review and release evidence required for the private v2 branch.",
+      "actionable_concepts": [
+        {
+          "id": "RC-0003",
+          "summary": "Detect upstream drift without automatically mutating the protected branch",
+          "disposition": "defer",
+          "rationale": "A future read-only drift report could be useful, but automated merges require branch protection, pinned actions, conflict handling, and release-gate tests.",
+          "requirement_ids": ["REQ-CI-001", "REQ-SEC-001"]
+        }
+      ]
+    },
+    {
+      "id": "fork-chizee-claude-ads",
+      "repository": "chizee/claude-ads",
+      "relationship": "fork",
+      "source_url": "https://github.com/chizee/claude-ads",
+      "default_branch": "main",
+      "reviewed_head_sha": "4a64b6d79f635b5beaf0a63162ec6ee63a780107",
+      "reviewed_at": "2026-07-11",
+      "license_spdx": "MIT",
+      "license_use": "same-project-metadata-only",
+      "copy_policy": "concepts-only-no-code-or-prose",
+      "head_review": {
+        "method": "github-rest-compare",
+        "compare_status": "ahead",
+        "upstream_base_sha": "283d9d4917cb7c4f2ce9181e125bb1970f74ab04",
+        "merge_base_sha": "283d9d4917cb7c4f2ce9181e125bb1970f74ab04",
+        "ahead_by": 1,
+        "behind_by": 0,
+        "commit_count": 1,
+        "changed_files": 1,
+        "additions": 6,
+        "deletions": 0,
+        "surfaces": ["hard-reset", "upstream-sync"]
+      },
+      "primary_disposition": "reject",
+      "rationale": "The configuration permits unstable upstream content and destructive hard resets, conflicting with preservation and review requirements.",
+      "actionable_concepts": [
+        {
+          "id": "RC-0004",
+          "summary": "Destructive synchronization from an unstable upstream branch",
+          "disposition": "reject",
+          "rationale": "Protected product history must never be replaced by an unattended hard reset.",
+          "requirement_ids": ["REQ-CI-001", "REQ-SEC-001"]
+        }
+      ]
+    },
+    {
+      "id": "fork-zoeresonance-claude-ads",
+      "repository": "zoeresonance/claude-ads",
+      "relationship": "fork",
+      "source_url": "https://github.com/zoeresonance/claude-ads",
+      "default_branch": "main",
+      "reviewed_head_sha": "a404ca54034beeb383cde681c523fdeeb76ed0a4",
+      "reviewed_at": "2026-07-11",
+      "license_spdx": "MIT",
+      "license_use": "same-project-metadata-only",
+      "copy_policy": "concepts-only-no-code-or-prose",
+      "head_review": {
+        "method": "github-rest-compare",
+        "compare_status": "diverged",
+        "upstream_base_sha": "283d9d4917cb7c4f2ce9181e125bb1970f74ab04",
+        "merge_base_sha": "402ba63b9af56c0573766fb0ae8d7b56dc13a674",
+        "ahead_by": 101,
+        "behind_by": 30,
+        "commit_count": 101,
+        "changed_files": 39,
+        "additions": 14632,
+        "deletions": 0,
+        "surfaces": ["account-connection", "client-artifacts", "hosted-dashboard"]
+      },
+      "primary_disposition": "reject",
+      "rationale": "The delta is a separate hosted application and includes named client artifacts, which conflicts with the portable skill and repository privacy boundary.",
+      "actionable_concepts": [
+        {
+          "id": "RC-0005",
+          "summary": "Hosted performance views backed by account connections",
+          "disposition": "defer",
+          "rationale": "A hosted product requires a distinct threat model, consent model, data lifecycle, tenancy boundary, and sanitized fixtures before it can enter scope.",
+          "requirement_ids": ["REQ-INT-001", "REQ-SEC-002", "REQ-SEC-004"]
+        }
+      ]
+    },
+    {
+      "id": "fork-seeksi-claude-ads",
+      "repository": "seeksi/claude-ads",
+      "relationship": "fork",
+      "source_url": "https://github.com/seeksi/claude-ads",
+      "default_branch": "main",
+      "reviewed_head_sha": "73f9879a0b4abf0396b6cc22dc7251b678a5595d",
+      "reviewed_at": "2026-07-11",
+      "license_spdx": "MIT",
+      "license_use": "same-project-metadata-only",
+      "copy_policy": "concepts-only-no-code-or-prose",
+      "head_review": {
+        "method": "github-rest-compare",
+        "compare_status": "ahead",
+        "upstream_base_sha": "283d9d4917cb7c4f2ce9181e125bb1970f74ab04",
+        "merge_base_sha": "283d9d4917cb7c4f2ce9181e125bb1970f74ab04",
+        "ahead_by": 1,
+        "behind_by": 0,
+        "commit_count": 1,
+        "changed_files": 6,
+        "additions": 71,
+        "deletions": 64,
+        "surfaces": ["creative-generation", "provider-abstraction"]
+      },
+      "primary_disposition": "already-addressed",
+      "rationale": "The core v2 generation script and current skills already use an explicit provider capability boundary and record provider metadata.",
+      "actionable_concepts": [
+        {
+          "id": "RC-0006",
+          "summary": "Provider-neutral creative execution with explicit prerequisites and retained generation metadata",
+          "disposition": "already-addressed",
+          "rationale": "Keep the independently implemented provider contract and resolve remaining legacy agent wording through the normal product backlog.",
+          "requirement_ids": ["REQ-CRT-001", "REQ-DOC-001"]
+        }
+      ]
+    },
+    {
+      "id": "fork-imitrushi-claude-ads",
+      "repository": "imitrushi/claude-ads",
+      "relationship": "fork",
+      "source_url": "https://github.com/imitrushi/claude-ads",
+      "default_branch": "main",
+      "reviewed_head_sha": "335ae56abdee5f16506f740573c46dcd21f97954",
+      "reviewed_at": "2026-07-11",
+      "license_spdx": "MIT",
+      "license_use": "same-project-metadata-only",
+      "copy_policy": "concepts-only-no-code-or-prose",
+      "head_review": {
+        "method": "github-rest-compare",
+        "compare_status": "ahead",
+        "upstream_base_sha": "283d9d4917cb7c4f2ce9181e125bb1970f74ab04",
+        "merge_base_sha": "283d9d4917cb7c4f2ce9181e125bb1970f74ab04",
+        "ahead_by": 1,
+        "behind_by": 0,
+        "commit_count": 1,
+        "changed_files": 63,
+        "additions": 34348,
+        "deletions": 0,
+        "surfaces": ["generated-cache", "repository-graph"]
+      },
+      "primary_disposition": "reject",
+      "rationale": "The delta consists of regenerable analysis scripts, chunk outputs, and cache files rather than product behavior.",
+      "actionable_concepts": [
+        {
+          "id": "RC-0007",
+          "summary": "Committed local repository-analysis outputs and caches",
+          "disposition": "reject",
+          "rationale": "Generated analysis state should remain ephemeral and must not inflate the release or expose machine-derived artifacts.",
+          "requirement_ids": ["REQ-PKG-001", "REQ-SEC-002"]
+        }
+      ]
+    },
+    {
+      "id": "fork-qant-au-claude-ads",
+      "repository": "qant-au/claude-ads",
+      "relationship": "fork",
+      "source_url": "https://github.com/qant-au/claude-ads",
+      "default_branch": "main",
+      "reviewed_head_sha": "600162424878674a0642d63540a3faea274f748b",
+      "reviewed_at": "2026-07-11",
+      "license_spdx": "MIT",
+      "license_use": "same-project-metadata-only",
+      "copy_policy": "concepts-only-no-code-or-prose",
+      "head_review": {
+        "method": "github-rest-compare",
+        "compare_status": "ahead",
+        "upstream_base_sha": "283d9d4917cb7c4f2ce9181e125bb1970f74ab04",
+        "merge_base_sha": "283d9d4917cb7c4f2ce9181e125bb1970f74ab04",
+        "ahead_by": 3,
+        "behind_by": 0,
+        "commit_count": 3,
+        "changed_files": 2,
+        "additions": 17,
+        "deletions": 0,
+        "surfaces": ["generated-artifacts", "machine-configuration"]
+      },
+      "primary_disposition": "reject",
+      "rationale": "Generated-output exclusions are sensible but already covered; the remaining instructions are tied to another operator's machine and repository layout.",
+      "actionable_concepts": [
+        {
+          "id": "RC-0008",
+          "summary": "Exclude regenerable analysis output while avoiding machine-specific operating instructions",
+          "disposition": "already-addressed",
+          "rationale": "The release audit already excludes local artifacts and absolute paths, so no fork content is required.",
+          "requirement_ids": ["REQ-PKG-001", "REQ-SEC-002"]
+        }
+      ]
+    },
+    {
+      "id": "fork-pankajthakur1907-claude-ads",
+      "repository": "pankajthakur1907/claude-ads",
+      "relationship": "fork",
+      "source_url": "https://github.com/pankajthakur1907/claude-ads",
+      "default_branch": "main",
+      "reviewed_head_sha": "a346b823e7e5e5e894d00936b32cb16b140150e0",
+      "reviewed_at": "2026-07-11",
+      "license_spdx": "MIT",
+      "license_use": "same-project-metadata-only",
+      "copy_policy": "concepts-only-no-code-or-prose",
+      "head_review": {
+        "method": "github-rest-compare",
+        "compare_status": "ahead",
+        "upstream_base_sha": "283d9d4917cb7c4f2ce9181e125bb1970f74ab04",
+        "merge_base_sha": "283d9d4917cb7c4f2ce9181e125bb1970f74ab04",
+        "ahead_by": 4,
+        "behind_by": 0,
+        "commit_count": 4,
+        "changed_files": 3,
+        "additions": 636,
+        "deletions": 0,
+        "surfaces": ["dashboard", "fixed-thresholds", "sample-metrics"]
+      },
+      "primary_disposition": "reject",
+      "rationale": "The static dashboard embeds invented metrics, fixed universal thresholds, and prescriptive actions outside the v2 evidence and scoring contracts.",
+      "actionable_concepts": [
+        {
+          "id": "RC-0009",
+          "summary": "Cross-platform executive reporting rendered from one canonical result",
+          "disposition": "already-addressed",
+          "rationale": "V2 already renders deterministic human formats from canonical JSON without hard-coded account facts or universal action thresholds.",
+          "requirement_ids": ["REQ-FIN-001", "REQ-EVL-001"]
+        }
+      ]
+    },
+    {
+      "id": "fork-tiqamitsharma-claude-ads",
+      "repository": "TIQamitsharma/claude-ads",
+      "relationship": "fork",
+      "source_url": "https://github.com/TIQamitsharma/claude-ads",
+      "default_branch": "main",
+      "reviewed_head_sha": "19ae231271a8014fcaa0589a174f41ed87fb03e6",
+      "reviewed_at": "2026-07-11",
+      "license_spdx": "MIT",
+      "license_use": "same-project-metadata-only",
+      "copy_policy": "concepts-only-no-code-or-prose",
+      "head_review": {
+        "method": "github-rest-compare",
+        "compare_status": "diverged",
+        "upstream_base_sha": "283d9d4917cb7c4f2ce9181e125bb1970f74ab04",
+        "merge_base_sha": "80420c1205dc4775ddf84324b602079163fdd3a5",
+        "ahead_by": 14,
+        "behind_by": 47,
+        "commit_count": 14,
+        "changed_files": 94,
+        "additions": 17411,
+        "deletions": 0,
+        "surfaces": ["hosted-application", "oauth", "supabase"]
+      },
+      "primary_disposition": "defer",
+      "rationale": "The delta is a separate hosted account application whose authentication, tenancy, persistence, and live account operations exceed the portable v2 boundary.",
+      "actionable_concepts": [
+        {
+          "id": "RC-0010",
+          "summary": "Hosted account connection and result exploration",
+          "disposition": "defer",
+          "rationale": "Consider only under a separately approved hosted-product architecture with credential isolation, lifecycle controls, and live integration tests.",
+          "requirement_ids": ["REQ-INT-001", "REQ-SEC-002", "REQ-SEC-004"]
+        }
+      ]
+    },
+    {
+      "id": "fork-haruki1987-claude-ads",
+      "repository": "haruki1987/claude-ads",
+      "relationship": "fork",
+      "source_url": "https://github.com/haruki1987/claude-ads",
+      "default_branch": "main",
+      "reviewed_head_sha": "7ab30bac84badb37952834aa7bb33d465d98f4ef",
+      "reviewed_at": "2026-07-11",
+      "license_spdx": "MIT",
+      "license_use": "same-project-metadata-only",
+      "copy_policy": "concepts-only-no-code-or-prose",
+      "head_review": {
+        "method": "github-rest-compare",
+        "compare_status": "ahead",
+        "upstream_base_sha": "283d9d4917cb7c4f2ce9181e125bb1970f74ab04",
+        "merge_base_sha": "283d9d4917cb7c4f2ce9181e125bb1970f74ab04",
+        "ahead_by": 4,
+        "behind_by": 0,
+        "commit_count": 4,
+        "changed_files": 10,
+        "additions": 1038,
+        "deletions": 20,
+        "surfaces": ["coupang", "kakao", "naver", "platform-expansion"]
+      },
+      "primary_disposition": "defer",
+      "rationale": "Naver, Kakao, and Coupang are outside the requested twelve-platform release contract and the fork checks are not evidence-gated by the v2 source ledger.",
+      "actionable_concepts": [
+        {
+          "id": "RC-0011",
+          "summary": "Korean-market paid-media platform expansion",
+          "disposition": "defer",
+          "rationale": "Reconsider as a separately versioned platform pack after official sources, typed exports, capability declarations, sanitized fixtures, and native-language review exist.",
+          "requirement_ids": ["REQ-PLT-001", "REQ-PLT-005"]
+        }
+      ]
+    },
+    {
+      "id": "fork-juliandickie-pro-marketing-ads",
+      "repository": "juliandickie/pro-marketing-ads",
+      "relationship": "fork",
+      "source_url": "https://github.com/juliandickie/pro-marketing-ads",
+      "default_branch": "pro-marketing-ads",
+      "reviewed_head_sha": "0a093490571b593cd0d6f84e49c5dad455d0622d",
+      "reviewed_at": "2026-07-11",
+      "license_spdx": "MIT",
+      "license_use": "same-project-metadata-only",
+      "copy_policy": "concepts-only-no-code-or-prose",
+      "head_review": {
+        "method": "github-rest-compare",
+        "compare_status": "ahead",
+        "upstream_base_sha": "283d9d4917cb7c4f2ce9181e125bb1970f74ab04",
+        "merge_base_sha": "283d9d4917cb7c4f2ce9181e125bb1970f74ab04",
+        "ahead_by": 11,
+        "behind_by": 0,
+        "commit_count": 11,
+        "changed_files": 23,
+        "additions": 340,
+        "deletions": 122,
+        "surfaces": ["creative-provider", "fork-identity", "upstream-sync"]
+      },
+      "primary_disposition": "already-addressed",
+      "rationale": "Provider-neutral generation, explicit capability checks, and fork identity are already represented by independent v2 contracts; the fork-specific provider integration is not portable evidence.",
+      "actionable_concepts": [
+        {
+          "id": "RC-0012",
+          "summary": "Keep creative-provider selection behind an explicit capability boundary",
+          "disposition": "already-addressed",
+          "rationale": "Retain v2 provider neutrality, cost ceilings, rights checks, and generation receipts without importing a provider-specific fork.",
+          "requirement_ids": ["REQ-CRT-001", "REQ-INT-001"]
+        }
+      ]
+    },
+    {
+      "id": "fork-emolina95-claude-ads",
+      "repository": "emolina95/claude-ads",
+      "relationship": "fork",
+      "source_url": "https://github.com/emolina95/claude-ads",
+      "default_branch": "main",
+      "reviewed_head_sha": "ed0a49e4d99d18c624b7fb5d6cabdeaf9ba226d9",
+      "reviewed_at": "2026-07-11",
+      "license_spdx": "MIT",
+      "license_use": "same-project-metadata-only",
+      "copy_policy": "concepts-only-no-code-or-prose",
+      "head_review": {
+        "method": "github-rest-compare",
+        "compare_status": "diverged",
+        "upstream_base_sha": "283d9d4917cb7c4f2ce9181e125bb1970f74ab04",
+        "merge_base_sha": "402ba63b9af56c0573766fb0ae8d7b56dc13a674",
+        "ahead_by": 1,
+        "behind_by": 30,
+        "commit_count": 1,
+        "changed_files": 1,
+        "additions": 10,
+        "deletions": 0,
+        "surfaces": ["plugin-manifest"]
+      },
+      "primary_disposition": "already-addressed",
+      "rationale": "V2 already ships a namespaced Claude plugin manifest and distinguishes plugin and standalone commands.",
+      "actionable_concepts": [
+        {
+          "id": "RC-0013",
+          "summary": "Explicit Claude plugin metadata",
+          "disposition": "already-addressed",
+          "rationale": "Keep the validated v2 manifest in its standard package location rather than adding a second root-level manifest.",
+          "requirement_ids": ["REQ-PKG-001", "REQ-DOC-001"]
+        }
+      ]
+    },
+    {
+      "id": "fork-josephcrown920-claude-ads",
+      "repository": "josephcrown920/claude-ads",
+      "relationship": "fork",
+      "source_url": "https://github.com/josephcrown920/claude-ads",
+      "default_branch": "main",
+      "reviewed_head_sha": "f52ea8f9f732350db58df1ffce93a33b2afeb1b9",
+      "reviewed_at": "2026-07-11",
+      "license_spdx": "MIT",
+      "license_use": "same-project-metadata-only",
+      "copy_policy": "concepts-only-no-code-or-prose",
+      "head_review": {
+        "method": "github-rest-compare",
+        "compare_status": "diverged",
+        "upstream_base_sha": "283d9d4917cb7c4f2ce9181e125bb1970f74ab04",
+        "merge_base_sha": "c2ca51f7ca9909bf56d03691c135ed81c84ce2ba",
+        "ahead_by": 1,
+        "behind_by": 36,
+        "commit_count": 1,
+        "changed_files": 3,
+        "additions": 297,
+        "deletions": 0,
+        "surfaces": ["hosted-wrapper", "replit", "wsgi"]
+      },
+      "primary_disposition": "reject",
+      "rationale": "A generic hosted wrapper is outside the portable skill contract and lacks the v2 run, privacy, adapter, and authorization boundaries.",
+      "actionable_concepts": [
+        {
+          "id": "RC-0014",
+          "summary": "Generic web execution wrapper for skill operations",
+          "disposition": "reject",
+          "rationale": "Do not expose skill execution through a server until a separately approved service threat model and tenant-safe execution boundary exist.",
+          "requirement_ids": ["REQ-SEC-001", "REQ-SEC-004"]
+        }
+      ]
+    },
+    {
+      "id": "fork-kutzki-antigravity-ads",
+      "repository": "kutzki/antigravity-ads",
+      "relationship": "fork",
+      "source_url": "https://github.com/kutzki/antigravity-ads",
+      "default_branch": "main",
+      "reviewed_head_sha": "8a01da521f3c036a42d76d1959322c2fec5ade8f",
+      "reviewed_at": "2026-07-11",
+      "license_spdx": "NOASSERTION",
+      "license_use": "unverified-metadata-only",
+      "copy_policy": "concepts-only-no-code-or-prose",
+      "head_review": {
+        "method": "github-rest-compare-plus-tree",
+        "compare_status": "no-common-ancestor",
+        "tree_blob_count": 110,
+        "surfaces": ["compiled-artifacts", "natural-language-routing", "remote-install"]
+      },
+      "primary_disposition": "reject",
+      "rationale": "GitHub reports no common ancestor, no license is detected at the head, compiled caches are committed, and the install and fixed-rule posture conflict with v2 security and evidence requirements.",
+      "actionable_concepts": [
+        {
+          "id": "RC-0015",
+          "summary": "Natural-language routing across agent runtimes",
+          "disposition": "already-addressed",
+          "rationale": "V2 already defines portable natural-language intent routing without adopting an unlicensed, stale, independently rooted bundle.",
+          "requirement_ids": ["REQ-DOC-001", "REQ-SUP-001"]
+        }
+      ]
+    },
+    {
+      "id": "fork-ltshabari-claude-ads",
+      "repository": "ltshabari/claude-ads",
+      "relationship": "fork",
+      "source_url": "https://github.com/ltshabari/claude-ads",
+      "default_branch": "main",
+      "reviewed_head_sha": "f467d31bb24873f8b09c9918dfc1a2196489e352",
+      "reviewed_at": "2026-07-11",
+      "license_spdx": "MIT",
+      "license_use": "same-project-metadata-only",
+      "copy_policy": "concepts-only-no-code-or-prose",
+      "head_review": {
+        "method": "github-rest-compare",
+        "compare_status": "diverged",
+        "upstream_base_sha": "283d9d4917cb7c4f2ce9181e125bb1970f74ab04",
+        "merge_base_sha": "402ba63b9af56c0573766fb0ae8d7b56dc13a674",
+        "ahead_by": 1,
+        "behind_by": 30,
+        "commit_count": 1,
+        "changed_files": 2,
+        "additions": 32,
+        "deletions": 1,
+        "surfaces": ["live-meta-read", "reporting-dependencies"]
+      },
+      "primary_disposition": "defer",
+      "rationale": "The concept of a live Meta read is relevant, but the delta declares an absent script and expands dependencies without typed normalization, capability status, privacy handling, or fixtures.",
+      "actionable_concepts": [
+        {
+          "id": "RC-0016",
+          "summary": "Read-only Meta account ingestion through an official, capability-led adapter",
+          "disposition": "defer",
+          "rationale": "Implement independently only after official API evidence, least-privilege authentication, typed snapshots, sanitized fixtures, and lifecycle tests are available.",
+          "requirement_ids": ["REQ-INT-001", "REQ-PLT-002", "REQ-SEC-004"]
+        }
+      ]
+    },
+    {
+      "id": "fork-redpointgroup-claude-ads",
+      "repository": "redpointgroup/claude-ads",
+      "relationship": "fork",
+      "source_url": "https://github.com/redpointgroup/claude-ads",
+      "default_branch": "main",
+      "reviewed_head_sha": "7e634f21a8f737580f0ad3e9eefdb92259104f32",
+      "reviewed_at": "2026-07-11",
+      "license_spdx": "MIT",
+      "license_use": "same-project-metadata-only",
+      "copy_policy": "concepts-only-no-code-or-prose",
+      "head_review": {
+        "method": "github-rest-compare",
+        "compare_status": "diverged",
+        "upstream_base_sha": "283d9d4917cb7c4f2ce9181e125bb1970f74ab04",
+        "merge_base_sha": "402ba63b9af56c0573766fb0ae8d7b56dc13a674",
+        "ahead_by": 2,
+        "behind_by": 30,
+        "commit_count": 2,
+        "changed_files": 4,
+        "additions": 381,
+        "deletions": 0,
+        "surfaces": ["local-mcp", "machine-paths", "orchestration-notes"]
+      },
+      "primary_disposition": "reject",
+      "rationale": "The delta commits machine-specific MCP paths and derived product notes, both prohibited in the portable package.",
+      "actionable_concepts": [
+        {
+          "id": "RC-0017",
+          "summary": "Bounded cross-platform reads coordinated by one validated conductor",
+          "disposition": "already-addressed",
+          "rationale": "Keep the v2 task packet, capability, schema, and aggregation gates while rejecting local connector configuration and extracted prose.",
+          "requirement_ids": ["REQ-INT-001", "REQ-EVL-001", "REQ-SEC-002"]
+        }
+      ]
+    },
+    {
+      "id": "repo-zubair-trabzada-ai-ads-claude",
+      "repository": "zubair-trabzada/ai-ads-claude",
+      "relationship": "external",
+      "source_url": "https://github.com/zubair-trabzada/ai-ads-claude",
+      "default_branch": "main",
+      "reviewed_head_sha": "d1df3f544249191cbc600c8301e2b9d5ddd121c8",
+      "reviewed_at": "2026-07-11",
+      "license_spdx": "MIT",
+      "license_use": "compatible-metadata-only",
+      "copy_policy": "concepts-only-no-code-or-prose",
+      "head_review": {
+        "method": "github-rest-tree-and-metadata",
+        "tree_blob_count": 29,
+        "surfaces": ["agents", "funnel", "modular-skills", "reporting"]
+      },
+      "primary_disposition": "already-addressed",
+      "rationale": "Its broad modular split confirms common workflow categories but does not add stronger evidence or contracts than the current v2 skill graph.",
+      "actionable_concepts": [
+        {
+          "id": "RC-0018",
+          "summary": "Separate reusable audience, budget, creative, funnel, landing, testing, and reporting workflows",
+          "disposition": "already-addressed",
+          "rationale": "Retain the independently designed v2 workflow subskills and typed conductor contract.",
+          "requirement_ids": ["REQ-SCP-001", "REQ-DOC-001"]
+        }
+      ]
+    },
+    {
+      "id": "repo-ivangfalco-ads-skills",
+      "repository": "ivangfalco/ads-skills",
+      "relationship": "external",
+      "source_url": "https://github.com/ivangfalco/ads-skills",
+      "default_branch": "main",
+      "reviewed_head_sha": "926bf75e20a833012ca1c7aeb514209411541fd6",
+      "reviewed_at": "2026-07-11",
+      "license_spdx": "NOASSERTION",
+      "license_use": "unverified-metadata-only",
+      "copy_policy": "concepts-only-no-code-or-prose",
+      "head_review": {
+        "method": "github-rest-tree-and-metadata",
+        "tree_blob_count": 105,
+        "surfaces": ["api-scripts", "google", "knowledge-base", "linkedin"]
+      },
+      "primary_disposition": "defer",
+      "rationale": "No repository license is asserted, so only high-level metadata observations are retained and no implementation or prose may transfer.",
+      "actionable_concepts": [
+        {
+          "id": "RC-0019",
+          "summary": "State API prerequisites early and preserve an export-based path when credentials are unavailable",
+          "disposition": "already-addressed",
+          "rationale": "The v2 capability manifest and intake flow already distinguish installed, authorized, and export-only behavior.",
+          "requirement_ids": ["REQ-INT-001", "REQ-DOC-001"]
+        }
+      ]
+    },
+    {
+      "id": "repo-mathiaschu-meta-ads-analyzer",
+      "repository": "mathiaschu/meta-ads-analyzer",
+      "relationship": "external",
+      "source_url": "https://github.com/mathiaschu/meta-ads-analyzer",
+      "default_branch": "main",
+      "reviewed_head_sha": "9088472ddacdb89f3c5943c3db6be7b8ee25c922",
+      "reviewed_at": "2026-07-11",
+      "license_spdx": "MIT",
+      "license_use": "compatible-metadata-only",
+      "copy_policy": "concepts-only-no-code-or-prose",
+      "head_review": {
+        "method": "github-rest-tree-and-metadata",
+        "tree_blob_count": 16,
+        "surfaces": ["mcp", "meta-diagnostics", "references"]
+      },
+      "primary_disposition": "defer",
+      "rationale": "The narrow diagnostic decomposition is useful for research planning, but every operational check still needs current official evidence and v2 control semantics.",
+      "actionable_concepts": [
+        {
+          "id": "RC-0020",
+          "summary": "Progressively disclose Meta auction, pacing, overlap, learning, and fluctuation diagnostics",
+          "disposition": "defer",
+          "rationale": "Map these domains independently to official sources and stable controls before extending the Meta catalog.",
+          "requirement_ids": ["REQ-PLT-001", "REQ-PLT-005"]
+        },
+        {
+          "id": "RC-0036",
+          "summary": "Commit account exports and rendered client artifacts alongside a skill contribution",
+          "disposition": "reject",
+          "rationale": "Account-derived JSON, CSV, HTML, and compiled caches violate privacy and packaging boundaries even when attached to an otherwise relevant change.",
+          "requirement_ids": ["REQ-SEC-002", "REQ-PKG-001"]
+        },
+        {
+          "id": "RC-0037",
+          "summary": "Inject third-party advertising into analytical recommendations",
+          "disposition": "reject",
+          "rationale": "Paid placement inside account analysis creates undisclosed conflicts and compromises recommendation integrity.",
+          "requirement_ids": ["REQ-MKT-001", "REQ-DOC-001"]
+        },
+        {
+          "id": "RC-0038",
+          "summary": "Package one knowledge core behind multiple runtime-specific adapters",
+          "disposition": "already-addressed",
+          "rationale": "V2 already keeps a Claude-first canonical skill and an Agent Skills-compatible portable surface; additional runtime wrappers require their own validation.",
+          "requirement_ids": ["REQ-SUP-001", "REQ-PKG-001"]
+        }
+      ]
+    },
+    {
+      "id": "repo-mathiaschu-google-ads-analyzer",
+      "repository": "mathiaschu/google-ads-analyzer",
+      "relationship": "external",
+      "source_url": "https://github.com/mathiaschu/google-ads-analyzer",
+      "default_branch": "master",
+      "reviewed_head_sha": "9ae39c23bc73ac6fca1c7fbb3d75002e0d97aaca",
+      "reviewed_at": "2026-07-11",
+      "license_spdx": "MIT",
+      "license_use": "compatible-metadata-only",
+      "copy_policy": "concepts-only-no-code-or-prose",
+      "head_review": {
+        "method": "github-rest-tree-and-metadata",
+        "tree_blob_count": 19,
+        "surfaces": ["gaql", "google-diagnostics", "mcp", "references"]
+      },
+      "primary_disposition": "defer",
+      "rationale": "Its narrow Google diagnostic domains are relevant, but live query behavior and recommendations require official-source validation and adapter tests.",
+      "actionable_concepts": [
+        {
+          "id": "RC-0021",
+          "summary": "Separate account structure, conversion, query, bidding, quality, segmentation, and fluctuation diagnostics",
+          "disposition": "defer",
+          "rationale": "Use the domain inventory only to drive an independent official-source gap analysis.",
+          "requirement_ids": ["REQ-PLT-001", "REQ-PLT-002"]
+        },
+        {
+          "id": "RC-0039",
+          "summary": "Expose a portable Google knowledge core through runtime-specific wrappers",
+          "disposition": "already-addressed",
+          "rationale": "Retain the v2 portable skill contract and add only wrappers that can pass runtime-specific evaluations.",
+          "requirement_ids": ["REQ-SUP-001", "REQ-EVL-001"]
+        },
+        {
+          "id": "RC-0040",
+          "summary": "Fail clearly when an installation source is unavailable or private",
+          "disposition": "already-addressed",
+          "rationale": "The v2 installer requires explicit private-source access and never silently substitutes an unreviewed connector.",
+          "requirement_ids": ["REQ-INS-001", "REQ-SEC-003"]
+        }
+      ]
+    },
+    {
+      "id": "repo-gomarble-ai-facebook-ads-mcp-server",
+      "repository": "gomarble-ai/facebook-ads-mcp-server",
+      "relationship": "external",
+      "source_url": "https://github.com/gomarble-ai/facebook-ads-mcp-server",
+      "default_branch": "main",
+      "reviewed_head_sha": "1a9406e9a8ccdab9260926075bd4a439140b0f81",
+      "reviewed_at": "2026-07-11",
+      "license_spdx": "MIT",
+      "license_use": "compatible-metadata-only",
+      "copy_policy": "concepts-only-no-code-or-prose",
+      "head_review": {
+        "method": "github-rest-tree-and-metadata",
+        "tree_blob_count": 10,
+        "surfaces": ["community-mcp", "meta"]
+      },
+      "primary_disposition": "defer",
+      "rationale": "A community connector may inform interoperability tests, but it cannot establish platform semantics or satisfy v2 capability and lifecycle gates by itself.",
+      "actionable_concepts": [
+        {
+          "id": "RC-0022",
+          "summary": "Evaluate a minimal read-only Meta MCP interoperability surface",
+          "disposition": "defer",
+          "rationale": "Derive the contract from official Meta interfaces and independently test authentication, pagination, partial failure, redaction, and normalized output.",
+          "requirement_ids": ["REQ-INT-001", "REQ-PLT-002"]
+        }
+      ]
+    },
+    {
+      "id": "repo-gomarble-ai-google-ads-mcp-server",
+      "repository": "gomarble-ai/google-ads-mcp-server",
+      "relationship": "external",
+      "source_url": "https://github.com/gomarble-ai/google-ads-mcp-server",
+      "default_branch": "main",
+      "reviewed_head_sha": "eb8f1fa3cb3e1957df14755003026d76b87c6498",
+      "reviewed_at": "2026-07-11",
+      "license_spdx": "MIT",
+      "license_use": "compatible-metadata-only",
+      "copy_policy": "concepts-only-no-code-or-prose",
+      "head_review": {
+        "method": "github-rest-tree-and-metadata",
+        "tree_blob_count": 12,
+        "surfaces": ["community-mcp", "google", "oauth"]
+      },
+      "primary_disposition": "defer",
+      "rationale": "The community server is secondary to Google's official MCP and does not justify a second native implementation path.",
+      "actionable_concepts": [
+        {
+          "id": "RC-0023",
+          "summary": "Use community Google connectors only as black-box interoperability cases",
+          "disposition": "defer",
+          "rationale": "Prioritize the official MCP, then test community compatibility without copying implementation or weakening credential controls.",
+          "requirement_ids": ["REQ-INT-001", "REQ-EVL-001"]
+        }
+      ]
+    },
+    {
+      "id": "repo-googleads-google-ads-mcp",
+      "repository": "googleads/google-ads-mcp",
+      "relationship": "external",
+      "source_url": "https://github.com/googleads/google-ads-mcp",
+      "default_branch": "main",
+      "reviewed_head_sha": "1c9817a616b0221a2790286edf6a443397ee1bb4",
+      "reviewed_at": "2026-07-11",
+      "license_spdx": "Apache-2.0",
+      "license_use": "compatible-metadata-only",
+      "copy_policy": "concepts-only-no-code-or-prose",
+      "head_review": {
+        "method": "github-rest-tree-and-metadata",
+        "tree_blob_count": 51,
+        "surfaces": ["discovery", "gaql", "golden-tests", "official-mcp", "resources"]
+      },
+      "primary_disposition": "adopt",
+      "rationale": "The official server is the strongest candidate for a future Google read capability and exposes testable resource discovery and query surfaces.",
+      "actionable_concepts": [
+        {
+          "id": "RC-0024",
+          "summary": "Discover official Google Ads resources and query metadata before executing bounded reads",
+          "disposition": "adopt",
+          "rationale": "Build an independent adapter that snapshots the exposed capability surface, normalizes read results, and gates drift with golden tool/resource and model cases.",
+          "requirement_ids": ["REQ-INT-001", "REQ-PLT-002", "REQ-EVL-001"]
+        }
+      ]
+    },
+    {
+      "id": "repo-googleanalytics-google-analytics-mcp",
+      "repository": "googleanalytics/google-analytics-mcp",
+      "relationship": "external",
+      "source_url": "https://github.com/googleanalytics/google-analytics-mcp",
+      "default_branch": "main",
+      "reviewed_head_sha": "c09abcba1c565f191351169894d61b54a2502e17",
+      "reviewed_at": "2026-07-11",
+      "license_spdx": "Apache-2.0",
+      "license_use": "compatible-metadata-only",
+      "copy_policy": "concepts-only-no-code-or-prose",
+      "head_review": {
+        "method": "github-rest-tree-and-metadata",
+        "tree_blob_count": 29,
+        "surfaces": ["admin-metadata", "funnels", "official-mcp", "reporting"]
+      },
+      "primary_disposition": "adopt",
+      "rationale": "Paid-media diagnosis benefits from an official read-only measurement companion, while GA4 observations must remain distinct from ad-platform attribution claims.",
+      "actionable_concepts": [
+        {
+          "id": "RC-0025",
+          "summary": "Add an optional official GA4 read capability for conversion, funnel, metadata, and reconciliation evidence",
+          "disposition": "adopt",
+          "rationale": "Normalize GA4 reads into a separate measurement evidence class and never silently equate them with platform-reported conversions.",
+          "requirement_ids": ["REQ-INT-001", "REQ-PLT-003", "REQ-FIN-001"]
+        }
+      ]
+    },
+    {
+      "id": "repo-irinabuht12-oss-google-meta-ads-ga4-mcp",
+      "repository": "irinabuht12-oss/google-meta-ads-ga4-mcp",
+      "relationship": "external",
+      "source_url": "https://github.com/irinabuht12-oss/google-meta-ads-ga4-mcp",
+      "default_branch": "main",
+      "reviewed_head_sha": "eb87b027ebbc62844c06116a3b1071b83567e3a5",
+      "reviewed_at": "2026-07-11",
+      "license_spdx": "MIT",
+      "license_use": "compatible-metadata-only",
+      "copy_policy": "concepts-only-no-code-or-prose",
+      "head_review": {
+        "method": "github-rest-tree-and-metadata",
+        "tree_blob_count": 16,
+        "surfaces": ["combined-connector", "configuration", "workflow"]
+      },
+      "primary_disposition": "defer",
+      "rationale": "A combined configuration is convenient but obscures per-provider authority, failure, attribution, credential, and capability boundaries.",
+      "actionable_concepts": [
+        {
+          "id": "RC-0026",
+          "summary": "Compose Google Ads, Meta Ads, and GA4 reads without collapsing their evidence or authorization boundaries",
+          "disposition": "defer",
+          "rationale": "First implement and test each adapter independently, then add a conductor-level reconciliation workflow.",
+          "requirement_ids": ["REQ-INT-001", "REQ-PLT-003", "REQ-SEC-004"]
+        }
+      ]
+    },
+    {
+      "id": "repo-themattberman-google-ads-copilot",
+      "repository": "TheMattBerman/google-ads-copilot",
+      "relationship": "external",
+      "source_url": "https://github.com/TheMattBerman/google-ads-copilot",
+      "default_branch": "main",
+      "reviewed_head_sha": "2c253ee988b5540465317cde0cd4d6915dc2b382",
+      "reviewed_at": "2026-07-11",
+      "license_spdx": "MIT",
+      "license_use": "compatible-metadata-only",
+      "copy_policy": "concepts-only-no-code-or-prose",
+      "head_review": {
+        "method": "github-rest-tree-and-metadata",
+        "tree_blob_count": 132,
+        "surfaces": ["apply-layer", "evals", "retrieval", "rollback"]
+      },
+      "primary_disposition": "adopt",
+      "rationale": "Its strongest transferable lessons are explicit mutation evidence and regression-tested semantic fallbacks, both of which fit the v2 safety doctrine when reimplemented independently.",
+      "actionable_concepts": [
+        {
+          "id": "RC-0027",
+          "summary": "Require an action manifest, review, verification, and rollback record for every mutation",
+          "disposition": "already-addressed",
+          "rationale": "The v2 mutation gate already requires these controls; live write adapters remain disabled until platform-specific lifecycle tests pass.",
+          "requirement_ids": ["REQ-PLT-004", "REQ-SEC-004"]
+        },
+        {
+          "id": "RC-0028",
+          "summary": "Test search-term retrieval fallbacks, state reset, campaign scoping, and complete negative inventory as one semantic contract",
+          "disposition": "adopt",
+          "rationale": "Add independent regression fixtures when the official Google read adapter is implemented, and label every fallback and coverage limitation in the normalized result.",
+          "requirement_ids": ["REQ-PLT-002", "REQ-EVL-001"]
+        }
+      ]
+    },
+    {
+      "id": "repo-adsmcp-tiktok-ads-mcp-server",
+      "repository": "AdsMCP/tiktok-ads-mcp-server",
+      "relationship": "external",
+      "source_url": "https://github.com/AdsMCP/tiktok-ads-mcp-server",
+      "default_branch": "main",
+      "reviewed_head_sha": "fef46dda014716773f97473a0044bdfae123d99f",
+      "reviewed_at": "2026-07-11",
+      "license_spdx": "MIT",
+      "license_use": "compatible-metadata-only",
+      "copy_policy": "concepts-only-no-code-or-prose",
+      "head_review": {
+        "method": "github-rest-tree-and-metadata",
+        "tree_blob_count": 22,
+        "surfaces": ["capability-registry", "oauth", "tiktok", "tool-domains"]
+      },
+      "primary_disposition": "adopt",
+      "rationale": "A domain-separated capability registry is a useful design input for a future TikTok adapter, but platform semantics still come from official sources.",
+      "actionable_concepts": [
+        {
+          "id": "RC-0029",
+          "summary": "Declare TikTok audience, campaign, creative, performance, and reporting capabilities independently",
+          "disposition": "adopt",
+          "rationale": "Implement read operations one domain at a time with per-tool authorization, normalization, pagination, fixture, and failure evidence; leave writes disabled.",
+          "requirement_ids": ["REQ-INT-001", "REQ-PLT-002", "REQ-PLT-004"]
+        }
+      ]
+    },
+    {
+      "id": "repo-kuudoai-amazon-ads-mcp",
+      "repository": "KuudoAI/amazon_ads_mcp",
+      "relationship": "external",
+      "source_url": "https://github.com/KuudoAI/amazon_ads_mcp",
+      "default_branch": "main",
+      "reviewed_head_sha": "ec8cf462b32566600d069168f4c1c212f954cb00",
+      "reviewed_at": "2026-07-11",
+      "license_spdx": "MIT",
+      "license_use": "compatible-metadata-only",
+      "copy_policy": "concepts-only-no-code-or-prose",
+      "head_review": {
+        "method": "github-rest-tree-and-metadata",
+        "tree_blob_count": 554,
+        "surfaces": ["amazon", "generated-capabilities", "openapi", "tests"]
+      },
+      "primary_disposition": "adopt",
+      "rationale": "Amazon's broad and changing surface benefits from generated capability inventory, while a paid-media skill should expose only a reviewed read subset.",
+      "actionable_concepts": [
+        {
+          "id": "RC-0030",
+          "summary": "Generate a version-pinned Amazon capability inventory and allowlist the tested read subset",
+          "disposition": "adopt",
+          "rationale": "Treat generated API metadata as discovery input, validate it against official specifications, and never equate generation with an enabled capability.",
+          "requirement_ids": ["REQ-INT-001", "REQ-PLT-002", "REQ-EVL-001"]
+        }
+      ]
+    },
+    {
+      "id": "repo-aaron-he-zhu-aaron-marketing-skills",
+      "repository": "aaron-he-zhu/aaron-marketing-skills",
+      "relationship": "external",
+      "source_url": "https://github.com/aaron-he-zhu/aaron-marketing-skills",
+      "default_branch": "main",
+      "reviewed_head_sha": "661c5701d75ef5a537013f714da3672836cd2dd6",
+      "reviewed_at": "2026-07-11",
+      "license_spdx": "Apache-2.0",
+      "license_use": "compatible-metadata-only",
+      "copy_policy": "concepts-only-no-code-or-prose",
+      "head_review": {
+        "method": "github-rest-tree-and-metadata",
+        "tree_blob_count": 555,
+        "surfaces": ["distribution", "drift-tests", "lifecycle-taxonomy", "skill-family"]
+      },
+      "primary_disposition": "adopt",
+      "rationale": "Its strongest architectural lesson is governing a large skill family with lifecycle organization, drift detection, and source provenance rather than relying on file presence alone.",
+      "actionable_concepts": [
+        {
+          "id": "RC-0031",
+          "summary": "Gate skill-family drift and distribution provenance across research, activation, orchestration, and scaling workflows",
+          "disposition": "adopt",
+          "rationale": "Add independent tests that detect metadata, routing, capability, and packaging drift across the Claude Ads skill family and bind packages to source revisions.",
+          "requirement_ids": ["REQ-EVL-001", "REQ-PKG-001", "REQ-SUP-001"]
+        }
+      ]
+    },
+    {
+      "id": "repo-hainrixz-claude-ads",
+      "repository": "Hainrixz/claude-ads",
+      "relationship": "external",
+      "source_url": "https://github.com/Hainrixz/claude-ads",
+      "default_branch": "main",
+      "reviewed_head_sha": "11c2e98792744c0371bcf12c389eec18c129052a",
+      "reviewed_at": "2026-07-11",
+      "license_spdx": "MIT",
+      "license_use": "compatible-metadata-only",
+      "copy_policy": "concepts-only-no-code-or-prose",
+      "head_review": {
+        "method": "github-rest-tree-and-metadata",
+        "tree_blob_count": 159,
+        "surfaces": ["audit-history", "audit-loop", "schemas", "tests"]
+      },
+      "primary_disposition": "adopt",
+      "rationale": "Versioned audit-history and loop-state concepts address a real v2 gap, while the current repository's canonical schemas and scoring remain authoritative.",
+      "actionable_concepts": [
+        {
+          "id": "RC-0032",
+          "summary": "Persist schema-valid audit history and compare only compatible, evidence-comparable runs",
+          "disposition": "adopt",
+          "rationale": "Design an independent history contract with input-window compatibility, source freshness, control version, score provenance, and explicit non-comparable outcomes.",
+          "requirement_ids": ["REQ-EVL-001", "REQ-FIN-001"]
+        },
+        {
+          "id": "RC-0035",
+          "summary": "Accept optional public social evidence as a read-only, provenance-labelled source packet",
+          "disposition": "defer",
+          "rationale": "Require source identity, capture time, terms review, privacy classification, quotation limits, and a rule that public conversation cannot establish platform policy or account facts.",
+          "requirement_ids": ["REQ-MKT-001", "REQ-SEC-002"]
+        },
+        {
+          "id": "RC-0041",
+          "summary": "Evaluate dependency changes against the current graph and full release matrix",
+          "disposition": "already-addressed",
+          "rationale": "V2 uses current dependency manifests, vulnerability audit, reproducible package checks, and cross-platform CI rather than inheriting closed range-bump proposals.",
+          "requirement_ids": ["REQ-DEP-001", "REQ-CI-001"]
+        }
+      ]
+    },
+    {
+      "id": "repo-zubair-trabzada-ai-marketing-claude",
+      "repository": "zubair-trabzada/ai-marketing-claude",
+      "relationship": "external",
+      "source_url": "https://github.com/zubair-trabzada/ai-marketing-claude",
+      "default_branch": "main",
+      "reviewed_head_sha": "e5aa0ea4c5f30d8bc08771e8ea932463e76d3356",
+      "reviewed_at": "2026-07-11",
+      "license_spdx": "MIT",
+      "license_use": "compatible-metadata-only",
+      "copy_policy": "concepts-only-no-code-or-prose",
+      "head_review": {
+        "method": "github-rest-tree-and-metadata",
+        "tree_blob_count": 37,
+        "surfaces": ["broad-marketing-suite", "cross-channel", "templates"]
+      },
+      "primary_disposition": "reject",
+      "rationale": "A general marketing suite would dilute the paid-advertising product boundary and duplicate specialist systems without stronger evidence contracts.",
+      "actionable_concepts": [
+        {
+          "id": "RC-0033",
+          "summary": "Expand Claude Ads into an all-purpose marketing suite",
+          "disposition": "reject",
+          "rationale": "Keep adjacent SEO, email, social, brand, and proposal work as explicit handoffs; include only the context required for paid-media decisions.",
+          "requirement_ids": ["REQ-SCP-001", "REQ-DOC-001"]
+        }
+      ]
+    },
+    {
+      "id": "repo-pipeboard-co-meta-ads-mcp",
+      "repository": "pipeboard-co/meta-ads-mcp",
+      "relationship": "external",
+      "source_url": "https://github.com/pipeboard-co/meta-ads-mcp",
+      "default_branch": "main",
+      "reviewed_head_sha": "225f46f5586a66add4e30cca218c5e88982e066c",
+      "reviewed_at": "2026-07-11",
+      "license_spdx": "NOASSERTION",
+      "license_use": "unverified-metadata-only",
+      "copy_policy": "concepts-only-no-code-or-prose",
+      "head_review": {
+        "method": "github-rest-tree-and-metadata",
+        "tree_blob_count": 111,
+        "surfaces": ["auth-failures", "integration-tests", "meta", "remote-mcp"]
+      },
+      "primary_disposition": "defer",
+      "rationale": "No license is asserted, so behavior can only motivate independent tests against official Meta interfaces; no implementation or prose may transfer.",
+      "actionable_concepts": [
+        {
+          "id": "RC-0034",
+          "summary": "Test disabled accounts, authentication failures, account discovery, reporting, and transport modes independently",
+          "disposition": "defer",
+          "rationale": "Derive cases from official Meta behavior and build clean-room fixtures after the native Meta read adapter is authorized.",
+          "requirement_ids": ["REQ-INT-001", "REQ-EVL-001", "REQ-SEC-004"]
+        }
+      ]
+    }
+  ],
+  "tracker_scopes": [
+    {
+      "repository": "Hainrixz/claude-ads",
+      "reviewed_at": "2026-07-11",
+      "state_filter": "all",
+      "completeness": "complete",
+      "issue_count": 0,
+      "pull_request_count": 7,
+      "item_ids": ["TRK-0001", "TRK-0002", "TRK-0003", "TRK-0004", "TRK-0005", "TRK-0006", "TRK-0007"]
+    },
+    {
+      "repository": "mathiaschu/meta-ads-analyzer",
+      "reviewed_at": "2026-07-11",
+      "state_filter": "all",
+      "completeness": "complete",
+      "issue_count": 1,
+      "pull_request_count": 2,
+      "item_ids": ["TRK-0008", "TRK-0009", "TRK-0010"]
+    },
+    {
+      "repository": "mathiaschu/google-ads-analyzer",
+      "reviewed_at": "2026-07-11",
+      "state_filter": "all",
+      "completeness": "complete",
+      "issue_count": 1,
+      "pull_request_count": 1,
+      "item_ids": ["TRK-0011", "TRK-0012"]
+    },
+    {
+      "repository": "TheMattBerman/google-ads-copilot",
+      "reviewed_at": "2026-07-11",
+      "state_filter": "all",
+      "completeness": "complete",
+      "issue_count": 0,
+      "pull_request_count": 2,
+      "item_ids": ["TRK-0013", "TRK-0014"]
+    }
+  ],
+  "tracker_items": [
+    {
+      "id": "TRK-0001",
+      "repository": "Hainrixz/claude-ads",
+      "kind": "pull-request",
+      "number": 1,
+      "url": "https://github.com/Hainrixz/claude-ads/pull/1",
+      "state": "closed",
+      "merged": false,
+      "reviewed_at": "2026-07-11",
+      "disposition": "already-addressed",
+      "rationale": "The closed automation-action range bump is superseded by evaluation of the current v2 workflow graph and remote matrix.",
+      "linked_concept_ids": ["RC-0041"]
+    },
+    {
+      "id": "TRK-0002",
+      "repository": "Hainrixz/claude-ads",
+      "kind": "pull-request",
+      "number": 2,
+      "url": "https://github.com/Hainrixz/claude-ads/pull/2",
+      "state": "closed",
+      "merged": false,
+      "reviewed_at": "2026-07-11",
+      "disposition": "already-addressed",
+      "rationale": "The closed image-library range bump is not applicable to the current v2 dependency and creative capability review.",
+      "linked_concept_ids": ["RC-0041"]
+    },
+    {
+      "id": "TRK-0003",
+      "repository": "Hainrixz/claude-ads",
+      "kind": "pull-request",
+      "number": 3,
+      "url": "https://github.com/Hainrixz/claude-ads/pull/3",
+      "state": "closed",
+      "merged": false,
+      "reviewed_at": "2026-07-11",
+      "disposition": "already-addressed",
+      "rationale": "The closed legacy reporting-library range bump is superseded by the current deterministic renderer dependency set.",
+      "linked_concept_ids": ["RC-0041"]
+    },
+    {
+      "id": "TRK-0004",
+      "repository": "Hainrixz/claude-ads",
+      "kind": "pull-request",
+      "number": 4,
+      "url": "https://github.com/Hainrixz/claude-ads/pull/4",
+      "state": "closed",
+      "merged": false,
+      "reviewed_at": "2026-07-11",
+      "disposition": "already-addressed",
+      "rationale": "The browser dependency must be assessed with the v2 egress-attestation boundary rather than inherited as a range-only update.",
+      "linked_concept_ids": ["RC-0041"]
+    },
+    {
+      "id": "TRK-0005",
+      "repository": "Hainrixz/claude-ads",
+      "kind": "pull-request",
+      "number": 5,
+      "url": "https://github.com/Hainrixz/claude-ads/pull/5",
+      "state": "closed",
+      "merged": false,
+      "reviewed_at": "2026-07-11",
+      "disposition": "already-addressed",
+      "rationale": "The network dependency is pinned and audited in the current v2 graph, including the connection-boundary DNS controls.",
+      "linked_concept_ids": ["RC-0041"]
+    },
+    {
+      "id": "TRK-0006",
+      "repository": "Hainrixz/claude-ads",
+      "kind": "pull-request",
+      "number": 6,
+      "url": "https://github.com/Hainrixz/claude-ads/pull/6",
+      "state": "closed",
+      "merged": false,
+      "reviewed_at": "2026-07-11",
+      "disposition": "already-addressed",
+      "rationale": "The plotting dependency is not assumed necessary in v2 and must justify its inclusion before any version change is considered.",
+      "linked_concept_ids": ["RC-0041"]
+    },
+    {
+      "id": "TRK-0007",
+      "repository": "Hainrixz/claude-ads",
+      "kind": "pull-request",
+      "number": 7,
+      "url": "https://github.com/Hainrixz/claude-ads/pull/7",
+      "state": "open",
+      "merged": false,
+      "reviewed_at": "2026-07-11",
+      "disposition": "defer",
+      "rationale": "Optional public social evidence needs a typed source-packet, privacy, terms, provenance, and prompt-injection contract before use.",
+      "linked_concept_ids": ["RC-0035"]
+    },
+    {
+      "id": "TRK-0008",
+      "repository": "mathiaschu/meta-ads-analyzer",
+      "kind": "pull-request",
+      "number": 1,
+      "url": "https://github.com/mathiaschu/meta-ads-analyzer/pull/1",
+      "state": "open",
+      "merged": false,
+      "reviewed_at": "2026-07-11",
+      "disposition": "reject",
+      "rationale": "The contribution includes large account-derived datasets, rendered outputs, and compiled artifacts, so it cannot enter a public-safe skill repository.",
+      "linked_concept_ids": ["RC-0036"]
+    },
+    {
+      "id": "TRK-0009",
+      "repository": "mathiaschu/meta-ads-analyzer",
+      "kind": "issue",
+      "number": 2,
+      "url": "https://github.com/mathiaschu/meta-ads-analyzer/issues/2",
+      "state": "open",
+      "merged": false,
+      "reviewed_at": "2026-07-11",
+      "disposition": "reject",
+      "rationale": "Third-party paid placement inside analytical recommendations conflicts with evidence neutrality and user trust.",
+      "linked_concept_ids": ["RC-0037"]
+    },
+    {
+      "id": "TRK-0010",
+      "repository": "mathiaschu/meta-ads-analyzer",
+      "kind": "pull-request",
+      "number": 3,
+      "url": "https://github.com/mathiaschu/meta-ads-analyzer/pull/3",
+      "state": "open",
+      "merged": false,
+      "reviewed_at": "2026-07-11",
+      "disposition": "already-addressed",
+      "rationale": "The portable-core concept is present in v2; any additional runtime adapter must independently pass packaging and behavior evaluations.",
+      "linked_concept_ids": ["RC-0038"]
+    },
+    {
+      "id": "TRK-0011",
+      "repository": "mathiaschu/google-ads-analyzer",
+      "kind": "issue",
+      "number": 1,
+      "url": "https://github.com/mathiaschu/google-ads-analyzer/issues/1",
+      "state": "closed",
+      "merged": false,
+      "reviewed_at": "2026-07-11",
+      "disposition": "already-addressed",
+      "rationale": "V2 fails clearly on inaccessible private sources and retains an export-only path instead of asking the model to reconstruct a missing connector.",
+      "linked_concept_ids": ["RC-0040"]
+    },
+    {
+      "id": "TRK-0012",
+      "repository": "mathiaschu/google-ads-analyzer",
+      "kind": "pull-request",
+      "number": 2,
+      "url": "https://github.com/mathiaschu/google-ads-analyzer/pull/2",
+      "state": "open",
+      "merged": false,
+      "reviewed_at": "2026-07-11",
+      "disposition": "already-addressed",
+      "rationale": "V2 already separates its canonical Claude surface from portable behavior contracts; wrapper proliferation is not adopted without runtime tests.",
+      "linked_concept_ids": ["RC-0039"]
+    },
+    {
+      "id": "TRK-0013",
+      "repository": "TheMattBerman/google-ads-copilot",
+      "kind": "pull-request",
+      "number": 1,
+      "url": "https://github.com/TheMattBerman/google-ads-copilot/pull/1",
+      "state": "closed",
+      "merged": true,
+      "reviewed_at": "2026-07-11",
+      "disposition": "already-addressed",
+      "rationale": "Action manifests, explicit review, verification, and undo are already mandatory in v2; writes remain disabled until exact lifecycle tests exist.",
+      "linked_concept_ids": ["RC-0027"]
+    },
+    {
+      "id": "TRK-0014",
+      "repository": "TheMattBerman/google-ads-copilot",
+      "kind": "pull-request",
+      "number": 2,
+      "url": "https://github.com/TheMattBerman/google-ads-copilot/pull/2",
+      "state": "closed",
+      "merged": true,
+      "reviewed_at": "2026-07-11",
+      "disposition": "adopt",
+      "rationale": "Semantic fallback coverage and negative-inventory completeness should become independent regression requirements for the future official Google read adapter.",
+      "linked_concept_ids": ["RC-0028"]
+    }
+  ],
+  "critical_blockers": []
+}

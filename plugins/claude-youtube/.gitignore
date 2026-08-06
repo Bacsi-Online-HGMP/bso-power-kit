@@ -1,0 +1,47 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+dist/
+build/
+*.egg
+
+# Virtual environments
+venv/
+.venv/
+env/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Claude Code
+.claude/
+.tmp/
+
+# YouTube API credentials (never commit)
+*oauth_token*.json
+*client_secret*.json
+credentials.json
+token.json
+
+# Environment variables
+.env
+.env.local
+
+# Cache
+*.cache
+.cache/
+
+# Development files (not part of the skill)
+skill-forge/
+claude.md
+youtube-research.md

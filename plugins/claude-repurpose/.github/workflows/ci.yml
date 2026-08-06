@@ -1,0 +1,52 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  lint:
+    name: Syntax & Structure Check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Check Python syntax
+        run: |
+          for f in scripts/*.py; do
+            python3 -m py_compile "$f" && echo "  pass $f" || exit 1
+          done
+          echo "All scripts passed syntax check"
+
+      - name: Check SKILL.md files exist
+        run: |
+          for skill in repurpose repurpose-twitter repurpose-linkedin repurpose-instagram \
+                       repurpose-facebook repurpose-youtube repurpose-skool \
+                       repurpose-newsletter repurpose-reddit repurpose-quotes \
+                       repurpose-seo repurpose-calendar; do
+            test -f "skills/${skill}/SKILL.md" && echo "  pass skills/${skill}/SKILL.md" || exit 1
+          done
+
+      - name: Check agent files exist
+        run: |
+          for agent in repurpose-social repurpose-visual repurpose-longform \
+                       repurpose-community repurpose-seo; do
+            test -f "agents/${agent}.md" && echo "  pass agents/${agent}.md" || exit 1
+          done
+
+      - name: Check reference files exist
+        run: |
+          for ref in platform-specs hook-formulas voice-adaptation repurposing-frameworks \
+                     poll-strategy image-prompts mistakes-to-avoid engagement-benchmarks; do
+            test -f "skills/repurpose/references/${ref}.md" && echo "  pass references/${ref}.md" || exit 1
+          done
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt

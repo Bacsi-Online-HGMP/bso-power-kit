@@ -1,0 +1,2 @@
+date,account_id,account_name,campaign_id,campaign_name,campaign_status,creative_id,creative_name,conversion_action,conversions,budget,spend,currency
+2026-06-15,demo-x-account,Sanitized X Demo,demo-x-campaign,Sanitized Post Campaign,paused,demo-x-creative,Sanitized Promoted Post,lead,1,100.00,31.50,USD

@@ -1,0 +1,26 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# Build output
+dist/
+
+# Working files / downloads (the skill writes these to a tmp dir, but just in case)
+watch-*/
+*.mp4
+*.mkv
+*.webm
+*.mov
+*.vtt
+*.info.json
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editor
+.vscode/
+.idea/

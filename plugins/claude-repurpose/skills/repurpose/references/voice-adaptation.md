@@ -1,0 +1,198 @@
+# Voice Adaptation Guide
+
+Brand voice stays consistent across all platforms. Only the **tone** adapts per channel.
+
+## Core Voice Dimensions
+
+When detecting voice from source content, assess these 5 dimensions on a 1-5 scale:
+
+| Dimension | 1 (Low) | 5 (High) |
+|-----------|---------|----------|
+| **Formality** | Casual, slang, incomplete sentences | Academic, structured, precise |
+| **Humor** | Serious, straight-faced | Witty, playful, comedic |
+| **Directness** | Nuanced, hedged, diplomatic | Blunt, opinionated, assertive |
+| **Emotion** | Data-driven, detached | Passionate, personal, vulnerable |
+| **Jargon** | Plain language, accessible to all | Industry-specific, expert-level |
+
+**Detection process:** Read the source content and score each dimension. This produces the voice profile that carries across all platform outputs.
+
+---
+
+## Per-Platform Tone Rules
+
+### Twitter/X
+- **Tone:** Concise, direct, punchy
+- **Emoji:** Sparse (0-1 per tweet, or none)
+- **Contractions:** Yes, always
+- **Sentence length:** Short. Punchy. Fragmented OK.
+- **Formatting:** Line breaks between ideas. No walls of text.
+- **Avoid:** Corporate language, passive voice, hedging ("I think maybe...")
+
+### LinkedIn
+- **Tone:** Professional, first-person, opinion-led, measured authority
+- **Emoji:** None (or 1-2 sparingly for visual breaks in long posts)
+- **Contractions:** Acceptable but less frequent than Twitter
+- **Sentence length:** Mix of short hooks and medium-length explanations
+- **Formatting:** Short paragraphs (1-2 sentences), strategic line breaks, whitespace
+- **Avoid:** Hashtag-stuffed intros, "Agree?" engagement bait, robotic corporate speak
+
+### Instagram
+- **Tone:** Relaxed, creative, visual-descriptive, casual
+- **Emoji:** Rich (3-8 per caption, used as visual markers and personality)
+- **Contractions:** Always
+- **Sentence length:** Conversational, flowing, storytelling
+- **Formatting:** Line breaks, emoji bullets, "more" fold awareness (first 125 chars critical)
+- **Avoid:** Formal language, jargon, text-heavy captions without visual breaks
+
+### Facebook
+- **Tone:** Warm, community-focused, conversational, question-ending
+- **Emoji:** Moderate (2-4 per post)
+- **Contractions:** Yes
+- **Sentence length:** Medium, conversational
+- **Formatting:** Short paragraphs, end with a question to drive comments
+- **Avoid:** Hard-sell CTAs, link-heavy posts, content that feels "posted and forgotten"
+
+### YouTube Community
+- **Tone:** Casual, fan-oriented, interactive, personal
+- **Emoji:** Moderate (matches channel personality)
+- **Contractions:** Always
+- **Sentence length:** Short to medium, conversational
+- **Formatting:** Simple, scannable, poll-friendly
+- **Avoid:** Long paragraphs, formal language, content that doesn't invite interaction
+
+### Skool
+- **Tone:** Teacher/leader, empowering, action-oriented, encouraging
+- **Emoji:** Light to moderate
+- **Contractions:** Yes
+- **Sentence length:** Clear, instructional, motivating
+- **Formatting:** Actionable structure (challenge format, numbered steps, discussion prompts)
+- **Avoid:** Passive teaching, monologues without engagement hooks, pure information dumps
+
+### Reddit
+- **Tone:** Peer-to-peer, humble, evidence-first, authentic
+- **Emoji:** None or minimal
+- **Contractions:** Yes (conversational)
+- **Sentence length:** Medium to long, well-reasoned
+- **Formatting:** Markdown headers, bullet points, TL;DR at top or bottom
+- **Avoid:** ANY marketing speak, self-promotion framing, corporate buzzwords, "influencer" energy
+
+### TikTok
+- **Tone:** Fast-paced, casual, Gen-Z influenced, personality-forward, raw/authentic
+- **Emoji:** Moderate (2-4, used naturally not decoratively)
+- **Contractions:** Always
+- **Sentence length:** Very short. Punchy. Conversational fragments.
+- **Formatting:** Script format with timestamps and text overlay notes
+- **Avoid:** Corporate language, slow builds, passive voice, over-produced feel
+
+### Quora
+- **Tone:** Expert, helpful, thorough, evidence-based, authoritative but approachable
+- **Emoji:** None
+- **Contractions:** Occasionally (more formal than Reddit, less than Twitter)
+- **Sentence length:** Medium to long, well-structured, paragraphed
+- **Formatting:** Headers for long answers, bold key terms, numbered steps for processes
+- **Avoid:** Marketing speak, vague claims without evidence, overly casual tone, link-first answers
+
+### Threads
+- **Tone:** Casual, conversational, opinion-led, community-feeling
+- **Emoji:** Moderate (2-4, natural use)
+- **Contractions:** Always
+- **Sentence length:** Short to medium, flowing, authentic
+- **Formatting:** Line breaks between ideas, no hashtags
+- **Avoid:** Corporate tone, hashtag-stuffing, promotional feel
+
+### Pinterest
+- **Tone:** Aspirational, helpful, keyword-forward, SEO-conscious
+- **Emoji:** Minimal (0-2, decorative only)
+- **Contractions:** Occasionally
+- **Sentence length:** Medium, descriptive, action-oriented
+- **Formatting:** Keyword-first sentences, bullet-friendly descriptions
+- **Avoid:** Vague descriptions, clickbait without substance, excessive hashtags
+
+### Snapchat
+- **Tone:** Ultra-casual, ephemeral, raw, Gen-Z native, unpolished
+- **Emoji:** Heavy (part of the visual language)
+- **Contractions:** Always, slang OK
+- **Sentence length:** Very short, fragments, text-message style
+- **Formatting:** Text overlays, not paragraphs
+- **Avoid:** Polished/corporate feel, long text, formal language
+
+### Discord
+- **Tone:** Casual, community-first, peer-to-peer, gamer-adjacent
+- **Emoji:** Heavy (reactions, role markers, decorative)
+- **Contractions:** Always, informal language OK ("y'all", "ngl", "tbh")
+- **Sentence length:** Short to medium, scannable
+- **Formatting:** Discord markdown, embeds, reaction prompts
+- **Avoid:** Broadcasting tone, corporate speak, formal announcements without personality
+
+### Medium
+- **Tone:** Thoughtful, authoritative, storytelling-driven, magazine-quality
+- **Emoji:** None
+- **Contractions:** Occasionally (balance formality with personality)
+- **Sentence length:** Varied, narrative arc, literary rhythm
+- **Formatting:** Headers, pull quotes, bold key terms, clear section breaks
+- **Avoid:** Listicle-only format, AI-sounding prose, shallow takes, keyword stuffing
+
+### WhatsApp
+- **Tone:** Personal, direct, intimate, texting-a-friend feel
+- **Emoji:** Heavy (paragraph markers, emphasis, personality)
+- **Contractions:** Always
+- **Sentence length:** Very short, one thought per line
+- **Formatting:** Emoji bullets, line breaks between every thought, no markdown
+- **Avoid:** Corporate broadcasts, long paragraphs, formal language, mass-email feel
+
+### Telegram
+- **Tone:** Editorial, structured, informative, curated-feed feel
+- **Emoji:** Moderate (section markers, not decoration)
+- **Contractions:** Sometimes
+- **Sentence length:** Medium, well-structured
+- **Formatting:** Bold headlines, markdown lists, code blocks for emphasis, inline links
+- **Avoid:** Overly casual, walls of unformatted text, clickbait
+
+### Newsletter / Email
+- **Tone:** Intimate, direct-to-reader, exclusive-feeling, personal
+- **Emoji:** Sparingly in subject line (1 max), light in body
+- **Contractions:** Yes
+- **Sentence length:** Short paragraphs, scannable, conversational
+- **Formatting:** Short paragraphs (1-3 sentences), subheadings, bold key phrases, clear CTA
+- **Avoid:** Walls of text, multiple CTAs competing, impersonal mass-email tone
+
+---
+
+## Voice Override Flags
+
+### `--voice casual`
+Apply across ALL platforms:
+- Increase emoji usage by 1-2 per piece
+- Use contractions everywhere
+- Shorter sentences, more fragments
+- More conversational fillers ("honestly," "look," "here's the thing")
+- Lower formality by 1-2 points on the scale
+- Add warmth and approachability
+
+### `--voice professional`
+Apply across ALL platforms:
+- Reduce or eliminate emoji
+- More structured sentences
+- Data and evidence foregrounded
+- Authoritative but not arrogant
+- Increase formality by 1-2 points on the scale
+- Measured, confident tone
+
+### `--voice witty`
+Apply across ALL platforms:
+- Personality-forward in every piece
+- Clever wordplay, unexpected angles, light humor
+- Punchy one-liners as hooks
+- Analogies and metaphors more colorful
+- Increase humor by 2 points on the scale
+- Balance wit with substance (never sacrifice clarity for cleverness)
+
+---
+
+## The Cardinal Rule
+
+> The core voice (what the brand sounds like) stays the same everywhere.
+> Only the tone (how formal, how playful, how direct) shifts per platform.
+>
+> A witty brand is witty on LinkedIn AND Twitter — just with different levels of polish.
+> A data-driven brand leads with numbers on every platform — just formatted differently.

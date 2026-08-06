@@ -1,0 +1,2 @@
+date,account_id,account_name,campaign_id,campaign_name,campaign_status,creative_id,creative_name,conversion_action,conversions,budget,spend,currency
+2026-06-15,demo-reddit-account,Sanitized Reddit Demo,demo-reddit-campaign,Sanitized Community Campaign,paused,demo-reddit-creative,Sanitized Conversation Ad,lead,4,100.00,34.50,USD

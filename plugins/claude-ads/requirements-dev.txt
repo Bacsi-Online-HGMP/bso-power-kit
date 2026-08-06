@@ -1,0 +1,6 @@
+# Development dependencies for running the claude-ads eval harness.
+# Production users do NOT need these — install only when contributing or
+# running tests locally.
+pytest>=9.0.3,<10.0
+pyyaml>=6.0,<7.0
+cryptography>=48.0.1,<49.0.0  # GHSA-537c-gmf6-5ccf fix; review/egress tests

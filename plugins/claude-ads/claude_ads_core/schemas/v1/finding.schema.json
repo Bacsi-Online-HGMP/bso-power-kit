@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:ai-marketing-hub:claude-ads:schema:core:v1:finding.schema.json",
+  "title": "Finding v1",
+  "type": "object",
+  "required": ["schema_version", "control_id", "status", "evidence", "confidence", "observation", "diagnosis", "recommendation"],
+  "properties": {
+    "schema_version": {"const": "1.0.0"},
+    "control_id": {"type": "string", "minLength": 1},
+    "status": {"enum": ["pass", "fail", "unknown", "not_applicable"]},
+    "evidence": {"type": "array", "items": {"type": "object"}},
+    "confidence": {"enum": ["high", "medium", "low", "none"]},
+    "source_classification": {"enum": ["evidence_based", "practitioner", "contested", "folklore"]},
+    "observation": {"type": "string"},
+    "diagnosis": {"type": "string"},
+    "recommendation": {"type": "string"},
+    "score_contribution": {"type": ["number", "null"]}
+  },
+  "additionalProperties": true
+}

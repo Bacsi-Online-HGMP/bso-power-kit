@@ -1,0 +1,31 @@
+{
+  "name": "anti-slop-brain",
+  "version": "0.1.0",
+  "description": "Anti-Slop Brain Obsidian brain for detection and repair of AI slop in prose, code, documentation, and agent output, grounded in corpus evidence rather than authorship detection.",
+  "author": {
+    "name": "Daniel Agrici",
+    "url": "https://github.com/AgriciDaniel"
+  },
+  "homepage": "https://github.com/AgriciDaniel/anti-slop",
+  "repository": "https://github.com/AgriciDaniel/anti-slop",
+  "license": "Apache-2.0 AND CC-BY-SA-4.0 AND CC-BY-4.0",
+  "keywords": [
+    "anti-slop",
+    "ai-slop",
+    "writing-quality",
+    "code-review",
+    "obsidian",
+    "brain",
+    "citations",
+    "provenance"
+  ],
+  "allowed-tools": [
+    "Read",
+    "Grep",
+    "Glob",
+    "Bash",
+    "Write",
+    "Edit"
+  ],
+  "_comment_skills": "No explicit skills array. This directory's SKILL.md sits at the root and is discovered automatically. Pointing skills at ./SKILL.md fails claude plugin validate, which requires directory entries."
+}

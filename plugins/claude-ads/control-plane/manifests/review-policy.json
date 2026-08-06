@@ -1,0 +1,35 @@
+{
+  "schema_version": "1.0.0",
+  "subject_repository": "https://github.com/AI-Marketing-Hub/claude-ads",
+  "required_review_types": [
+    "code",
+    "evidence",
+    "security",
+    "privacy",
+    "licensing"
+  ],
+  "required_decision": "approved",
+  "subject_binding": {
+    "require_exact_commit_sha": true,
+    "require_exact_tree_sha": true
+  },
+  "authentication": {
+    "algorithm": "ed25519",
+    "trust_keys_environment": "CLAUDE_ADS_REVIEW_TRUST_KEYS_JSON",
+    "allow_repository_local_trust_keys": false,
+    "bind_key_to_reviewer_id_and_review_types": true
+  },
+  "independence": {
+    "minimum_distinct_reviewer_ids": 2,
+    "implementation_principal_environment": "CLAUDE_ADS_IMPLEMENTATION_PRINCIPALS_JSON",
+    "implementation_principals_may_not_review": true
+  },
+  "freshness": {
+    "maximum_age_days": 14
+  },
+  "findings": {
+    "forbid_open_severities": ["critical", "high"],
+    "accepted_risk_requires_owner_gate": true
+  },
+  "templates_are_evidence": false
+}

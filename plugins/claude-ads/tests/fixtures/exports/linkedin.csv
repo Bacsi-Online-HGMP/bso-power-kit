@@ -1,0 +1,2 @@
+date,account_id,account_name,campaign_id,campaign_name,campaign_status,creative_id,creative_name,conversion_action,conversions,budget,spend,currency
+2026-06-15,demo-linkedin-account,Sanitized LinkedIn Demo,demo-linkedin-campaign,Sanitized Lead Campaign,paused,demo-linkedin-creative,Sanitized Sponsored Ad,lead,9,100.00,39.50,USD

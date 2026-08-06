@@ -1,0 +1,38 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:ai-marketing-hub:claude-ads:schema:control:v1:maturity-status.v1.json",
+  "title": "Claude Ads maturity status",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "evaluated_at", "current", "levels", "automatic_demotion"],
+  "properties": {
+    "schema_version": {"const": "1.0.0"},
+    "evaluated_at": {"type": "string", "format": "date"},
+    "current": {
+      "enum": ["inventory-baselined", "source-grounded", "domain-integrated", "eval-verified", "release-ready"]
+    },
+    "levels": {
+      "type": "array",
+      "minItems": 5,
+      "maxItems": 5,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "ordinal", "requirements", "satisfied"],
+        "properties": {
+          "id": {"enum": ["inventory-baselined", "source-grounded", "domain-integrated", "eval-verified", "release-ready"]},
+          "ordinal": {"type": "integer", "minimum": 1, "maximum": 5},
+          "requirements": {"type": "array", "items": {"type": "string", "minLength": 1}, "minItems": 1},
+          "satisfied": {"type": "boolean"},
+          "evidence": {"type": "array", "items": {"type": "string"}}
+        }
+      }
+    },
+    "automatic_demotion": {
+      "type": "array",
+      "items": {"type": "string", "minLength": 1},
+      "minItems": 1
+    },
+    "blockers": {"type": "array", "items": {"type": "string"}}
+  }
+}

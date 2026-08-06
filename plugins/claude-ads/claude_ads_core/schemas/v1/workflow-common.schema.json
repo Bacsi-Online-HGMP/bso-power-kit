@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:ai-marketing-hub:claude-ads:schema:core:v1:workflow-common.schema.json",
+  "$defs": {
+    "id": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$"},
+    "nonempty": {"type": "string", "minLength": 1},
+    "datetime": {"type": "string", "format": "date-time"},
+    "date": {"type": "string", "format": "date"},
+    "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "relative_path": {"type": "string", "minLength": 1, "pattern": "^(?![\\/])(?!.*(?:^|/)\\.\\.(?:/|$))(?!.*\\\\).+$"},
+    "privacy": {"enum": ["public", "internal", "confidential", "restricted"]},
+    "platform": {"enum": ["google", "meta", "youtube", "linkedin", "tiktok", "microsoft", "apple", "amazon", "reddit", "pinterest", "snapchat", "x"]},
+    "artifact_status": {"enum": ["draft", "complete", "partial", "failed"]},
+    "string_array": {"type": "array", "items": {"$ref": "#/$defs/nonempty"}, "uniqueItems": true}
+  }
+}

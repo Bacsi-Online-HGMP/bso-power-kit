@@ -1,0 +1,108 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:ai-marketing-hub:claude-ads:schema:control:v1:review-policy.v1.json",
+  "title": "Claude Ads independent review policy",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "subject_repository",
+    "required_review_types",
+    "required_decision",
+    "subject_binding",
+    "authentication",
+    "independence",
+    "freshness",
+    "findings",
+    "templates_are_evidence"
+  ],
+  "properties": {
+    "schema_version": {"const": "1.0.0"},
+    "subject_repository": {
+      "const": "https://github.com/AI-Marketing-Hub/claude-ads"
+    },
+    "required_review_types": {
+      "type": "array",
+      "minItems": 5,
+      "maxItems": 5,
+      "uniqueItems": true,
+      "items": {"enum": ["code", "evidence", "security", "privacy", "licensing"]},
+      "allOf": [
+        {"contains": {"const": "code"}},
+        {"contains": {"const": "evidence"}},
+        {"contains": {"const": "security"}},
+        {"contains": {"const": "privacy"}},
+        {"contains": {"const": "licensing"}}
+      ]
+    },
+    "required_decision": {"const": "approved"},
+    "subject_binding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["require_exact_commit_sha", "require_exact_tree_sha"],
+      "properties": {
+        "require_exact_commit_sha": {"const": true},
+        "require_exact_tree_sha": {"const": true}
+      }
+    },
+    "authentication": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "algorithm",
+        "trust_keys_environment",
+        "allow_repository_local_trust_keys",
+        "bind_key_to_reviewer_id_and_review_types"
+      ],
+      "properties": {
+        "algorithm": {"const": "ed25519"},
+        "trust_keys_environment": {"const": "CLAUDE_ADS_REVIEW_TRUST_KEYS_JSON"},
+        "allow_repository_local_trust_keys": {"const": false},
+        "bind_key_to_reviewer_id_and_review_types": {"const": true}
+      }
+    },
+    "independence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "minimum_distinct_reviewer_ids",
+        "implementation_principal_environment",
+        "implementation_principals_may_not_review"
+      ],
+      "properties": {
+        "minimum_distinct_reviewer_ids": {"type": "integer", "minimum": 2},
+        "implementation_principal_environment": {
+          "const": "CLAUDE_ADS_IMPLEMENTATION_PRINCIPALS_JSON"
+        },
+        "implementation_principals_may_not_review": {"const": true}
+      }
+    },
+    "freshness": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["maximum_age_days"],
+      "properties": {
+        "maximum_age_days": {"type": "integer", "minimum": 1, "maximum": 30}
+      }
+    },
+    "findings": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["forbid_open_severities", "accepted_risk_requires_owner_gate"],
+      "properties": {
+        "forbid_open_severities": {
+          "type": "array",
+          "minItems": 2,
+          "uniqueItems": true,
+          "items": {"enum": ["critical", "high"]},
+          "allOf": [
+            {"contains": {"const": "critical"}},
+            {"contains": {"const": "high"}}
+          ]
+        },
+        "accepted_risk_requires_owner_gate": {"const": true}
+      }
+    },
+    "templates_are_evidence": {"const": false}
+  }
+}

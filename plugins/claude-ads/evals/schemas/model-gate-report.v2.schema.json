@@ -1,0 +1,177 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:ai-marketing-hub:claude-ads:schema:evals:model-gate-report.v2.json",
+  "title": "Claude Ads canonical model evaluation gate report",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "evidence_class",
+    "contract_id",
+    "derived_at",
+    "suite",
+    "inputs",
+    "local_checks",
+    "external_runs",
+    "comparison",
+    "summary",
+    "release_gate_satisfied",
+    "blockers"
+  ],
+  "properties": {
+    "schema_version": {"const": "2.0.0"},
+    "evidence_class": {"const": "local_deterministic_assessment"},
+    "contract_id": {"const": "claude-ads-v2-canonical-model-gate"},
+    "derived_at": {"type": ["string", "null"], "format": "date-time"},
+    "suite": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "sha256", "case_count"],
+      "properties": {
+        "path": {"type": "string"},
+        "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "case_count": {"type": "integer", "minimum": 1}
+      }
+    },
+    "inputs": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["contract_sha256", "candidate_evidence_sha256", "retained_v1_evidence_sha256"],
+      "properties": {
+        "contract_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "candidate_evidence_sha256": {"type": ["string", "null"], "pattern": "^[0-9a-f]{64}$"},
+        "retained_v1_evidence_sha256": {"type": ["string", "null"], "pattern": "^[0-9a-f]{64}$"}
+      }
+    },
+    "local_checks": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "status", "evidence_class"],
+        "properties": {
+          "id": {"type": "string", "minLength": 1},
+          "status": {"enum": ["pass", "fail"]},
+          "evidence_class": {"const": "local_deterministic_check"},
+          "detail": {"type": "string"}
+        }
+      }
+    },
+    "external_runs": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["candidate", "retained_v1"],
+      "properties": {
+        "candidate": {"$ref": "#/$defs/runSummary"},
+        "retained_v1": {"$ref": "#/$defs/runSummary"}
+      }
+    },
+    "comparison": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "regression_count", "regression_case_ids"],
+      "properties": {
+        "status": {"enum": ["pass", "fail", "not_evaluated"]},
+        "regression_count": {"type": ["integer", "null"], "minimum": 0},
+        "regression_case_ids": {"type": "array", "items": {"type": "string"}}
+      }
+    },
+    "summary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "candidate_score_percent",
+        "candidate_p0_failures",
+        "retained_v1_score_percent",
+        "regression_count",
+        "thresholds"
+      ],
+      "properties": {
+        "candidate_score_percent": {"type": ["number", "null"], "minimum": 0, "maximum": 100},
+        "candidate_p0_failures": {"type": ["integer", "null"], "minimum": 0},
+        "retained_v1_score_percent": {"type": ["number", "null"], "minimum": 0, "maximum": 100},
+        "regression_count": {"type": ["integer", "null"], "minimum": 0},
+        "thresholds": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "minimum_candidate_score_percent",
+            "maximum_p0_failures",
+            "maximum_regressions_against_retained_v1"
+          ],
+          "properties": {
+            "minimum_candidate_score_percent": {"type": "number", "minimum": 0, "maximum": 100},
+            "maximum_p0_failures": {"type": "integer", "minimum": 0},
+            "maximum_regressions_against_retained_v1": {"type": "integer", "minimum": 0}
+          }
+        }
+      }
+    },
+    "release_gate_satisfied": {"type": "boolean"},
+    "blockers": {"type": "array", "items": {"type": "string", "minLength": 1}, "uniqueItems": true}
+  },
+  "$defs": {
+    "runSummary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "status",
+        "evidence_class",
+        "run_id_sha256",
+        "role",
+        "git_commit",
+        "git_tree",
+        "artifact_sha256",
+        "runtime",
+        "cli_version",
+        "provider",
+        "model_id",
+        "model_snapshot",
+        "skill_entrypoint",
+        "invocation_mode",
+        "explicit_invocation_case_count",
+        "fresh_process_per_case",
+        "conversation_reuse",
+        "mutation_authority",
+        "case_count",
+        "passed",
+        "failed",
+        "score_percent",
+        "p0_failures",
+        "failed_case_ids",
+        "receipt_sha256",
+        "authentication"
+      ],
+      "properties": {
+        "status": {"enum": ["verified", "missing", "invalid"]},
+        "evidence_class": {"type": ["string", "null"], "enum": ["external_model_run", null]},
+        "run_id_sha256": {"type": ["string", "null"], "pattern": "^[0-9a-f]{64}$"},
+        "role": {"type": ["string", "null"], "enum": ["candidate", "retained-v1", null]},
+        "git_commit": {"type": ["string", "null"]},
+        "git_tree": {"type": ["string", "null"]},
+        "artifact_sha256": {"type": ["string", "null"]},
+        "runtime": {"type": ["string", "null"]},
+        "cli_version": {"type": ["string", "null"]},
+        "provider": {"type": ["string", "null"]},
+        "model_id": {"type": ["string", "null"]},
+        "model_snapshot": {"type": ["string", "null"]},
+        "skill_entrypoint": {"type": ["string", "null"], "enum": ["/claude-ads:ads", null]},
+        "invocation_mode": {"type": ["string", "null"], "enum": ["explicit-plugin-skill", null]},
+        "explicit_invocation_case_count": {"type": ["integer", "null"], "minimum": 0},
+        "fresh_process_per_case": {"type": ["boolean", "null"]},
+        "conversation_reuse": {"type": ["boolean", "null"]},
+        "mutation_authority": {"type": ["string", "null"]},
+        "case_count": {"type": ["integer", "null"], "minimum": 0},
+        "passed": {"type": ["integer", "null"], "minimum": 0},
+        "failed": {"type": ["integer", "null"], "minimum": 0},
+        "score_percent": {"type": ["number", "null"], "minimum": 0, "maximum": 100},
+        "p0_failures": {"type": ["integer", "null"], "minimum": 0},
+        "failed_case_ids": {"type": "array", "items": {"type": "string"}},
+        "receipt_sha256": {"type": ["string", "null"], "pattern": "^[0-9a-f]{64}$"},
+        "authentication": {"type": ["object", "null"]},
+        "error": {"type": "string"}
+      }
+    }
+  }
+}

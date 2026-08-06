@@ -1,0 +1,22 @@
+[
+  {"id":"route-google","prompt":"Audit my Google Ads search campaigns and GAQL export","expected_skill":"ads-google","forbidden_skills":["ads-youtube","ads-microsoft"]},
+  {"id":"route-meta","prompt":"Review Meta Ads Pixel CAPI and Facebook creative fatigue","expected_skill":"ads-meta","forbidden_skills":["ads-tiktok","ads-creative"]},
+  {"id":"route-youtube","prompt":"Audit our YouTube Ads Shorts in-stream and CTV campaigns","expected_skill":"ads-youtube","forbidden_skills":["ads-google","ads-tiktok"]},
+  {"id":"route-linkedin","prompt":"Check LinkedIn Ads Insight Tag Lead Gen and ABM campaigns","expected_skill":"ads-linkedin","forbidden_skills":["ads-meta","ads-landing"]},
+  {"id":"route-tiktok","prompt":"Audit TikTok Ads Events API Smart+ and Shop campaigns","expected_skill":"ads-tiktok","forbidden_skills":["ads-meta","ads-snapchat"]},
+  {"id":"route-microsoft","prompt":"Review Microsoft Advertising UET Bing search and Google imports","expected_skill":"ads-microsoft","forbidden_skills":["ads-google","ads-linkedin"]},
+  {"id":"route-apple","prompt":"Audit Apple Ads Search Match custom product pages and AdServices attribution","expected_skill":"ads-apple","forbidden_skills":["ads-google","ads-attribution"]},
+  {"id":"route-amazon","prompt":"Review Amazon Ads Sponsored Products ACOS TACOS and ASIN targeting","expected_skill":"ads-amazon","forbidden_skills":["ads-google","ads-budget"]},
+  {"id":"route-reddit","prompt":"Audit Reddit Ads promoted posts community targeting Pixel and dynamic product ads","expected_skill":"ads-reddit","forbidden_skills":["ads-meta","ads-competitor"]},
+  {"id":"route-pinterest","prompt":"Review Pinterest Ads promoted Pins catalog sales Tag and Performance+","expected_skill":"ads-pinterest","forbidden_skills":["ads-meta","ads-creative"]},
+  {"id":"route-snapchat","prompt":"Audit Snapchat Ads Snap Pixel AR Lens and app install campaigns","expected_skill":"ads-snapchat","forbidden_skills":["ads-tiktok","ads-photoshoot"]},
+  {"id":"route-x","prompt":"Review X Twitter Ads promoted posts conversation targeting and X Pixel","expected_skill":"ads-x","forbidden_skills":["ads-reddit","ads-competitor"]},
+  {"id":"route-setup","prompt":"Onboard a new paid media client and set up privacy and account guardrails","expected_skill":"ads-setup","forbidden_skills":["ads-plan","ads-dna"]},
+  {"id":"route-full-audit","prompt":"Run a complete multi-platform paid advertising account audit","expected_skill":"ads-audit","forbidden_skills":["ads-plan","ads-report"]},
+  {"id":"route-launch","prompt":"Draft a campaign launch and prepare an approved apply plan","expected_skill":"ads-launch","forbidden_skills":["ads-create","ads-plan"]},
+  {"id":"route-monitor","prompt":"Monitor weekly pacing delivery fatigue tracking and post-launch performance","expected_skill":"ads-monitor","forbidden_skills":["ads-audit","ads-optimize"]},
+  {"id":"route-optimize","prompt":"Optimize campaign bids and budget with a reversible draft change","expected_skill":"ads-optimize","forbidden_skills":["ads-budget","ads-launch"]},
+  {"id":"route-research","prompt":"Refresh stale paid ads API policy benchmark and GitHub research sources","expected_skill":"ads-research","forbidden_skills":["ads-competitor","ads-audit"]},
+  {"id":"route-validate","prompt":"Validate the Claude Ads run bundle schemas maturity and release readiness","expected_skill":"ads-validate","forbidden_skills":["ads-audit","ads-report"]},
+  {"id":"route-report","prompt":"Render a client PDF and HTML report from the validated JSON audit bundle","expected_skill":"ads-report","forbidden_skills":["ads-audit","ads-plan"]}
+]

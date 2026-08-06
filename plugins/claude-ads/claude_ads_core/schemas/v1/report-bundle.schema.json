@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:ai-marketing-hub:claude-ads:schema:core:v1:report-bundle.schema.json",
+  "title": "ReportBundle v1",
+  "type": "object",
+  "required": ["schema_version", "run_manifest", "account_snapshot", "control_definitions", "findings", "scoring"],
+  "properties": {
+    "schema_version": {"const": "1.0.0"},
+    "run_manifest": {"$ref": "urn:ai-marketing-hub:claude-ads:schema:core:v1:run-manifest.schema.json"},
+    "account_snapshot": {"$ref": "urn:ai-marketing-hub:claude-ads:schema:core:v1:account-snapshot.schema.json"},
+    "control_definitions": {"type": "array", "items": {"$ref": "urn:ai-marketing-hub:claude-ads:schema:core:v1:control-definition.schema.json"}},
+    "findings": {"type": "array", "items": {"$ref": "urn:ai-marketing-hub:claude-ads:schema:core:v1:finding.schema.json"}},
+    "scoring": {
+      "type": "object",
+      "required": ["health_score", "evidence_coverage", "status", "categories"],
+      "properties": {
+        "health_score": {"type": ["number", "null"], "minimum": 0, "maximum": 100},
+        "evidence_coverage": {"type": "number", "minimum": 0, "maximum": 100},
+        "status": {"enum": ["normal", "provisional", "insufficient_evidence"]},
+        "categories": {"type": "array", "items": {"type": "object"}}
+      },
+      "additionalProperties": true
+    }
+  },
+  "additionalProperties": true
+}

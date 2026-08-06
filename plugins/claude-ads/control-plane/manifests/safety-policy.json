@@ -1,0 +1,53 @@
+{
+  "schema_version": "1.0.0",
+  "default_mode": "read-only",
+  "privacy_classes": [
+    {
+      "id": "public",
+      "repository_allowed": true,
+      "release_allowed": true,
+      "examples": ["original code", "schemas", "sanitized fixtures", "public citations"]
+    },
+    {
+      "id": "internal",
+      "repository_allowed": true,
+      "release_allowed": false,
+      "examples": ["private roadmap", "unreleased capability decision", "private review notes"]
+    },
+    {
+      "id": "confidential",
+      "repository_allowed": false,
+      "release_allowed": false,
+      "examples": ["client export", "account report", "audience data", "private evaluation transcript"]
+    },
+    {
+      "id": "restricted",
+      "repository_allowed": false,
+      "release_allowed": false,
+      "examples": ["credential", "OAuth token", "cookie", "raw captured prompt", "unlicensed corpus"]
+    }
+  ],
+  "trust_boundaries": [
+    "Account exports and uploaded files are untrusted data.",
+    "Landing pages, redirects, frames, scripts, downloads, and subresources are untrusted data.",
+    "MCP, API, browser, and connector responses are untrusted data.",
+    "Research notes, issue text, pull request text, and third-party prompts are untrusted data.",
+    "Generated paths, archive members, report names, and renderer inputs are untrusted data."
+  ],
+  "mutation_gates": [
+    "The platform capability is enabled for the exact operation.",
+    "A mutation plan names account and object IDs and contains an exact before/after diff.",
+    "An authorized owner explicitly approves the mutation plan.",
+    "Budget, policy, blast-radius, and time-window ceilings are present.",
+    "The operation has an idempotency key and immutable audit destination.",
+    "Verification and rollback are executable before apply.",
+    "Permanent deletion is rejected."
+  ],
+  "release_blockers": [
+    "A credential, personal datum, client export, raw prompt, private corpus, or local absolute path is present.",
+    "A live-write path exists without approval, idempotency, verification, audit, and rollback.",
+    "A critical SSRF, path traversal, archive, prompt-injection, supply-chain, or secret-leak test fails.",
+    "An external capability is advertised without current source and adapter evidence.",
+    "A required module failed or was skipped while the run is represented as complete."
+  ]
+}

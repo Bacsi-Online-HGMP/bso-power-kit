@@ -1,0 +1,7 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:ai-marketing-hub:claude-ads:schema:control:v1:orchestration-packet.v1.json",
+  "title": "Claude Ads orchestration task packet compatibility alias",
+  "$comment": "Use claude_ads_core/schemas/v1/orchestration-task.schema.json. Task state is immutable; completion belongs in a result packet.",
+  "$ref": "urn:ai-marketing-hub:claude-ads:schema:core:v1:orchestration-task.schema.json"
+}

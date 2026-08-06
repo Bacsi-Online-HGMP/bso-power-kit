@@ -1,0 +1,11 @@
+ffmpeg version 6.1.1 Copyright (c) 2000-2023 the FFmpeg developers
+  built with gcc 12.2.0
+Input #0, mp4, from 'video.mp4':
+  Metadata:
+    major_brand     : isom
+    minor_version   : 512
+    compatible_brands: isomiso2avc1mp41
+    encoder         : Lavf60.16.100
+  Duration: 00:02:34.50, start: 0.000000, bitrate: 1234 kb/s
+  Stream #0:0(und): Video: h264 (Main), yuv420p(progressive), 1920x1080 [SAR 1:1 DAR 16:9], 30 fps
+  Stream #0:1(und): Audio: aac (LC), 44100 Hz, stereo, fltp, 128 kb/s

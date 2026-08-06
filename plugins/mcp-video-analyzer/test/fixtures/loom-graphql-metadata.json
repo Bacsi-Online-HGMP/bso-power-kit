@@ -1,0 +1,15 @@
+{
+  "data": {
+    "getVideo": {
+      "__typename": "RegularUserVideo",
+      "id": "abc123def456",
+      "name": "Bug: Cart total not updating",
+      "description": "Demonstrating the cart total bug on the checkout page",
+      "playable_duration": 154.5,
+      "owner": {
+        "display_name": "Guilherme"
+      },
+      "createdAt": "2024-06-15T10:30:00Z"
+    }
+  }
+}

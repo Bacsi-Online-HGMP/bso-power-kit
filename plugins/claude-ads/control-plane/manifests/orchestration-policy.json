@@ -1,0 +1,42 @@
+{
+  "schema_version": "1.0.0",
+  "max_active_workers_excluding_conductor": 3,
+  "single_writer_rule": "The conductor alone writes canonical run artifacts; workers return schema-valid results.",
+  "required_packet_fields": [
+    "objective", "scope", "exclusions", "evidence_policy", "privacy_class",
+    "mutation_authority", "inputs", "output_contract", "verification", "recovery"
+  ],
+  "phases": [
+    {"id": "inventory", "gate": "Repository and ecosystem inventory is complete."},
+    {"id": "research", "gate": "Sources and claims satisfy freshness, authority, license, and coverage rules."},
+    {"id": "contract", "gate": "Schemas, platform interfaces, safety policy, and acceptance criteria are decision-complete."},
+    {"id": "implementation", "gate": "Changes pass focused deterministic verification."},
+    {"id": "integration", "gate": "Cross-platform, routing, security, and rendering suites pass."},
+    {"id": "release", "gate": "Fresh-context verification and every release requirement pass."}
+  ],
+  "worker_rules": [
+    "Workers receive the minimum relevant context and may not broaden mutation authority.",
+    "Workers cite source IDs and identify uncertainty, contradictions, and missing evidence.",
+    "Workers do not write to shared final destinations or claim overall completion.",
+    "Transient failures receive one retry; authentication and schema failures do not.",
+    "A required failed worker marks the run incomplete and blocks a complete-audit claim."
+  ],
+  "verification_roles": [
+    "source-verifier",
+    "security-reviewer",
+    "privacy-and-license-reviewer",
+    "fresh-context-release-verifier"
+  ],
+  "ten_lens_checklist": [
+    {"lens": "observe-external", "check": "Account inputs and source coverage are complete."},
+    {"lens": "observe-internal", "check": "Assumptions, benchmark fit, and model uncertainty are disclosed."},
+    {"lens": "listen", "check": "Operator context and user-reported failures affect requirements."},
+    {"lens": "think", "check": "Diagnosis, causality, and financial math are explicit."},
+    {"lens": "connect-lateral", "check": "Cross-platform opportunities and conflicts are considered."},
+    {"lens": "connect-system", "check": "Attribution, creative, budget, tracking, landing, and policy cohere."},
+    {"lens": "feel", "check": "Creative and customer experience receive human review where judgment matters."},
+    {"lens": "accept", "check": "Unknowns, failed hypotheses, and demoted claims remain visible."},
+    {"lens": "create", "check": "Outputs are decision-complete and assign owners."},
+    {"lens": "grow", "check": "Measurement, re-audit, and regression capture are defined."}
+  ]
+}

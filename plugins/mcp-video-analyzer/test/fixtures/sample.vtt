@@ -1,0 +1,21 @@
+WEBVTT
+
+1
+00:00:05.000 --> 00:00:12.500
+So when I click add to cart, you can see the button highlights
+
+2
+00:00:12.500 --> 00:00:18.000
+but the total stays at zero, which is clearly a bug
+
+3
+00:00:18.000 --> 00:00:25.000
+<v Guilherme>Let me show you the console, there's an error here</v>
+
+4
+00:00:25.000 --> 00:00:30.500
+TypeError: Cannot read properties of undefined reading 'price'
+
+5
+00:00:30.500 --> 00:00:35.000
+So it looks like the product object is missing the price field

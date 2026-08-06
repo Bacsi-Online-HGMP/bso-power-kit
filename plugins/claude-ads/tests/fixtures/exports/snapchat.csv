@@ -1,0 +1,2 @@
+date,account_id,account_name,campaign_id,campaign_name,campaign_status,creative_id,creative_name,conversion_action,conversions,budget,spend,currency
+2026-06-15,demo-snapchat-account,Sanitized Snapchat Demo,demo-snapchat-campaign,Sanitized Story Campaign,paused,demo-snapchat-creative,Sanitized Snap Ad,purchase,2,100.00,32.50,USD

@@ -1,0 +1,2 @@
+date,account_id,account_name,campaign_id,campaign_name,campaign_status,creative_id,creative_name,conversion_action,conversions,budget,spend,currency
+2026-06-15,demo-amazon-account,Sanitized Amazon Demo,demo-amazon-campaign,Sanitized Sponsored Campaign,paused,demo-amazon-creative,Sanitized Product Ad,purchase,5,100.00,35.50,USD

@@ -1,0 +1,45 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+
+# Environment
+.env
+.env.*
+!.env.example
+
+# npm auth + pack artifacts (never commit tokens)
+.npmrc
+*.tgz
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Temp files
+tmp/
+*.tmp
+*.log
+
+# Coverage
+coverage/
+
+# tesseract.js OCR language data (downloaded to cwd at runtime)
+*.traineddata
+
+# Source maps
+*.js.map
+
+# Skilld references (recreated by `skilld install`)
+.skilld/
+
+# skilld dev-dependency skills — regenerated from .claude/skills/skilld-lock.yaml,
+# and kept out of git so `npx skills add` only discovers skills/video/
+.claude/skills/*-skilld/

@@ -1,0 +1,8 @@
+# Files excluded from the claude.ai `.skill` bundle (git archive export).
+# Claude Code still gets these via a normal clone; only the .skill zip omits them.
+.github/        export-ignore
+.gitattributes  export-ignore
+.gitignore      export-ignore
+README.md       export-ignore
+CHANGELOG.md    export-ignore
+LICENSE         export-ignore

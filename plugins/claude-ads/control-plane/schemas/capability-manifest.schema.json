@@ -1,0 +1,51 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:ai-marketing-hub:claude-ads:schema:control:v1:capability-manifest.v1.json",
+  "title": "Claude Ads capability manifest",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "snapshot_at", "default_mutation_mode", "platforms"],
+  "properties": {
+    "schema_version": {"const": "1.0.0"},
+    "snapshot_at": {"type": "string", "format": "date"},
+    "default_mutation_mode": {"const": "read-only"},
+    "platforms": {
+      "type": "array",
+      "minItems": 1,
+      "items": {"$ref": "#/$defs/platform"}
+    }
+  },
+  "$defs": {
+    "platform": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "display_name", "target_tier", "skill_path", "capabilities"],
+      "properties": {
+        "id": {"type": "string", "pattern": "^[a-z0-9-]+$"},
+        "display_name": {"type": "string", "minLength": 1},
+        "target_tier": {"enum": ["first-class", "secondary"]},
+        "skill_path": {"type": ["string", "null"]},
+        "capabilities": {
+          "type": "array",
+          "minItems": 1,
+          "items": {"$ref": "#/$defs/capability"}
+        }
+      }
+    },
+    "capability": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "mode", "status", "implementation_paths", "fixture_paths", "test_paths", "source_ids"],
+      "properties": {
+        "id": {"type": "string", "pattern": "^[a-z0-9-]+$"},
+        "mode": {"enum": ["export-read", "live-read", "draft-write", "live-write"]},
+        "status": {"enum": ["declared", "implemented", "fixture-verified", "live-verified", "disabled"]},
+        "implementation_paths": {"type": "array", "items": {"type": "string"}, "uniqueItems": true},
+        "fixture_paths": {"type": "array", "items": {"type": "string"}, "uniqueItems": true},
+        "test_paths": {"type": "array", "items": {"type": "string"}, "uniqueItems": true},
+        "source_ids": {"type": "array", "items": {"type": "string"}, "uniqueItems": true},
+        "disabled_reason": {"type": "string"}
+      }
+    }
+  }
+}

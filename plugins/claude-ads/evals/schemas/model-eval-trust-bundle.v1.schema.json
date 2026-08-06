@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:ai-marketing-hub:claude-ads:schema:evals:model-eval-trust-bundle.v1.json",
+  "title": "External model-evaluation trust bundle",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "evidence_class", "provenance", "issued_at", "keys"],
+  "properties": {
+    "schema_version": {"const": "1.0.0"},
+    "evidence_class": {"const": "external_model_eval_trust_bundle"},
+    "provenance": {"const": "external-release-operator"},
+    "issued_at": {"type": "string", "format": "date-time"},
+    "keys": {
+      "type": "array",
+      "minItems": 2,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["signer_id", "key_id", "public_key_b64url", "role", "evidence_roles", "valid_from", "valid_until"],
+        "properties": {
+          "signer_id": {"type": "string", "minLength": 1},
+          "key_id": {"type": "string", "minLength": 1},
+          "public_key_b64url": {"type": "string", "pattern": "^[A-Za-z0-9_-]{43}$"},
+          "role": {"enum": ["runner", "evaluator"]},
+          "evidence_roles": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"enum": ["candidate", "retained-v1"]}},
+          "valid_from": {"type": "string", "format": "date-time"},
+          "valid_until": {"type": "string", "format": "date-time"}
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,2 @@
+date,account_id,account_name,campaign_id,campaign_name,campaign_status,creative_id,creative_name,conversion_action,conversions,budget,spend,currency
+2026-06-15,demo-google-account,Sanitized Google Demo,demo-google-campaign,Sanitized Search Campaign,paused,demo-google-creative,Sanitized Responsive Ad,purchase,12,100.00,42.50,USD

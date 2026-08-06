@@ -1,0 +1,102 @@
+{
+  "schema_version": "1.0.0",
+  "profile_version": "1.0.0",
+  "profiles": [
+    {
+      "profile_id": "amazon-health-v1",
+      "platform": "amazon",
+      "status": "disabled",
+      "category_weights": {},
+      "health_control_ids": [],
+      "disabled_reason": "No approved source-grounded control-severity decision set exists; enabling health would invent severity or category weights."
+    },
+    {
+      "profile_id": "apple-health-v1",
+      "platform": "apple",
+      "status": "disabled",
+      "category_weights": {},
+      "health_control_ids": [],
+      "disabled_reason": "No approved source-grounded control-severity decision set exists; enabling health would invent severity or category weights."
+    },
+    {
+      "profile_id": "google-health-v1",
+      "platform": "google",
+      "status": "disabled",
+      "category_weights": {},
+      "health_control_ids": [],
+      "disabled_reason": "No approved source-grounded control-severity decision set exists; enabling health would invent severity or category weights."
+    },
+    {
+      "profile_id": "linkedin-health-v1",
+      "platform": "linkedin",
+      "status": "disabled",
+      "category_weights": {},
+      "health_control_ids": [],
+      "disabled_reason": "No approved source-grounded control-severity decision set exists; enabling health would invent severity or category weights."
+    },
+    {
+      "profile_id": "meta-health-v1",
+      "platform": "meta",
+      "status": "disabled",
+      "category_weights": {},
+      "health_control_ids": [],
+      "disabled_reason": "No approved source-grounded control-severity decision set exists; enabling health would invent severity or category weights."
+    },
+    {
+      "profile_id": "microsoft-health-v1",
+      "platform": "microsoft",
+      "status": "disabled",
+      "category_weights": {},
+      "health_control_ids": [],
+      "disabled_reason": "No approved source-grounded control-severity decision set exists; enabling health would invent severity or category weights."
+    },
+    {
+      "profile_id": "pinterest-health-v1",
+      "platform": "pinterest",
+      "status": "disabled",
+      "category_weights": {},
+      "health_control_ids": [],
+      "disabled_reason": "No approved source-grounded control-severity decision set exists; enabling health would invent severity or category weights."
+    },
+    {
+      "profile_id": "reddit-health-v1",
+      "platform": "reddit",
+      "status": "disabled",
+      "category_weights": {},
+      "health_control_ids": [],
+      "disabled_reason": "No approved source-grounded control-severity decision set exists; enabling health would invent severity or category weights."
+    },
+    {
+      "profile_id": "snapchat-health-v1",
+      "platform": "snapchat",
+      "status": "disabled",
+      "category_weights": {},
+      "health_control_ids": [],
+      "disabled_reason": "No approved source-grounded control-severity decision set exists; enabling health would invent severity or category weights."
+    },
+    {
+      "profile_id": "tiktok-health-v1",
+      "platform": "tiktok",
+      "status": "disabled",
+      "category_weights": {},
+      "health_control_ids": [],
+      "disabled_reason": "No approved source-grounded control-severity decision set exists; enabling health would invent severity or category weights."
+    },
+    {
+      "profile_id": "x-health-v1",
+      "platform": "x",
+      "status": "disabled",
+      "category_weights": {},
+      "health_control_ids": [],
+      "disabled_reason": "No approved source-grounded control-severity decision set exists; enabling health would invent severity or category weights."
+    },
+    {
+      "profile_id": "youtube-health-v1",
+      "platform": "youtube",
+      "status": "disabled",
+      "category_weights": {},
+      "health_control_ids": [],
+      "disabled_reason": "No approved source-grounded control-severity decision set exists; enabling health would invent severity or category weights."
+    }
+  ]
+}

@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:ai-marketing-hub:claude-ads:schema:core:v1:control-definition.schema.json",
+  "title": "ControlDefinition v1",
+  "type": "object",
+  "required": ["schema_version", "control_id", "category", "severity", "required_inputs", "source_ids", "maturity", "geographies", "scoring_behavior", "stability"],
+  "properties": {
+    "schema_version": {"const": "1.0.0"},
+    "control_id": {"type": "string", "minLength": 1},
+    "category": {"type": "string", "minLength": 1},
+    "severity": {"enum": ["critical", "high", "medium", "informational"]},
+    "required_inputs": {"type": "array", "items": {"type": "string", "minLength": 1}, "uniqueItems": true},
+    "source_ids": {"type": "array", "items": {"type": "string", "minLength": 1}, "uniqueItems": true},
+    "maturity": {"enum": ["inventory-baselined", "source-grounded", "domain-integrated", "eval-verified", "release-ready"]},
+    "geographies": {"type": "array", "items": {"type": "string", "minLength": 1}, "uniqueItems": true},
+    "expires_at": {"type": ["string", "null"], "format": "date"},
+    "scoring_behavior": {"enum": ["health", "opportunity", "watchlist"]},
+    "stability": {"enum": ["stable", "experimental"]}
+  },
+  "additionalProperties": true
+}

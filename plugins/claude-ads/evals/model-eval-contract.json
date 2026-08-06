@@ -1,0 +1,73 @@
+{
+  "schema_version": "2.0.0",
+  "contract_id": "claude-ads-v2-canonical-model-gate",
+  "schemas": {
+    "external_run": {
+      "path": "evals/schemas/model-run-evidence.v2.schema.json",
+      "sha256": "3691051ab197bce7ad9be31ecc56888892c4167a3451a39686eee203eb4f2da5"
+    },
+    "gate_report": {
+      "path": "evals/schemas/model-gate-report.v2.schema.json",
+      "sha256": "c0f424a6a0f8dc92c5c480513c02a993b773f1a9cadbe753f72c4034c3d66626"
+    },
+    "trust_bundle": {
+      "path": "evals/schemas/model-eval-trust-bundle.v1.schema.json",
+      "sha256": "8d9bc589e572d51cd9bd370795cee9f707fa52d8803419ae9b272f66c0e433ba"
+    }
+  },
+  "suite": {
+    "path": "evals/v2-behavior-evals.json",
+    "sha256": "c535b471fa862a14518e0a86cd39a1081969cb208443af01fbcce1046f36d052",
+    "case_count": 24
+  },
+  "result_path": "evals/results/canonical-model-gate.json",
+  "subjects": {
+    "candidate": {
+      "role": "candidate",
+      "product_version": "2.0.0",
+      "required_ref": "v2"
+    },
+    "retained_v1": {
+      "role": "retained-v1",
+      "product_version": "1.8.1",
+      "required_ref": "v1.8.1",
+      "git_commit": "86690b668e2cc616e03bdb2f1a28aa951d6c29ad",
+      "git_tree": "92680a710c5366ba875aad92b12cb129369ab6b3"
+    }
+  },
+  "runtime": {
+    "family": "claude-code",
+    "skill_entrypoint": "/claude-ads:ads",
+    "invocation_mode": "explicit-plugin-skill",
+    "fresh_process_per_case": true,
+    "conversation_reuse": false,
+    "mutation_authority": "none"
+  },
+  "evaluation": {
+    "rubric_id": "claude-ads-observable-behavior-v1",
+    "independent_evaluator_required": true,
+    "accepted_evaluator_kinds": [
+      "human",
+      "independent-model"
+    ]
+  },
+  "thresholds": {
+    "minimum_candidate_score_percent": 90,
+    "maximum_p0_failures": 0,
+    "maximum_regressions_against_retained_v1": 0
+  },
+  "evidence_policy": {
+    "required_evidence_class": "external_model_run",
+    "raw_responses_required_for_assessment": true,
+    "raw_responses_must_not_be_packaged": true,
+    "local_checks_do_not_substitute_for_external_runs": true
+  },
+  "authentication_policy": {
+    "algorithm": "Ed25519",
+    "maximum_age_days": 14,
+    "separate_runner_evaluator_keys": true,
+    "external_trust_bundle_env": "CLAUDE_ADS_MODEL_EVAL_TRUST_BUNDLE_JSON",
+    "implementation_principals_env": "CLAUDE_ADS_MODEL_EVAL_IMPLEMENTATION_PRINCIPALS_JSON",
+    "repository_trust_roots_allowed": false
+  }
+}

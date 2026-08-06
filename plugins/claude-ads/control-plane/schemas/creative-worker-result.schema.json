@@ -1,0 +1,91 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:ai-marketing-hub:claude-ads:schema:control:v1:creative-worker-result.v1.json",
+  "title": "Claude Ads bounded creative worker result",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "run_id",
+    "task_id",
+    "worker",
+    "status",
+    "source_ids",
+    "input_refs",
+    "payload",
+    "candidate_artifacts",
+    "missing_inputs",
+    "assumptions",
+    "contradictions",
+    "warnings",
+    "verification"
+  ],
+  "properties": {
+    "schema_version": {"const": "1.0.0"},
+    "run_id": {"type": "string", "pattern": "^[A-Za-z0-9._-]+$"},
+    "task_id": {"type": "string", "pattern": "^[a-z0-9][a-z0-9-]*$"},
+    "worker": {
+      "enum": [
+        "creative-strategist",
+        "copy-writer",
+        "visual-designer",
+        "format-adapter"
+      ]
+    },
+    "status": {"enum": ["ok", "needs_input", "blocked", "failed"]},
+    "source_ids": {
+      "type": "array",
+      "items": {"type": "string", "pattern": "^[a-z0-9][a-z0-9-]*$"},
+      "uniqueItems": true
+    },
+    "input_refs": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "trust", "sha256"],
+        "properties": {
+          "id": {"type": "string", "minLength": 1},
+          "trust": {"enum": ["trusted-contract", "untrusted-data"]},
+          "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+        }
+      }
+    },
+    "payload": {"type": "object"},
+    "candidate_artifacts": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "kind",
+          "candidate_path",
+          "media_type",
+          "sha256",
+          "source_ids",
+          "validation_status"
+        ],
+        "properties": {
+          "kind": {"type": "string", "minLength": 1},
+          "candidate_path": {
+            "type": "string",
+            "pattern": "^(?!.*(?:^|/)\\.\\.(?:/|$))\\.claude-ads/runs/(?!\\.{1,2}/)[A-Za-z0-9._-]+/workers/[a-z0-9][a-z0-9-]*/[A-Za-z0-9._/-]+$"
+          },
+          "media_type": {"type": "string", "minLength": 1},
+          "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+          "source_ids": {
+            "type": "array",
+            "items": {"type": "string", "pattern": "^[a-z0-9][a-z0-9-]*$"},
+            "uniqueItems": true
+          },
+          "validation_status": {"enum": ["unverified", "verified", "rejected"]}
+        }
+      }
+    },
+    "missing_inputs": {"type": "array", "items": {"type": "string"}},
+    "assumptions": {"type": "array", "items": {"type": "string"}},
+    "contradictions": {"type": "array", "items": {"type": "string"}},
+    "warnings": {"type": "array", "items": {"type": "string"}},
+    "verification": {"type": "array", "items": {"type": "string"}}
+  }
+}

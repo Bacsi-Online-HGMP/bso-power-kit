@@ -1,0 +1,2 @@
+date,account_id,account_name,campaign_id,campaign_name,campaign_status,creative_id,creative_name,conversion_action,conversions,budget,spend,currency
+2026-06-15,demo-tiktok-account,Sanitized TikTok Demo,demo-tiktok-campaign,Sanitized Video Campaign,paused,demo-tiktok-creative,Sanitized Vertical Ad,purchase,8,100.00,38.50,USD

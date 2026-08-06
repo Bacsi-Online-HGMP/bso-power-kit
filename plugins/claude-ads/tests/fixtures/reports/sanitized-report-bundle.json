@@ -1,0 +1,144 @@
+{
+  "schema_version": "1.0.0",
+  "run_manifest": {
+    "schema_version": "1.0.0",
+    "run_id": "fixture-run-20260711-001",
+    "started_at": "2026-07-11T16:00:00Z",
+    "scopes": ["audit", "google"],
+    "adapters": [{"platform": "google", "mode": "export"}],
+    "sources": ["sanitized-google-export.csv", "official-google-help"],
+    "privacy_class": "internal",
+    "data_lifecycle": {
+      "schema_version": "1.0.0",
+      "lifecycle_id": "fixture-report-lifecycle",
+      "classification": "internal",
+      "retention": {"minimum_seconds": 0, "mode": "operator-defined", "delete_after": "2026-07-12T16:00:00Z", "purpose": "Render and verify the sanitized fixture report", "exception_reason": null},
+      "encryption": {"at_rest": "verified", "in_transit": "verified", "evidence_refs": ["operator-attestation:fixture-encryption"]},
+      "access": {"owner": "fixture-owner", "authorized_roles": ["fixture-runner"], "access_log_locator": null},
+      "deletion": {"status": "scheduled", "method": "Fixture cleanup", "verification_required": true, "verification_artifact_locator": null},
+      "incident": {"owner": "fixture-owner", "reporting_channel": "Private security channel", "status": "not-triggered", "record_locator": null}
+    },
+    "worker_status": {"google": "completed", "tracking": "failed"},
+    "completeness": "partial"
+  },
+  "account_snapshot": {
+    "schema_version": "1.0.0",
+    "account": {"platform": "google", "account_id": "fixture-google-001", "name": "Northstar Demo"},
+    "window": {"start": "2026-06-01", "end": "2026-06-30"},
+    "currency": "USD",
+    "spend": 1200.0,
+    "campaigns": [],
+    "creatives": [],
+    "conversions": [],
+    "budgets": []
+  },
+  "control_definitions": [
+    {
+      "schema_version": "1.0.0",
+      "control_id": "G-CREATIVE-001",
+      "category": "creative",
+      "severity": "critical",
+      "required_inputs": ["creatives"],
+      "source_ids": ["official-google-help"],
+      "maturity": "source-grounded",
+      "geographies": ["global"],
+      "expires_at": "2026-08-01",
+      "scoring_behavior": "health",
+      "stability": "stable"
+    },
+    {
+      "schema_version": "1.0.0",
+      "control_id": "G-POLICY-001",
+      "category": "policy",
+      "severity": "high",
+      "required_inputs": ["campaigns"],
+      "source_ids": ["official-google-help"],
+      "maturity": "source-grounded",
+      "geographies": ["global"],
+      "expires_at": "2026-08-01",
+      "scoring_behavior": "health",
+      "stability": "stable"
+    },
+    {
+      "schema_version": "1.0.0",
+      "control_id": "G-TRACK-001",
+      "category": "tracking",
+      "severity": "critical",
+      "required_inputs": ["conversions"],
+      "source_ids": ["official-google-help"],
+      "maturity": "source-grounded",
+      "geographies": ["global"],
+      "expires_at": "2026-08-01",
+      "scoring_behavior": "health",
+      "stability": "stable"
+    }
+  ],
+  "findings": [
+    {
+      "schema_version": "1.0.0",
+      "control_id": "G-TRACK-001",
+      "status": "fail",
+      "evidence": [{"field": "primary_conversion_status", "value": "inactive"}],
+      "confidence": "high",
+      "source_classification": "evidence_based",
+      "observation": "The sanitized export marks the primary conversion action inactive.",
+      "diagnosis": "Optimization cannot use the intended primary outcome.",
+      "recommendation": "Have the measurement owner verify the conversion action before bid changes."
+    },
+    {
+      "schema_version": "1.0.0",
+      "control_id": "G-CREATIVE-001",
+      "status": "unknown",
+      "evidence": [],
+      "confidence": "none",
+      "source_classification": "evidence_based",
+      "observation": "Creative rows were not included in the export.",
+      "diagnosis": "Creative coverage cannot be assessed from this run.",
+      "recommendation": "Export asset-level creative performance for the same date window."
+    },
+    {
+      "schema_version": "1.0.0",
+      "control_id": "G-POLICY-001",
+      "status": "pass",
+      "evidence": [{"field": "policy_status", "value": "eligible"}],
+      "confidence": "medium",
+      "source_classification": "evidence_based",
+      "observation": "Included campaign rows are eligible.",
+      "diagnosis": "No policy restriction is visible in the supplied rows.",
+      "recommendation": "Continue monitoring policy status."
+    }
+  ],
+  "scoring": {
+    "health_score": 37.5,
+    "evidence_coverage": 61.54,
+    "status": "provisional",
+    "categories": [
+      {"category": "tracking", "category_weight": 50.0, "health_score": 0.0, "evidence_coverage": 100.0},
+      {"category": "creative", "category_weight": 20.0, "health_score": null, "evidence_coverage": 0.0},
+      {"category": "policy", "category_weight": 30.0, "health_score": 100.0, "evidence_coverage": 100.0}
+    ]
+  },
+  "contradictions": [
+    {
+      "summary": "Campaign eligibility is present, but conversion readiness is not.",
+      "status": "unresolved",
+      "source": "sanitized export"
+    }
+  ],
+  "actions": [
+    {
+      "action": "Verify and repair the primary conversion action.",
+      "confidence": "high",
+      "owner": "measurement owner",
+      "success_measure": "A controlled test conversion appears in the platform.",
+      "timing": "before bid changes"
+    },
+    {
+      "action": "Supply asset-level creative performance.",
+      "confidence": "high",
+      "owner": "media buyer",
+      "success_measure": "Creative controls have sufficient evidence.",
+      "timing": "next audit run"
+    }
+  ]
+}

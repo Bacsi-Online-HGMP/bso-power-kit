@@ -1,0 +1,53 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:ai-marketing-hub:claude-ads:schema:control:v1:source-ledger.v1.json",
+  "title": "Claude Ads source ledger",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "generated_at", "sources"],
+  "properties": {
+    "schema_version": {"const": "1.0.0"},
+    "generated_at": {"type": "string", "format": "date"},
+    "sources": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/source"}
+    }
+  },
+  "$defs": {
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id", "title", "locator", "source_type", "authority_tier",
+        "retrieved_at", "refresh_due", "confidence", "license",
+        "redistribution", "claim_ids"
+      ],
+      "properties": {
+        "id": {"type": "string", "pattern": "^[a-z0-9][a-z0-9-]*$"},
+        "title": {"type": "string", "minLength": 1},
+        "locator": {"type": "string", "minLength": 1},
+        "source_type": {
+          "enum": [
+            "official-doc", "regulator", "standards-body", "primary-research",
+            "first-party-blog", "api-doc", "repository-local", "github-repo",
+            "github-issue", "github-pull-request", "third-party", "private-corpus"
+          ]
+        },
+        "authority_tier": {"type": "integer", "minimum": 1, "maximum": 5},
+        "published_at": {"type": "string", "format": "date"},
+        "retrieved_at": {"type": "string", "format": "date"},
+        "refresh_due": {"type": "string", "format": "date"},
+        "version": {"type": "string"},
+        "confidence": {"enum": ["high", "medium", "low"]},
+        "license": {"type": "string", "minLength": 1},
+        "redistribution": {"enum": ["public-safe", "metadata-only", "private", "prohibited"]},
+        "claim_ids": {
+          "type": "array",
+          "items": {"type": "string", "pattern": "^CLM-[0-9]{4}$"},
+          "uniqueItems": true
+        },
+        "notes": {"type": "string"}
+      }
+    }
+  }
+}

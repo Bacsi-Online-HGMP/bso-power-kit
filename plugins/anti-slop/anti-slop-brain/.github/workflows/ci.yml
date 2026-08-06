@@ -1,0 +1,72 @@
+# Component workflow for anti-slop-brain.
+#
+# GitHub only executes workflows found in the repository root .github/
+# directory, so within the anti-slop monorepo THIS FILE DOES NOT RUN. The
+# executable job lives at ../../.github/workflows/ci.yml and invokes the same
+# steps with working-directory set to anti-slop-brain.
+#
+# This file is kept because anti-slop-brain is independently installable: it
+# has its own pyproject.toml, install.sh, marketplace.json and console script.
+# If the brain is ever extracted into a standalone repository, this workflow is
+# already correct and needs no edits.
+#
+# Keep the two in sync. If you add a step here, add it at the root as well.
+
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Install
+        run: python -m pip install -e .
+      - name: Compile
+        run: python -m compileall scripts anti_slop_brain tests
+      - name: CLI smoke
+        run: anti-slop-brain --help
+      - name: Template vault lint
+        run: python scripts/lint_vault.py --vault assets/template-brain --template
+      - name: Scanner tests
+        run: python tests/test_scanners.py
+      - name: Adapter tests
+        run: python tests/test_adapters.py
+      - name: Pipeline tests
+        run: python tests/test_pipeline.py
+      - name: Vault links
+        # lint_vault validates a client vault and expects client vault
+        # furniture, so it cannot be pointed at the shipped wiki. This
+        # checks the part that matters: every wikilink resolves.
+        run: python scripts/check_links.py --vault wiki
+      - name: Vault substance
+        # Note types must be named explicitly. The scorer defaults to "spoke",
+        # which this vault does not use, and an unnamed type scores zero.
+        run: |
+          python scripts/score_substance.py \
+            --vault wiki \
+            --ledger references/source-ledger.json \
+            --note-type concept,marker,procedure,surface
+      - name: Demo vault drift
+        # The demo vault is a committed generated artifact, so the date it
+        # stamps is pinned. Without the pin this step passes only on the day
+        # the vault was committed and is red on every pull request after it.
+        # references/canon is folded by the same build and is diffed here too,
+        # because a check that ignores half the generated output is not a
+        # check. The date must match DEFAULT_REFERENCE_DATE in
+        # scripts/build_demo_vault.py.
+        run: |
+          python scripts/build_demo_vault.py --reference-date 2026-07-28
+          git diff --exit-code -- examples/sample-vault references/canon
+      - name: Release package and audit
+        run: python scripts/package_release.py --version 0.1.0

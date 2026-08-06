@@ -1,0 +1,14 @@
+node_modules
+dist
+test
+scripts
+examples
+.git
+.github
+*.md
+*.config.*
+.prettierrc
+knip.json
+glama.json
+smithery.yaml
+tsconfig.eslint.json

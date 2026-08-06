@@ -1,0 +1,62 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:ai-marketing-hub:claude-ads:schema:core:v1:data-lifecycle.schema.json",
+  "title": "DataLifecycle v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "lifecycle_id", "classification", "retention", "encryption", "access", "deletion", "incident"],
+  "properties": {
+    "schema_version": {"const": "1.0.0"},
+    "lifecycle_id": {"$ref": "urn:ai-marketing-hub:claude-ads:schema:core:v1:workflow-common.schema.json#/$defs/id"},
+    "classification": {"$ref": "urn:ai-marketing-hub:claude-ads:schema:core:v1:workflow-common.schema.json#/$defs/privacy"},
+    "retention": {
+      "type": "object", "additionalProperties": false,
+      "required": ["minimum_seconds", "mode", "delete_after", "purpose", "exception_reason"],
+      "properties": {
+        "minimum_seconds": {"type": "integer", "minimum": 0},
+        "mode": {"enum": ["ephemeral", "operator-defined", "policy-defined", "exception"]},
+        "delete_after": {"type": ["string", "null"], "format": "date-time"},
+        "purpose": {"$ref": "urn:ai-marketing-hub:claude-ads:schema:core:v1:workflow-common.schema.json#/$defs/nonempty"},
+        "exception_reason": {"type": ["string", "null"]}
+      }
+    },
+    "encryption": {
+      "type": "object", "additionalProperties": false,
+      "required": ["at_rest", "in_transit", "evidence_refs"],
+      "properties": {
+        "at_rest": {"enum": ["verified", "not-applicable"]},
+        "in_transit": {"enum": ["verified", "not-applicable"]},
+        "evidence_refs": {"$ref": "urn:ai-marketing-hub:claude-ads:schema:core:v1:workflow-common.schema.json#/$defs/string_array"}
+      }
+    },
+    "access": {
+      "type": "object", "additionalProperties": false,
+      "required": ["owner", "authorized_roles", "access_log_locator"],
+      "properties": {
+        "owner": {"$ref": "urn:ai-marketing-hub:claude-ads:schema:core:v1:workflow-common.schema.json#/$defs/nonempty"},
+        "authorized_roles": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"$ref": "urn:ai-marketing-hub:claude-ads:schema:core:v1:workflow-common.schema.json#/$defs/nonempty"}},
+        "access_log_locator": {"type": ["string", "null"], "pattern": "^(?![\\/])(?!.*(?:^|/)\\.\\.(?:/|$))(?!.*\\\\).+$"}
+      }
+    },
+    "deletion": {
+      "type": "object", "additionalProperties": false,
+      "required": ["status", "method", "verification_required", "verification_artifact_locator"],
+      "properties": {
+        "status": {"enum": ["scheduled", "verified", "exception"]},
+        "method": {"$ref": "urn:ai-marketing-hub:claude-ads:schema:core:v1:workflow-common.schema.json#/$defs/nonempty"},
+        "verification_required": {"const": true},
+        "verification_artifact_locator": {"type": ["string", "null"], "pattern": "^(?![\\/])(?!.*(?:^|/)\\.\\.(?:/|$))(?!.*\\\\).+$"}
+      }
+    },
+    "incident": {
+      "type": "object", "additionalProperties": false,
+      "required": ["owner", "reporting_channel", "status", "record_locator"],
+      "properties": {
+        "owner": {"$ref": "urn:ai-marketing-hub:claude-ads:schema:core:v1:workflow-common.schema.json#/$defs/nonempty"},
+        "reporting_channel": {"$ref": "urn:ai-marketing-hub:claude-ads:schema:core:v1:workflow-common.schema.json#/$defs/nonempty"},
+        "status": {"enum": ["not-triggered", "open", "contained", "resolved"]},
+        "record_locator": {"type": ["string", "null"], "pattern": "^(?![\\/])(?!.*(?:^|/)\\.\\.(?:/|$))(?!.*\\\\).+$"}
+      }
+    }
+  }
+}

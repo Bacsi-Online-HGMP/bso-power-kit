@@ -1,0 +1,2 @@
+segments.date,customer.id,customer.descriptive_name,customer.currency_code,campaign.id,campaign.name,campaign.status,campaign_budget.amount_micros,metrics.cost_micros,metrics.conversions,campaign.advertising_channel_type
+2026-06-15,demo-youtube-account,Sanitized YouTube Demo,USD,demo-youtube-campaign,Sanitized Video Campaign,PAUSED,100000000,40500000,10,VIDEO

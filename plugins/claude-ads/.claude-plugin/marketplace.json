@@ -1,0 +1,62 @@
+{
+  "name": "ai-marketing-hub-claude-ads",
+  "owner": {
+    "name": "AgriciDaniel"
+  },
+  "metadata": {
+    "description": "Claude-first, portable paid-media operations across 12 advertising platforms.",
+    "version": "2.0.1"
+  },
+  "plugins": [
+    {
+      "name": "claude-ads",
+      "source": "./",
+      "description": "Claude-first, portable paid-media operations across 12 advertising platforms with source-grounded audits, deterministic scoring, lifecycle workflows, versioned JSON reports, and capability-gated account changes.",
+      "version": "2.0.1",
+      "author": {
+        "name": "AgriciDaniel"
+      },
+      "homepage": "https://agricidaniel.com/blog/claude-code-ad-agency",
+      "repository": "https://github.com/AgriciDaniel/claude-ads",
+      "license": "MIT",
+      "category": "marketing",
+      "tags": [
+        "agent-skills",
+        "advertising",
+        "audit",
+        "google-ads",
+        "meta-ads",
+        "linkedin-ads",
+        "tiktok-ads",
+        "microsoft-ads",
+        "apple-ads",
+        "amazon-ads",
+        "youtube-ads",
+        "reddit-ads",
+        "pinterest-ads",
+        "snapchat-ads",
+        "x-ads",
+        "attribution",
+        "server-side-tracking",
+        "retail-media",
+        "ppc",
+        "optimization",
+        "creative-generation",
+        "multi-host"
+      ],
+      "keywords": [
+        "agent-skills",
+        "advertising-audit",
+        "paid-advertising",
+        "amazon-ads",
+        "attribution",
+        "server-side-tracking",
+        "retail-media",
+        "claude-code-skill",
+        "codex-cli",
+        "cursor",
+        "multi-host"
+      ]
+    }
+  ]
+}

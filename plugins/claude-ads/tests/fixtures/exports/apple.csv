@@ -1,0 +1,2 @@
+date,account_id,account_name,campaign_id,campaign_name,campaign_status,creative_id,creative_name,conversion_action,conversions,budget,spend,currency
+2026-06-15,demo-apple-account,Sanitized Apple Demo,demo-apple-campaign,Sanitized App Campaign,paused,demo-apple-creative,Sanitized Product Page,install,6,100.00,36.50,USD

@@ -1,0 +1,99 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:ai-marketing-hub:claude-ads:schema:control:v1:egress-sandbox-attestation.v1.json",
+  "title": "Claude Ads browser egress-sandbox attestation",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "attestation_id",
+    "audience",
+    "issuer_id",
+    "environment_id",
+    "issued_at",
+    "not_before",
+    "expires_at",
+    "enforcement_boundary",
+    "controls",
+    "evidence_refs",
+    "authentication"
+  ],
+  "properties": {
+    "schema_version": {"const": "1.0.0"},
+    "attestation_id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:@/-]{2,127}$"
+    },
+    "audience": {"const": "claude-ads-browser-egress"},
+    "issuer_id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:@/-]{2,127}$"
+    },
+    "environment_id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:@/-]{2,127}$"
+    },
+    "issued_at": {"type": "string", "format": "date-time"},
+    "not_before": {"type": "string", "format": "date-time"},
+    "expires_at": {"type": "string", "format": "date-time"},
+    "enforcement_boundary": {
+      "enum": [
+        "container-network-policy",
+        "host-firewall",
+        "isolated-network-proxy"
+      ]
+    },
+    "controls": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "blocks_link_local",
+        "blocks_loopback",
+        "blocks_metadata",
+        "blocks_private",
+        "blocks_reserved",
+        "covers_ipv4",
+        "covers_ipv6",
+        "covers_redirects",
+        "covers_subresources",
+        "fail_closed",
+        "prevents_dns_rebinding",
+        "public_only_after_dns"
+      ],
+      "properties": {
+        "blocks_link_local": {"const": true},
+        "blocks_loopback": {"const": true},
+        "blocks_metadata": {"const": true},
+        "blocks_private": {"const": true},
+        "blocks_reserved": {"const": true},
+        "covers_ipv4": {"const": true},
+        "covers_ipv6": {"const": true},
+        "covers_redirects": {"const": true},
+        "covers_subresources": {"const": true},
+        "fail_closed": {"const": true},
+        "prevents_dns_rebinding": {"const": true},
+        "public_only_after_dns": {"const": true}
+      }
+    },
+    "evidence_refs": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 20,
+      "uniqueItems": true,
+      "items": {"type": "string", "minLength": 1, "maxLength": 512}
+    },
+    "authentication": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["algorithm", "key_id", "signature_b64url"],
+      "properties": {
+        "algorithm": {"const": "ed25519"},
+        "key_id": {"type": "string", "minLength": 3, "maxLength": 128},
+        "signature_b64url": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{86}(?:==)?$"
+        }
+      }
+    }
+  }
+}

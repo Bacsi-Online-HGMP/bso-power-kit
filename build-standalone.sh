@@ -10,16 +10,33 @@ SRC="$HERE/../Turn these to skill bundles"
 
 PLUGINS=(
   AI-Research-SKILLs-main academic-research-skills-main huggingface-skills-main
+  idea-validation-agents
   Understand-Anything-main SocratiCode-main agentmemory-main
   superpowers-main brooks-lint-main andrej-karpathy-skills-main ponytail-main
-  mattpocock-skills-main caveman-main ECC-main impeccable-main
-  modern-web-guidance-main chrome-devtools-mcp-main last30days-skill-main
-  worktrunk-main agent-skills-main
+  mattpocock-skills-main caveman-main verification-before-completion ECC-main
+  anti-slop impeccable-main ui-ux-pro-max-skill taste-skill
+  threads-carousel-claude-skill modern-web-guidance-main
+  watch mcp-video-analyzer
+  video-editing claude-shorts youtube-shorts-pipeline
+  claude-blog claude-youtube youtuber claude-repurpose
+  create-viral-content viral-hooks-skill last30days-skill-main
+  claude-seo claude-ads
+  cybersecurity-defense worktrunk-main handoff
 )
 TOOLS=(
-  notebooklm-mcp-cli-main Agent-Reach-main tasteskill-main
-  design.md-main ai-website-cloner-template-master vercel-labs-skills-main
+  notebooklm-mcp-cli-main Agent-Reach-main agentskills agency-agents
+  design.md ai-website-cloner-template-master vercel-labs-skills-main
 )
+
+# Dropped in 0.2.0 — do not re-add:
+#   chrome-devtools-mcp-main   Claude in Chrome covers it
+#   youtube-video-perception   superseded by `watch`
+#   agent-skills-main (Apify)  whole scraping group dropped
+#   tasteskill-main            stale snapshot; use plugins/taste-skill (has plugin.json)
+#   design.md-main             stale snapshot; use tools/design.md
+#
+# Registered as separate marketplaces rather than vendored (~490 MB):
+#   sickn33/agentic-awesome-skills  wshobson/agents  garrytan/gbrain  garrytan/gstack
 
 if [ ! -d "$SRC" ]; then
   echo "ERROR: source folder not found: $SRC"

@@ -1,0 +1,12 @@
+{
+  "name": "watch",
+  "version": "1.0.0",
+  "description": "Let Claude watch a video from YouTube, Instagram, X, Vimeo, TikTok or any yt-dlp site. Downloads with yt-dlp, extracts auto-scaled frames with ffmpeg, transcribes locally with mlx-whisper (no API key, nothing leaves your machine), and hands frames + transcript to Claude.",
+  "author": {
+    "name": "Mathias Schusterman"
+  },
+  "homepage": "https://github.com/mathiaschu/claude-video",
+  "repository": "https://github.com/mathiaschu/claude-video",
+  "license": "MIT",
+  "keywords": ["video", "watch", "youtube", "instagram", "twitter", "x", "vimeo", "tiktok", "transcription", "whisper", "mlx", "local", "yt-dlp", "ffmpeg", "multimodal", "frames"]
+}

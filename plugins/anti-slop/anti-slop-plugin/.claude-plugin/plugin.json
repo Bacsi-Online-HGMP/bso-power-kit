@@ -1,0 +1,35 @@
+{
+  "name": "anti-slop",
+  "version": "0.1.0",
+  "description": "Detect and repair AI slop in prose, code, documentation, commits and agent output. Reports defects, never authorship. Runs deterministic scanners for vendor residue, placeholders, citations and packages, then structural procedures (deletion, inversion, stranger, attribution, load-bearing) that each emit a verifiable artifact. Stylistic markers are evidence-tiered and route to structural tests instead of failing on their own.",
+  "author": {
+    "name": "Daniel Agrici",
+    "url": "https://github.com/AgriciDaniel"
+  },
+  "homepage": "https://github.com/AgriciDaniel/anti-slop",
+  "repository": "https://github.com/AgriciDaniel/anti-slop",
+  "license": "Apache-2.0 AND CC-BY-SA-4.0 AND CC-BY-4.0",
+  "keywords": [
+    "anti-slop",
+    "ai-slop",
+    "content-quality",
+    "code-review",
+    "citation-verification",
+    "hallucinated-packages",
+    "vendor-residue",
+    "editorial-review",
+    "structural-tests",
+    "false-positive-control"
+  ],
+  "allowed-tools": [
+    "Read",
+    "Grep",
+    "Glob",
+    "Bash",
+    "Write",
+    "Edit",
+    "WebFetch"
+  ],
+  "_comment_allowed_tools": "claude plugin validate --strict rejects allowed-tools as unrecognised. It is retained because the Brainstein rubric item C7.3 requires a declared tool list, and it is inert at load time either way. Remove it if strict validation becomes a release gate.",
+  "_comment_license": "Compound by necessity. Code is Apache-2.0. The marker taxonomies under references/ adapt Wikipedia's Signs of AI writing and are CC-BY-SA-4.0, which is copyleft and cannot be relicensed. Other prose is CC-BY-4.0. See LICENSE and NOTICE in this directory."
+}

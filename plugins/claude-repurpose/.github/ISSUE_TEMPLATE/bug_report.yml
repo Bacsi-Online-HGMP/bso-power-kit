@@ -1,0 +1,31 @@
+name: Bug Report
+description: Report a bug in claude-repurpose
+title: "[Bug]: "
+labels: ["bug"]
+body:
+  - type: textarea
+    id: description
+    attributes:
+      label: Describe the bug
+      placeholder: What happened?
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Run `/repurpose ...`
+        2. ...
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+      placeholder: What should have happened?
+  - type: input
+    id: version
+    attributes:
+      label: Claude Code version
+      placeholder: "e.g., 1.0.50"

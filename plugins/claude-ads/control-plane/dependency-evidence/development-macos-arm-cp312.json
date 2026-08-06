@@ -1,0 +1,134 @@
+{
+  "components": [
+    {
+      "artifact": {
+        "filename": "cffi-2.1.0-cp312-cp312-macosx_11_0_arm64.whl",
+        "sha256": "78474632761faa0fb96f30b1c928c84ebcf68713cbb80d15bab09dfe61640fde",
+        "url": "https://files.pythonhosted.org/packages/4b/92/e7bb136ad6b5352603732cf907ef862ca103f20f2031c1735a46300c20c9/cffi-2.1.0-cp312-cp312-macosx_11_0_arm64.whl"
+      },
+      "direct": false,
+      "name": "cffi",
+      "purl": "pkg:pypi/cffi@2.1.0",
+      "version": "2.1.0"
+    },
+    {
+      "artifact": {
+        "filename": "cryptography-48.0.1-cp311-abi3-macosx_10_9_universal2.whl",
+        "sha256": "3e4a1a3232eef2e6c732827d5722db29a0cc8b27af2a4d865b094cf954be9ca1",
+        "url": "https://files.pythonhosted.org/packages/1b/bc/ee4137cbbe105652c0ee4252792b78fc8e7afa4b8e61d9d5dc05a7f45731/cryptography-48.0.1-cp311-abi3-macosx_10_9_universal2.whl"
+      },
+      "direct": true,
+      "name": "cryptography",
+      "purl": "pkg:pypi/cryptography@48.0.1",
+      "version": "48.0.1"
+    },
+    {
+      "artifact": {
+        "filename": "iniconfig-2.3.0-py3-none-any.whl",
+        "sha256": "f631c04d2c48c52b84d0d0549c99ff3859c98df65b3101406327ecc7d53fbf12",
+        "url": "https://files.pythonhosted.org/packages/cb/b1/3846dd7f199d53cb17f49cba7e651e9ce294d8497c8c150530ed11865bb8/iniconfig-2.3.0-py3-none-any.whl"
+      },
+      "direct": false,
+      "name": "iniconfig",
+      "purl": "pkg:pypi/iniconfig@2.3.0",
+      "version": "2.3.0"
+    },
+    {
+      "artifact": {
+        "filename": "packaging-26.2-py3-none-any.whl",
+        "sha256": "5fc45236b9446107ff2415ce77c807cee2862cb6fac22b8a73826d0693b0980e",
+        "url": "https://files.pythonhosted.org/packages/df/b2/87e62e8c3e2f4b32e5fe99e0b86d576da1312593b39f47d8ceef365e95ed/packaging-26.2-py3-none-any.whl"
+      },
+      "direct": false,
+      "name": "packaging",
+      "purl": "pkg:pypi/packaging@26.2",
+      "version": "26.2"
+    },
+    {
+      "artifact": {
+        "filename": "pluggy-1.6.0-py3-none-any.whl",
+        "sha256": "e920276dd6813095e9377c0bc5566d94c932c33b27a3e3945d8389c374dd4746",
+        "url": "https://files.pythonhosted.org/packages/54/20/4d324d65cc6d9205fabedc306948156824eb9f0ee1633355a8f7ec5c66bf/pluggy-1.6.0-py3-none-any.whl"
+      },
+      "direct": false,
+      "name": "pluggy",
+      "purl": "pkg:pypi/pluggy@1.6.0",
+      "version": "1.6.0"
+    },
+    {
+      "artifact": {
+        "filename": "pycparser-3.0-py3-none-any.whl",
+        "sha256": "b727414169a36b7d524c1c3e31839a521725078d7b2ff038656844266160a992",
+        "url": "https://files.pythonhosted.org/packages/0c/c3/44f3fbbfa403ea2a7c779186dc20772604442dde72947e7d01069cbe98e3/pycparser-3.0-py3-none-any.whl"
+      },
+      "direct": false,
+      "name": "pycparser",
+      "purl": "pkg:pypi/pycparser@3.0",
+      "version": "3.0"
+    },
+    {
+      "artifact": {
+        "filename": "pygments-2.20.0-py3-none-any.whl",
+        "sha256": "81a9e26dd42fd28a23a2d169d86d7ac03b46e2f8b59ed4698fb4785f946d0176",
+        "url": "https://files.pythonhosted.org/packages/f4/7e/a72dd26f3b0f4f2bf1dd8923c85f7ceb43172af56d63c7383eb62b332364/pygments-2.20.0-py3-none-any.whl"
+      },
+      "direct": false,
+      "name": "pygments",
+      "purl": "pkg:pypi/pygments@2.20.0",
+      "version": "2.20.0"
+    },
+    {
+      "artifact": {
+        "filename": "pytest-9.0.3-py3-none-any.whl",
+        "sha256": "2c5efc453d45394fdd706ade797c0a81091eccd1d6e4bccfcd476e2b8e0ab5d9",
+        "url": "https://files.pythonhosted.org/packages/d4/24/a372aaf5c9b7208e7112038812994107bc65a84cd00e0354a88c2c77a617/pytest-9.0.3-py3-none-any.whl"
+      },
+      "direct": true,
+      "name": "pytest",
+      "purl": "pkg:pypi/pytest@9.0.3",
+      "version": "9.0.3"
+    },
+    {
+      "artifact": {
+        "filename": "pyyaml-6.0.3-cp312-cp312-macosx_11_0_arm64.whl",
+        "sha256": "fc09d0aa354569bc501d4e787133afc08552722d3ab34836a80547331bb5d4a0",
+        "url": "https://files.pythonhosted.org/packages/89/a0/6cf41a19a1f2f3feab0e9c0b74134aa2ce6849093d5517a0c550fe37a648/pyyaml-6.0.3-cp312-cp312-macosx_11_0_arm64.whl"
+      },
+      "direct": true,
+      "name": "pyyaml",
+      "purl": "pkg:pypi/pyyaml@6.0.3",
+      "version": "6.0.3"
+    }
+  ],
+  "environment": {
+    "abi": "cp312",
+    "arch": "arm64",
+    "implementation": "CPython",
+    "os": "macos",
+    "profile": "development",
+    "python_version": "3.12"
+  },
+  "evidence_class": "cross-target-pip-resolution-requiring-native-ci-confirmation",
+  "evidence_id": "development-macos-arm-cp312",
+  "normalization_notes": [],
+  "platform_policy": "Exact lowest-common lock with target-selected PyPI wheels",
+  "resolved_at": "2026-07-11T00:00:00Z",
+  "resolver": "pip / PyPI",
+  "schema_version": "1.0.0",
+  "source_date_epoch": 1783728000,
+  "source_environment": {
+    "implementation_name": "cpython",
+    "implementation_version": "3.14.4",
+    "os_name": "posix",
+    "platform_machine": "x86_64",
+    "platform_python_implementation": "CPython",
+    "platform_release": "6.19.14-101.fc44.x86_64",
+    "platform_system": "Linux",
+    "platform_version": "#1 SMP PREEMPT_DYNAMIC Fri May  8 18:24:24 UTC 2026",
+    "python_full_version": "3.14.4",
+    "python_version": "3.14",
+    "sys_platform": "linux"
+  },
+  "source_pip_version": "26.0.1",
+  "source_report_sha256": "aa522645b30a423c27027d0a7c6a3b9f4aaf4558f1c50700a5c7bc94dc6cf00d"
+}

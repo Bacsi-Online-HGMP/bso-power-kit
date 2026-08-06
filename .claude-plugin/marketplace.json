@@ -2,10 +2,15 @@
   "name": "claude-power-kit",
   "metadata": {
     "description": "Curated community skills, plugins & MCPs for Claude Cowork and Code (excludes official Anthropic). Standalone: run build-standalone.sh once to populate ./plugins, then add this folder as a marketplace.",
-    "version": "0.1.0"
+    "version": "0.2.0"
   },
   "owner": {
     "name": "Harold"
+  },
+  "renames": {
+    "chrome-devtools-mcp": null,
+    "youtube-video-perception": null,
+    "apify-agent-skills": null
   },
   "plugins": [
     {
@@ -24,19 +29,28 @@
       "description": "A · Research — dataset/model/eval tasks for AI/ML work."
     },
     {
+      "name": "idea-validation-agents",
+      "source": "./plugins/idea-validation-agents",
+      "strict": false,
+      "description": "A · Research — validate a product idea before building it. No API key required."
+    },
+    {
       "name": "understand-anything",
       "source": "./plugins/Understand-Anything-main",
-      "description": "B · Comprehension — turn any codebase/docs into an explorable knowledge graph."
+      "defaultEnabled": false,
+      "description": "B · Comprehension — turn any codebase/docs into an explorable knowledge graph. Overlaps socraticode; enable one."
     },
     {
       "name": "socraticode",
       "source": "./plugins/SocratiCode-main",
-      "description": "B · Comprehension — semantic code search + dependency graph + context."
+      "defaultEnabled": false,
+      "description": "B · Comprehension — semantic code search + dependency graph + context. Overlaps understand-anything; enable one."
     },
     {
       "name": "agentmemory",
       "source": "./plugins/agentmemory-main/plugin",
-      "description": "B · Memory — persistent cross-session memory (Pensyve overlaps; pick one)."
+      "defaultEnabled": false,
+      "description": "B · Memory — persistent cross-session memory. Cowork has built-in memory; kept in the catalogue, not enabled."
     },
     {
       "name": "superpowers",
@@ -61,7 +75,8 @@
     {
       "name": "mattpocock-skills",
       "source": "./plugins/mattpocock-skills-main",
-      "description": "C · Discipline — 19 engineering & productivity skills: grilling, diagnosing-bugs, writing-great-skills."
+      "defaultEnabled": false,
+      "description": "C · Discipline — 19 engineering & productivity skills. Its handoff skill is packaged standalone; enable the whole set only for TypeScript work."
     },
     {
       "name": "caveman",
@@ -69,39 +84,59 @@
       "description": "C · Discipline (Code) — ~65% fewer output tokens, same answers."
     },
     {
+      "name": "verification-before-completion",
+      "source": "./plugins/verification-before-completion",
+      "description": "C · Discipline — evidence before assertions; rescued from superpowers (MIT, Jesse Vincent)."
+    },
+    {
       "name": "ecc",
       "source": "./plugins/ECC-main",
       "description": "D · Framework — the big agent-harness OS; mesh-hub for the other frameworks."
     },
     {
+      "name": "anti-slop",
+      "source": "./plugins/anti-slop/anti-slop-plugin",
+      "description": "E · Writing — never asserts authorship, only produces artifacts a human can check. Pairs with the Vietnamese vietnamese-anti-slop skill in the bso marketplace."
+    },
+    {
       "name": "impeccable",
       "source": "./plugins/impeccable-main",
-      "description": "E · Visual — design guidance + anti-slop detectors + live browser iteration."
+      "defaultEnabled": false,
+      "description": "F · Visual — design guidance + anti-slop detectors + live browser iteration. One of the four sources merged into bso-design; catalogued, not enabled."
+    },
+    {
+      "name": "ui-ux-pro-max",
+      "source": "./plugins/ui-ux-pro-max-skill",
+      "defaultEnabled": false,
+      "description": "F · Visual — 84 styles, 161 palettes, 57 font pairs, 12 stacks. Source for bso-design; catalogued, not enabled. Use nextlevelbuilder, not the same-named WAAMEngineer fork."
+    },
+    {
+      "name": "taste-skill",
+      "source": "./plugins/taste-skill",
+      "defaultEnabled": false,
+      "description": "F · Visual — VARIANCE / MOTION / DENSITY dials + anti-generic rules. Source for bso-design; catalogued, not enabled. Its blanket em-dash ban must not be adopted for regulated supplement copy."
+    },
+    {
+      "name": "threads-carousel",
+      "source": "./",
+      "strict": false,
+      "skills": ["./plugins/threads-carousel-claude-skill"],
+      "description": "F · Visual — text to carousel PNG/PDF."
     },
     {
       "name": "modern-web-guidance",
       "source": "./plugins/modern-web-guidance-main",
-      "description": "E · Visual — modern web best-practices + compatibility (Google Chrome team)."
+      "description": "F · Visual — modern web best-practices + compatibility (Google Chrome team)."
     },
     {
-      "name": "chrome-devtools-mcp",
-      "source": "./plugins/chrome-devtools-mcp-main",
-      "description": "F · Browser — control & inspect a live Chrome."
+      "name": "watch",
+      "source": "./plugins/watch",
+      "description": "G · Perception — let Claude watch a video from YouTube, Instagram, X, Vimeo, TikTok. On-device, no key, no cookie, no telemetry."
     },
     {
-      "name": "last30days-skill",
-      "source": "./plugins/last30days-skill-main",
-      "description": "G · Content — last-30-days trends across Reddit/HN/X/YouTube/Polymarket."
-    },
-    {
-      "name": "worktrunk",
-      "source": "./plugins/worktrunk-main/plugins/worktrunk",
-      "description": "H · Utilities (Code) — parallel git worktrees for side-by-side agents."
-    },
-    {
-      "name": "apify-agent-skills",
-      "source": "./plugins/agent-skills-main",
-      "description": "G · Content (Code, optional) — hosted web scraping via Apify Actors (needs Apify token)."
+      "name": "mcp-video-analyzer",
+      "source": "./plugins/mcp-video-analyzer",
+      "description": "G · Perception — video input with frame OCR and caching. Heavier than watch; adds an npm dependency."
     },
     {
       "name": "video-editing",
@@ -109,9 +144,65 @@
       "description": "V · Video — FFmpeg editing, download, transcribe, motion graphics. AGPL-3.0 (OpenMontage)."
     },
     {
-      "name": "youtube-video-perception",
-      "source": "./plugins/youtube-video-perception",
-      "description": "V · Video — read a YouTube video: metadata, timed transcript, sampled keyframes."
+      "name": "claude-shorts",
+      "source": "./plugins/claude-shorts",
+      "description": "V · Video — longform to shortform: viral-segment scoring plus Remotion captions."
+    },
+    {
+      "name": "youtube-shorts-pipeline",
+      "source": "./",
+      "strict": false,
+      "skills": ["./plugins/youtube-shorts-pipeline"],
+      "description": "V · Video — niche-driven shorts pipeline."
+    },
+    {
+      "name": "claude-blog",
+      "source": "./plugins/claude-blog",
+      "description": "H · Content — 32 skill directories behind a 5-Gate Delivery Contract that blocks delivery until checks pass."
+    },
+    {
+      "name": "claude-youtube",
+      "source": "./plugins/claude-youtube",
+      "description": "H · Content — channel audits, video SEO, retention analysis."
+    },
+    {
+      "name": "youtuber",
+      "source": "./plugins/youtuber",
+      "description": "H · Content — source-cited Obsidian brain for YouTube creator growth."
+    },
+    {
+      "name": "claude-repurpose",
+      "source": "./plugins/claude-repurpose",
+      "description": "H · Content — repurposing engine: one source into many channel formats."
+    },
+    {
+      "name": "create-viral-content",
+      "source": "./",
+      "strict": false,
+      "skills": ["./plugins/create-viral-content"],
+      "description": "H · Content — viral content patterns."
+    },
+    {
+      "name": "viral-hooks",
+      "source": "./",
+      "strict": false,
+      "skills": ["./plugins/viral-hooks-skill"],
+      "description": "H · Content — 100 hook formulas as a reference library."
+    },
+    {
+      "name": "last30days-skill",
+      "source": "./plugins/last30days-skill-main",
+      "description": "H · Content — last-30-days trends across Reddit/HN/X/YouTube/Polymarket."
+    },
+    {
+      "name": "claude-seo",
+      "source": "./plugins/claude-seo",
+      "description": "I · SEO — 25 sub-skills for SEO analysis."
+    },
+    {
+      "name": "claude-ads",
+      "source": "./plugins/claude-ads",
+      "description": "I · SEO — paid media for Google, Meta, YouTube. Read-only by default; writes require six conditions."
     },
     {
       "name": "cybersecurity-defense",
@@ -119,14 +210,14 @@
       "description": "S · Security — blue-team playbooks: incident response, host forensics, threat hunting, ISO 27001. Apache-2.0."
     },
     {
-      "name": "handoff",
-      "source": "./plugins/handoff",
-      "description": "P · Productivity — write a session handoff doc instead of /compact."
+      "name": "worktrunk",
+      "source": "./plugins/worktrunk-main/plugins/worktrunk",
+      "description": "U · Utilities (Code) — parallel git worktrees for side-by-side agents."
     },
     {
-      "name": "verification-before-completion",
-      "source": "./plugins/verification-before-completion",
-      "description": "C · Discipline — evidence before assertions; rescued from superpowers (MIT, Jesse Vincent)."
+      "name": "handoff",
+      "source": "./plugins/handoff",
+      "description": "U · Utilities — write a session handoff doc instead of /compact."
     }
   ]
 }

@@ -1,0 +1,2 @@
+granularity.date,metadata.orgId,metadata.campaignId,metadata.campaignName,metadata.campaignStatus,metadata.dailyBudgetAmount.amount,total.localSpend.amount,total.localSpend.currency,total.totalInstalls
+2026-06-15,demo-apple-account,demo-apple-campaign,Sanitized App Campaign,PAUSED,100.00,36.50,USD,6

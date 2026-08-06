@@ -1,0 +1,39 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:ai-marketing-hub:claude-ads:schema:control:v1:data-lifecycle-policy.v1.json",
+  "title": "Claude Ads data lifecycle policy",
+  "type": "object", "additionalProperties": false,
+  "required": ["schema_version", "policy_id", "effective_at", "principles", "classifications", "incident_handling"],
+  "properties": {
+    "schema_version": {"const": "1.0.0"},
+    "policy_id": {"const": "claude-ads-data-lifecycle"},
+    "effective_at": {"type": "string", "format": "date"},
+    "principles": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"type": "string", "minLength": 1}},
+    "classifications": {
+      "type": "array", "minItems": 4, "maxItems": 4,
+      "items": {
+        "type": "object", "additionalProperties": false,
+        "required": ["id", "minimum_retention_seconds", "repository_allowed", "encryption_at_rest_required", "encryption_in_transit_required", "access_rule", "deletion_rule", "verification_required"],
+        "properties": {
+          "id": {"enum": ["public", "internal", "confidential", "restricted"]},
+          "minimum_retention_seconds": {"type": "integer", "minimum": 0},
+          "repository_allowed": {"type": "boolean"},
+          "encryption_at_rest_required": {"type": "boolean"},
+          "encryption_in_transit_required": {"type": "boolean"},
+          "access_rule": {"type": "string", "minLength": 1},
+          "deletion_rule": {"type": "string", "minLength": 1},
+          "verification_required": {"const": true}
+        }
+      }
+    },
+    "incident_handling": {
+      "type": "object", "additionalProperties": false,
+      "required": ["private_channel", "required_record_fields", "release_effect"],
+      "properties": {
+        "private_channel": {"type": "string", "minLength": 1},
+        "required_record_fields": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"type": "string", "minLength": 1}},
+        "release_effect": {"type": "string", "minLength": 1}
+      }
+    }
+  }
+}

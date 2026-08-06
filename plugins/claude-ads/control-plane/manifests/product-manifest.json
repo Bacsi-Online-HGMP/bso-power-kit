@@ -1,0 +1,31 @@
+{
+  "schema_version": "1.0.0",
+  "product": "claude-ads",
+  "release_line": "v2",
+  "repository_visibility": "private",
+  "primary_runtime": "claude-code",
+  "portable_standard": "agent-skills",
+  "canonical_command": "/ads",
+  "runtime_commands": {
+    "claude_standalone_skill": "/ads",
+    "claude_plugin": "/claude-ads:ads"
+  },
+  "canonical_machine_output": "versioned-json",
+  "human_renderers": ["markdown", "html", "pdf"],
+  "default_mutation_mode": "read-only",
+  "primary_audience": ["agency", "consultant", "in-house-paid-media"],
+  "target_platforms": [
+    "google", "meta", "youtube", "linkedin", "tiktok", "microsoft",
+    "apple", "amazon", "reddit", "pinterest", "snapchat", "x"
+  ],
+  "public_commands": [
+    "setup", "audit", "plan", "create", "launch", "monitor", "optimize",
+    "experiment", "report", "research refresh", "validate", "status", "next"
+  ],
+  "public_release_authorized": false,
+  "contract_documents": [
+    "control-plane/PRODUCT_BOUNDARIES.md",
+    "control-plane/PUBLISHING_POLICY.md",
+    "control-plane/RELEASE_REQUIREMENTS.md"
+  ]
+}

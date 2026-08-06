@@ -1,0 +1,68 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:ai-marketing-hub:claude-ads:schema:control:v1:release-gate-report.v1.json",
+  "title": "Claude Ads release gate assessment",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "evidence_class",
+    "evaluated_at",
+    "subject",
+    "checks",
+    "release_gate_satisfied"
+  ],
+  "properties": {
+    "schema_version": {"const": "1.0.0"},
+    "evidence_class": {"const": "release-gate-assessment"},
+    "evaluated_at": {"type": "string", "format": "date-time"},
+    "subject": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["commit_sha", "tree_sha"],
+      "properties": {
+        "commit_sha": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+        "tree_sha": {"type": "string", "pattern": "^[0-9a-f]{40}$"}
+      }
+    },
+    "checks": {
+      "type": "array",
+      "minItems": 7,
+      "maxItems": 7,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "status"],
+        "properties": {
+          "id": {
+            "enum": [
+              "repository-audit",
+              "clean-subject",
+              "source-capability-integrity",
+              "ecosystem-dispositions",
+              "canonical-model-evaluation",
+              "independent-reviews",
+              "remote-ci"
+            ]
+          },
+          "status": {"enum": ["pass", "fail"]},
+          "evidence": {"type": "object"},
+          "error": {"type": "string", "minLength": 1}
+        },
+        "oneOf": [
+          {
+            "properties": {"status": {"const": "pass"}},
+            "required": ["evidence"],
+            "not": {"required": ["error"]}
+          },
+          {
+            "properties": {"status": {"const": "fail"}},
+            "required": ["error"],
+            "not": {"required": ["evidence"]}
+          }
+        ]
+      }
+    },
+    "release_gate_satisfied": {"type": "boolean"}
+  }
+}

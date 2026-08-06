@@ -1,0 +1,534 @@
+# Canonical catalog of every audit check ID across all platforms.
+#
+# This file is the single source of truth the eval harness uses to enforce:
+#   1. Every check ID listed here MUST have a row in its platform's audit
+#      reference file under ads/references/ (no orphan catalog entries).
+#   2. Every check ID with a row in those reference files MUST appear here
+#      (no untracked checks).
+#
+# Update this file when adding or removing a check. The corresponding
+# pytest in tests/audit/test_check_coverage.py will fail on drift.
+#
+# ID convention (from ads/references/scoring-system.md):
+#   - Sequential IDs (G01, M01, L01, T01, MS01): original v1.0 checks
+#   - Hyphenated IDs (G-AI1, M-AN1, L-CRM1, T-SR1, MS-SI1): v1.5+ additions
+#   - Prefixes: G=Google, M=Meta, L=LinkedIn, T=TikTok, MS=Microsoft
+
+version: "2.0"
+last_updated: "2026-07-11"
+
+platforms:
+  google:
+    reference: ads/references/google-audit.md
+    total_checks: 95
+    skill: ads-google
+    audit_agent: audit-google
+    check_ids:
+      - G01
+      - G02
+      - G03
+      - G04
+      - G05
+      - G06
+      - G07
+      - G08
+      - G09
+      - G10
+      - G11
+      - G12
+      - G13
+      - G14
+      - G15
+      - G16
+      - G17
+      - G18
+      - G19
+      - G20
+      - G21
+      - G22
+      - G23
+      - G24
+      - G25
+      - G26
+      - G27
+      - G28
+      - G29
+      - G30
+      - G31
+      - G32
+      - G33
+      - G34
+      - G35
+      - G36
+      - G37
+      - G38
+      - G39
+      - G40
+      - G41
+      - G42
+      - G43
+      - G44
+      - G45
+      - G46
+      - G47
+      - G48
+      - G49
+      - G50
+      - G51
+      - G52
+      - G53
+      - G54
+      - G55
+      - G56
+      - G57
+      - G58
+      - G59
+      - G60
+      - G61
+      - G-AD1
+      - G-AD2
+      - G-AI1
+      - G-CT1
+      - G-CT2
+      - G-CT3
+      - G-CTV1
+      - G-DG1
+      - G-DG2
+      - G-DG3
+      - G-KW1
+      - G-KW2
+      - G-PM1
+      - G-PM2
+      - G-PM3
+      - G-PM4
+      - G-PM5
+      - G-PM6
+      - G-WS1
+      # v1.8.0 — Google Marketing Live 2026 (May 20, 2026)
+      - G81
+      - G82
+      - G83
+      - G84
+      - G85
+      - G86
+      - G87
+      - G88
+      - G89
+      - G90
+      - G91
+      - G92
+      - G93
+      - G94
+      - G95
+
+  meta:
+    reference: ads/references/meta-audit.md
+    total_checks: 72
+    skill: ads-meta
+    audit_agent: audit-meta
+    check_ids:
+      - M01
+      - M02
+      - M03
+      - M04
+      - M05
+      - M06
+      - M07
+      - M08
+      - M09
+      - M10
+      - M11
+      - M12
+      - M13
+      - M14
+      - M15
+      - M16
+      - M17
+      - M18
+      - M19
+      - M20
+      - M21
+      - M22
+      - M23
+      - M24
+      - M25
+      - M26
+      - M27
+      - M28
+      - M29
+      - M30
+      - M31
+      - M32
+      - M33
+      - M34
+      - M35
+      - M36
+      - M37
+      - M38
+      - M39
+      - M40
+      - M-AN1
+      - M-AT1
+      - M-CR1
+      - M-CR2
+      - M-CR3
+      - M-CR4
+      - M-IA1
+      - M-ST1
+      - M-ST2
+      - M-TH1
+      # v1.8.0 — MCP + March 3 attribution rebuild + Q1 2026 AI-stack + ARM
+      - M51
+      - M52
+      - M53
+      - M54
+      - M55
+      - M56
+      - M57
+      - M58
+      - M59
+      - M60
+      - M61
+      - M62
+      - M63
+      - M64
+      - M65
+      - M66
+      - M67
+      - M68
+      - M69
+      - M70
+      - M71
+      - M72
+
+  linkedin:
+    reference: ads/references/linkedin-audit.md
+    total_checks: 46
+    skill: ads-linkedin
+    audit_agent: audit-linkedin
+    check_ids:
+      - L01
+      - L02
+      - L03
+      - L04
+      - L05
+      - L06
+      - L07
+      - L08
+      - L09
+      - L10
+      - L11
+      - L12
+      - L13
+      - L14
+      - L15
+      - L16
+      - L17
+      - L18
+      - L19
+      - L20
+      - L21
+      - L22
+      - L23
+      - L24
+      - L25
+      - L-CRM1
+      - L-EU1
+      # v1.8.0 — Off-Platform Event Ads + Campaign Manager rename + agency cert
+      - L28
+      - L29
+      - L30
+      - L31
+      - L32
+      - L33
+      - L34
+      - L35
+      - L36
+      - L37
+      - L38
+      - L39
+      - L40
+      - L41
+      - L42
+      - L43
+      - L44
+      - L45
+      - L46
+
+  tiktok:
+    reference: ads/references/tiktok-audit.md
+    total_checks: 46
+    skill: ads-tiktok
+    audit_agent: audit-tiktok
+    check_ids:
+      - T01
+      - T02
+      - T03
+      - T04
+      - T05
+      - T06
+      - T07
+      - T08
+      - T09
+      - T10
+      - T11
+      - T12
+      - T13
+      - T14
+      - T15
+      - T16
+      - T17
+      - T18
+      - T19
+      - T20
+      - T21
+      - T22
+      - T23
+      - T24
+      - T25
+      - T-EA1
+      - T-GM1
+      - T-SR1
+      # v1.8.0 — TikTok World 2026 (May 13-15, 2026)
+      - T29
+      - T30
+      - T31
+      - T32
+      - T33
+      - T34
+      - T35
+      - T36
+      - T37
+      - T38
+      - T39
+      - T40
+      - T41
+      - T42
+      - T43
+      - T44
+      - T45
+      - T46
+
+  microsoft:
+    reference: ads/references/microsoft-audit.md
+    total_checks: 41
+    skill: ads-microsoft
+    audit_agent: audit-microsoft
+    check_ids:
+      - MS01
+      - MS02
+      - MS03
+      - MS04
+      - MS05
+      - MS06
+      - MS07
+      - MS08
+      - MS09
+      - MS10
+      - MS11
+      - MS12
+      - MS13
+      - MS14
+      - MS15
+      - MS16
+      - MS17
+      - MS18
+      - MS19
+      - MS20
+      - MS-CM1
+      - MS-CT1
+      - MS-SI1
+      - MS-VD1
+      # v1.8.0 — AI Max for Search + Activate 2026
+      - MS25
+      - MS26
+      - MS27
+      - MS28
+      - MS29
+      - MS30
+      - MS31
+      - MS32
+      - MS33
+      - MS34
+      - MS35
+      - MS36
+      - MS37
+      - MS38
+      - MS39
+      - MS40
+      - MS41
+
+  youtube:
+    reference: ads/references/youtube-audit.md
+    total_checks: 16
+    skill: ads-youtube
+    audit_agent: audit-youtube
+    check_ids:
+      - YT-M01
+      - YT-M02
+      - YT-M03
+      - YT-M04
+      - YT-S01
+      - YT-S02
+      - YT-A01
+      - YT-A02
+      - YT-C01
+      - YT-C02
+      - YT-C03
+      - YT-C04
+      - YT-B01
+      - YT-R01
+      - YT-P01
+      - YT-E01
+
+  apple:
+    reference: ads/references/apple-audit.md
+    total_checks: 16
+    skill: ads-apple
+    audit_agent: audit-apple
+    check_ids:
+      - AP-M01
+      - AP-M02
+      - AP-M03
+      - AP-M04
+      - AP-S01
+      - AP-S02
+      - AP-K01
+      - AP-K02
+      - AP-A01
+      - AP-C01
+      - AP-C02
+      - AP-B01
+      - AP-B02
+      - AP-R01
+      - AP-P01
+      - AP-E01
+
+  amazon:
+    reference: ads/references/amazon-audit.md
+    total_checks: 16
+    skill: ads-amazon
+    audit_agent: audit-amazon
+    check_ids:
+      - AMZ-M01
+      - AMZ-M02
+      - AMZ-M03
+      - AMZ-M04
+      - AMZ-S01
+      - AMZ-S02
+      - AMZ-T01
+      - AMZ-T02
+      - AMZ-R01
+      - AMZ-R02
+      - AMZ-C01
+      - AMZ-C02
+      - AMZ-B01
+      - AMZ-B02
+      - AMZ-P01
+      - AMZ-E01
+
+  reddit:
+    reference: ads/references/reddit-audit.md
+    total_checks: 16
+    skill: ads-reddit
+    audit_agent: audit-reddit
+    check_ids:
+      - RD-M01
+      - RD-M02
+      - RD-M03
+      - RD-M04
+      - RD-S01
+      - RD-S02
+      - RD-A01
+      - RD-A02
+      - RD-C01
+      - RD-C02
+      - RD-C03
+      - RD-R01
+      - RD-R02
+      - RD-B01
+      - RD-P01
+      - RD-E01
+
+  pinterest:
+    reference: ads/references/pinterest-audit.md
+    total_checks: 16
+    skill: ads-pinterest
+    audit_agent: audit-pinterest
+    check_ids:
+      - PN-M01
+      - PN-M02
+      - PN-M03
+      - PN-M04
+      - PN-R01
+      - PN-R02
+      - PN-R03
+      - PN-S01
+      - PN-S02
+      - PN-A01
+      - PN-C01
+      - PN-C02
+      - PN-C03
+      - PN-B01
+      - PN-P01
+      - PN-E01
+
+  snapchat:
+    reference: ads/references/snapchat-audit.md
+    total_checks: 16
+    skill: ads-snapchat
+    audit_agent: audit-snapchat
+    check_ids:
+      - SC-M01
+      - SC-M02
+      - SC-M03
+      - SC-M04
+      - SC-R01
+      - SC-R02
+      - SC-S01
+      - SC-S02
+      - SC-A01
+      - SC-C01
+      - SC-C02
+      - SC-C03
+      - SC-D01
+      - SC-B01
+      - SC-P01
+      - SC-E01
+
+  x:
+    reference: ads/references/x-audit.md
+    total_checks: 16
+    skill: ads-x
+    audit_agent: audit-x
+    check_ids:
+      - XA-M01
+      - XA-M02
+      - XA-M03
+      - XA-M04
+      - XA-S01
+      - XA-S02
+      - XA-A01
+      - XA-A02
+      - XA-C01
+      - XA-C02
+      - XA-C03
+      - XA-B01
+      - XA-R01
+      - XA-R02
+      - XA-P01
+      - XA-E01
+
+# Severity multipliers (from ads/references/scoring-system.md)
+severity_multipliers:
+  critical: 5.0
+  high: 3.0
+  medium: 1.0
+  informational: 0.0
+
+# Result-to-points mapping
+result_points:
+  pass: 1.0
+  fail: 0.0
+  unknown: null
+  not_applicable: null

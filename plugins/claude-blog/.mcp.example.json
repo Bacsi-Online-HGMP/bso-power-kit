@@ -1,0 +1,13 @@
+{
+  "_comment": "Template for project-local .mcp.json. Copy to .mcp.json (gitignored) and set GOOGLE_AI_API_KEY in your shell env. NEVER commit a literal API key.",
+  "mcpServers": {
+    "nanobanana-mcp": {
+      "command": "npx",
+      "args": ["-y", "@ycse/nanobanana-mcp@1.1.1"],
+      "env": {
+        "GOOGLE_AI_API_KEY": "${GOOGLE_AI_API_KEY}",
+        "NANOBANANA_MODEL": "gemini-3.1-flash-image"
+      }
+    }
+  }
+}

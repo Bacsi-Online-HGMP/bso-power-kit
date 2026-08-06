@@ -1,0 +1,21 @@
+{
+  "name": "claude-video",
+  "metadata": {
+    "description": "Give Claude a video input. /watch downloads from any platform, extracts frames, transcribes locally (no API key), and hands it all to Claude."
+  },
+  "owner": {
+    "name": "Mathias Schusterman"
+  },
+  "plugins": [
+    {
+      "name": "watch",
+      "description": "Watch a video (URL or local path) from YouTube, Instagram, X, Vimeo, TikTok or any yt-dlp site. Downloads with yt-dlp, extracts frames with ffmpeg, transcribes via captions or local mlx-whisper.",
+      "author": {
+        "name": "Mathias Schusterman"
+      },
+      "source": "./",
+      "category": "productivity",
+      "homepage": "https://github.com/mathiaschu/claude-video"
+    }
+  ]
+}

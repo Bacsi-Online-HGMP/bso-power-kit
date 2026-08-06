@@ -1,0 +1,50 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:ai-marketing-hub:claude-ads:schema:control:v1:review-trust-bundle.v1.json",
+  "title": "Claude Ads external independent-review trust bundle",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "keys"],
+  "properties": {
+    "schema_version": {"const": "1.0.0"},
+    "keys": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 100,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "key_id",
+          "public_key_b64url",
+          "reviewer_id",
+          "allowed_review_types",
+          "valid_from",
+          "valid_until",
+          "revoked"
+        ],
+        "properties": {
+          "key_id": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{2,127}$"
+          },
+          "public_key_b64url": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]{43}=?$"
+          },
+          "reviewer_id": {"type": "string", "minLength": 3, "maxLength": 128},
+          "allowed_review_types": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 5,
+            "uniqueItems": true,
+            "items": {"enum": ["code", "evidence", "security", "privacy", "licensing"]}
+          },
+          "valid_from": {"type": "string", "format": "date-time"},
+          "valid_until": {"type": "string", "format": "date-time"},
+          "revoked": {"type": "boolean"}
+        }
+      }
+    }
+  }
+}

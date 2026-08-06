@@ -1,0 +1,2 @@
+date,account_id,account_name,campaign_id,campaign_name,campaign_status,creative_id,creative_name,conversion_action,conversions,budget,spend,currency
+2026-06-15,demo-pinterest-account,Sanitized Pinterest Demo,demo-pinterest-campaign,Sanitized Shopping Campaign,paused,demo-pinterest-creative,Sanitized Pin Ad,purchase,3,100.00,33.50,USD

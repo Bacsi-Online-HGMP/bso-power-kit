@@ -1,0 +1,398 @@
+{
+  "components": [
+    {
+      "artifact": {
+        "filename": "brotli-1.2.0-cp311-cp311-macosx_10_9_universal2.whl",
+        "sha256": "15b33fe93cedc4caaff8a0bd1eb7e3dab1c61bb22a0bf5bdfdfd97cd7da79744",
+        "url": "https://files.pythonhosted.org/packages/7a/ef/f285668811a9e1ddb47a18cb0b437d5fc2760d537a2fe8a57875ad6f8448/brotli-1.2.0-cp311-cp311-macosx_10_9_universal2.whl"
+      },
+      "direct": false,
+      "name": "brotli",
+      "purl": "pkg:pypi/brotli@1.2.0",
+      "version": "1.2.0"
+    },
+    {
+      "artifact": {
+        "filename": "certifi-2026.6.17-py3-none-any.whl",
+        "sha256": "2227dcbaafe0d2f59279d1762ddddc37783ed4354594f194ffc31d20f41fc3db",
+        "url": "https://files.pythonhosted.org/packages/ef/2f/c5464532e965badff2f4c4c1a3a83f5697f0d7c407ed0cda44aaa99bb451/certifi-2026.6.17-py3-none-any.whl"
+      },
+      "direct": false,
+      "name": "certifi",
+      "purl": "pkg:pypi/certifi@2026.6.17",
+      "version": "2026.6.17"
+    },
+    {
+      "artifact": {
+        "filename": "cffi-2.1.0-cp311-cp311-macosx_11_0_arm64.whl",
+        "sha256": "f5bce581e6b8c235e566a14768a943b172ada3ed73537bb0c0be1edee312d4e7",
+        "url": "https://files.pythonhosted.org/packages/ea/dd/e3b0baa2d3d6a857ac72b7efbf18e32e487c9cdafcc13049ad765495b15e/cffi-2.1.0-cp311-cp311-macosx_11_0_arm64.whl"
+      },
+      "direct": false,
+      "name": "cffi",
+      "purl": "pkg:pypi/cffi@2.1.0",
+      "version": "2.1.0"
+    },
+    {
+      "artifact": {
+        "filename": "charset_normalizer-3.4.9-cp311-cp311-macosx_10_9_universal2.whl",
+        "sha256": "0e94703ec9684807f20cfb5eed95c70f67f2a8f21ad620146d7b5a13677b93e5",
+        "url": "https://files.pythonhosted.org/packages/0b/e3/85ec501f206fb049259288c1f3506e53876937fb00edb47009348e66756b/charset_normalizer-3.4.9-cp311-cp311-macosx_10_9_universal2.whl"
+      },
+      "direct": false,
+      "name": "charset-normalizer",
+      "purl": "pkg:pypi/charset-normalizer@3.4.9",
+      "version": "3.4.9"
+    },
+    {
+      "artifact": {
+        "filename": "contourpy-1.3.2-cp311-cp311-macosx_11_0_arm64.whl",
+        "sha256": "b7cd50c38f500bbcc9b6a46643a40e0913673f869315d8e70de0438817cb7773",
+        "url": "https://files.pythonhosted.org/packages/e6/75/3469f011d64b8bbfa04f709bfc23e1dd71be54d05b1b083be9f5b22750d1/contourpy-1.3.2-cp311-cp311-macosx_11_0_arm64.whl"
+      },
+      "direct": false,
+      "name": "contourpy",
+      "purl": "pkg:pypi/contourpy@1.3.2",
+      "version": "1.3.2"
+    },
+    {
+      "artifact": {
+        "filename": "cryptography-48.0.1-cp311-abi3-macosx_10_9_universal2.whl",
+        "sha256": "3e4a1a3232eef2e6c732827d5722db29a0cc8b27af2a4d865b094cf954be9ca1",
+        "url": "https://files.pythonhosted.org/packages/1b/bc/ee4137cbbe105652c0ee4252792b78fc8e7afa4b8e61d9d5dc05a7f45731/cryptography-48.0.1-cp311-abi3-macosx_10_9_universal2.whl"
+      },
+      "direct": true,
+      "name": "cryptography",
+      "purl": "pkg:pypi/cryptography@48.0.1",
+      "version": "48.0.1"
+    },
+    {
+      "artifact": {
+        "filename": "cssselect2-0.9.0-py3-none-any.whl",
+        "sha256": "6a99e5f91f9a016a304dd929b0966ca464bcfda15177b6fb4a118fc0fb5d9563",
+        "url": "https://files.pythonhosted.org/packages/21/0e/8459ca4413e1a21a06c97d134bfaf18adfd27cea068813dc0faae06cbf00/cssselect2-0.9.0-py3-none-any.whl"
+      },
+      "direct": false,
+      "name": "cssselect2",
+      "purl": "pkg:pypi/cssselect2@0.9.0",
+      "version": "0.9.0"
+    },
+    {
+      "artifact": {
+        "filename": "cycler-0.12.1-py3-none-any.whl",
+        "sha256": "85cef7cff222d8644161529808465972e51340599459b8ac3ccbac5a854e0d30",
+        "url": "https://files.pythonhosted.org/packages/e7/05/c19819d5e3d95294a6f5947fb9b9629efb316b96de511b418c53d245aae6/cycler-0.12.1-py3-none-any.whl"
+      },
+      "direct": false,
+      "name": "cycler",
+      "purl": "pkg:pypi/cycler@0.12.1",
+      "version": "0.12.1"
+    },
+    {
+      "artifact": {
+        "filename": "fonttools-4.63.0-cp311-cp311-macosx_10_9_universal2.whl",
+        "sha256": "2b8ae05d9eacf6081414d759c0a352769ac28ce31280d6bb8e77b03f9e3c449f",
+        "url": "https://files.pythonhosted.org/packages/75/2b/a7f1545bdf5da69c4bda0cea2a5781f0ad2a6623e0277267672db43c5fe6/fonttools-4.63.0-cp311-cp311-macosx_10_9_universal2.whl"
+      },
+      "direct": false,
+      "name": "fonttools",
+      "purl": "pkg:pypi/fonttools@4.63.0",
+      "version": "4.63.0"
+    },
+    {
+      "artifact": {
+        "filename": "greenlet-3.2.4-cp311-cp311-macosx_11_0_universal2.whl",
+        "sha256": "96378df1de302bc38e99c3a9aa311967b7dc80ced1dcc6f171e99842987882a2",
+        "url": "https://files.pythonhosted.org/packages/a4/de/f28ced0a67749cac23fecb02b694f6473f47686dff6afaa211d186e2ef9c/greenlet-3.2.4-cp311-cp311-macosx_11_0_universal2.whl"
+      },
+      "direct": false,
+      "name": "greenlet",
+      "purl": "pkg:pypi/greenlet@3.2.4",
+      "version": "3.2.4"
+    },
+    {
+      "artifact": {
+        "filename": "idna-3.18-py3-none-any.whl",
+        "sha256": "7f952cbe720b688055e3f87de14f5c3e5fdaa8bc3928985c4077ca689de849a2",
+        "url": "https://files.pythonhosted.org/packages/1e/5e/d4e9f1a599fb8e573b7b87160658329fbf28d19eac2718f51fc3def3aa5a/idna-3.18-py3-none-any.whl"
+      },
+      "direct": false,
+      "name": "idna",
+      "purl": "pkg:pypi/idna@3.18",
+      "version": "3.18"
+    },
+    {
+      "artifact": {
+        "filename": "kiwisolver-1.5.0-cp311-cp311-macosx_11_0_arm64.whl",
+        "sha256": "0df54df7e686afa55e6f21fb86195224a6d9beb71d637e8d7920c95cf0f89aac",
+        "url": "https://files.pythonhosted.org/packages/0a/aa/510dc933d87767584abfe03efa445889996c70c2990f6f87c3ebaa0a18c5/kiwisolver-1.5.0-cp311-cp311-macosx_11_0_arm64.whl"
+      },
+      "direct": false,
+      "name": "kiwisolver",
+      "purl": "pkg:pypi/kiwisolver@1.5.0",
+      "version": "1.5.0"
+    },
+    {
+      "artifact": {
+        "filename": "matplotlib-3.11.0-cp311-cp311-macosx_11_0_arm64.whl",
+        "sha256": "57baa92fdc82948ed716eae6d2579d4d6f40965cd8d2f416755b4a72580a3233",
+        "url": "https://files.pythonhosted.org/packages/5e/92/044f1de43901310202f4c79acf4f141be53b2ca8d8380e2fcefb3d523a75/matplotlib-3.11.0-cp311-cp311-macosx_11_0_arm64.whl"
+      },
+      "direct": true,
+      "name": "matplotlib",
+      "purl": "pkg:pypi/matplotlib@3.11.0",
+      "version": "3.11.0"
+    },
+    {
+      "artifact": {
+        "filename": "numpy-2.2.6-cp311-cp311-macosx_11_0_arm64.whl",
+        "sha256": "c820a93b0255bc360f53eca31a0e676fd1101f673dda8da93454a12e23fc5f7a",
+        "url": "https://files.pythonhosted.org/packages/b3/2b/64e1affc7972decb74c9e29e5649fac940514910960ba25cd9af4488b66c/numpy-2.2.6-cp311-cp311-macosx_11_0_arm64.whl"
+      },
+      "direct": false,
+      "name": "numpy",
+      "purl": "pkg:pypi/numpy@2.2.6",
+      "version": "2.2.6"
+    },
+    {
+      "artifact": {
+        "filename": "packaging-26.2-py3-none-any.whl",
+        "sha256": "5fc45236b9446107ff2415ce77c807cee2862cb6fac22b8a73826d0693b0980e",
+        "url": "https://files.pythonhosted.org/packages/df/b2/87e62e8c3e2f4b32e5fe99e0b86d576da1312593b39f47d8ceef365e95ed/packaging-26.2-py3-none-any.whl"
+      },
+      "direct": false,
+      "name": "packaging",
+      "purl": "pkg:pypi/packaging@26.2",
+      "version": "26.2"
+    },
+    {
+      "artifact": {
+        "filename": "pillow-12.2.0-cp311-cp311-macosx_11_0_arm64.whl",
+        "sha256": "71cde9a1e1551df7d34a25462fc60325e8a11a82cc2e2f54578e5e9a1e153d65",
+        "url": "https://files.pythonhosted.org/packages/47/a1/d5ff69e747374c33a3b53b9f98cca7889fce1fd03d79cdc4e1bccc6c5a87/pillow-12.2.0-cp311-cp311-macosx_11_0_arm64.whl"
+      },
+      "direct": true,
+      "name": "pillow",
+      "purl": "pkg:pypi/pillow@12.2.0",
+      "version": "12.2.0"
+    },
+    {
+      "artifact": {
+        "filename": "playwright-1.61.0-py3-none-macosx_11_0_arm64.whl",
+        "sha256": "009588c2a7e499bc5a8b425b61fa65490968bbda9cd69e0cf2cff10f8304659a",
+        "url": "https://files.pythonhosted.org/packages/42/35/71395dd3ecc798965be4a3ef8c443217d4abca168e7cb34536304f9489e6/playwright-1.61.0-py3-none-macosx_11_0_arm64.whl"
+      },
+      "direct": true,
+      "name": "playwright",
+      "purl": "pkg:pypi/playwright@1.61.0",
+      "version": "1.61.0"
+    },
+    {
+      "artifact": {
+        "filename": "pycparser-3.0-py3-none-any.whl",
+        "sha256": "b727414169a36b7d524c1c3e31839a521725078d7b2ff038656844266160a992",
+        "url": "https://files.pythonhosted.org/packages/0c/c3/44f3fbbfa403ea2a7c779186dc20772604442dde72947e7d01069cbe98e3/pycparser-3.0-py3-none-any.whl"
+      },
+      "direct": false,
+      "name": "pycparser",
+      "purl": "pkg:pypi/pycparser@3.0",
+      "version": "3.0"
+    },
+    {
+      "artifact": {
+        "filename": "pydyf-0.12.1-py3-none-any.whl",
+        "sha256": "ea25b4e1fe7911195cb57067560daaa266639184e8335365cc3ee5214e7eaadc",
+        "url": "https://files.pythonhosted.org/packages/22/11/47efe2f66ba848a107adfd490b508f5c0cedc82127950553dca44d29e6c4/pydyf-0.12.1-py3-none-any.whl"
+      },
+      "direct": false,
+      "name": "pydyf",
+      "purl": "pkg:pypi/pydyf@0.12.1",
+      "version": "0.12.1"
+    },
+    {
+      "artifact": {
+        "filename": "pyee-13.0.1-py3-none-any.whl",
+        "sha256": "af2f8fede4171ef667dfded53f96e2ed0d6e6bd7ee3bb46437f77e3b57689228",
+        "url": "https://files.pythonhosted.org/packages/a0/c4/b4d4827c93ef43c01f599ef31453ccc1c132b353284fc6c87d535c233129/pyee-13.0.1-py3-none-any.whl"
+      },
+      "direct": false,
+      "name": "pyee",
+      "purl": "pkg:pypi/pyee@13.0.1",
+      "version": "13.0.1"
+    },
+    {
+      "artifact": {
+        "filename": "pyparsing-3.3.2-py3-none-any.whl",
+        "sha256": "850ba148bd908d7e2411587e247a1e4f0327839c40e2e5e6d05a007ecc69911d",
+        "url": "https://files.pythonhosted.org/packages/10/bd/c038d7cc38edc1aa5bf91ab8068b63d4308c66c4c8bb3cbba7dfbc049f9c/pyparsing-3.3.2-py3-none-any.whl"
+      },
+      "direct": false,
+      "name": "pyparsing",
+      "purl": "pkg:pypi/pyparsing@3.3.2",
+      "version": "3.3.2"
+    },
+    {
+      "artifact": {
+        "filename": "pyphen-0.17.2-py3-none-any.whl",
+        "sha256": "3a07fb017cb2341e1d9ff31b8634efb1ae4dc4b130468c7c39dd3d32e7c3affd",
+        "url": "https://files.pythonhosted.org/packages/7b/1f/c2142d2edf833a90728e5cdeb10bdbdc094dde8dbac078cee0cf33f5e11b/pyphen-0.17.2-py3-none-any.whl"
+      },
+      "direct": false,
+      "name": "pyphen",
+      "purl": "pkg:pypi/pyphen@0.17.2",
+      "version": "0.17.2"
+    },
+    {
+      "artifact": {
+        "filename": "python_dateutil-2.9.0.post0-py2.py3-none-any.whl",
+        "sha256": "a8b2bc7bffae282281c8140a97d3aa9c14da0b136dfe83f850eea9a5f7470427",
+        "url": "https://files.pythonhosted.org/packages/ec/57/56b9bcc3c9c6a792fcbaf139543cee77261f3651ca9da0c93f5c1221264b/python_dateutil-2.9.0.post0-py2.py3-none-any.whl"
+      },
+      "direct": false,
+      "name": "python-dateutil",
+      "purl": "pkg:pypi/python-dateutil@2.9.0.post0",
+      "version": "2.9.0.post0"
+    },
+    {
+      "artifact": {
+        "filename": "reportlab-4.5.1-py3-none-any.whl",
+        "sha256": "06fce8cb56c83307cfa4909cdf4e6a2ddbb44e5d6ef4d2edca896d7e9769f091",
+        "url": "https://files.pythonhosted.org/packages/a7/45/ea7fad10122440de6e845568d106bffdc456ca0e8a1d8ae10b46016087e4/reportlab-4.5.1-py3-none-any.whl"
+      },
+      "direct": true,
+      "name": "reportlab",
+      "purl": "pkg:pypi/reportlab@4.5.1",
+      "version": "4.5.1"
+    },
+    {
+      "artifact": {
+        "filename": "requests-2.34.2-py3-none-any.whl",
+        "sha256": "2a0d60c172f83ac6ab31e4554906c0f3b3588d37b5cb939b1c061f4907e278e0",
+        "url": "https://files.pythonhosted.org/packages/a0/f4/c67b0b3f1b9245e8d266f0f112c500d50e5b4e83cb6f3b71b6528104182a/requests-2.34.2-py3-none-any.whl"
+      },
+      "direct": true,
+      "name": "requests",
+      "purl": "pkg:pypi/requests@2.34.2",
+      "version": "2.34.2"
+    },
+    {
+      "artifact": {
+        "filename": "six-1.17.0-py2.py3-none-any.whl",
+        "sha256": "4721f391ed90541fddacab5acf947aa0d3dc7d27b2e1e8eda2be8970586c3274",
+        "url": "https://files.pythonhosted.org/packages/b7/ce/149a00dd41f10bc29e5921b496af8b574d8413afcd5e30dfa0ed46c2cc5e/six-1.17.0-py2.py3-none-any.whl"
+      },
+      "direct": false,
+      "name": "six",
+      "purl": "pkg:pypi/six@1.17.0",
+      "version": "1.17.0"
+    },
+    {
+      "artifact": {
+        "filename": "tinycss2-1.5.1-py3-none-any.whl",
+        "sha256": "3415ba0f5839c062696996998176c4a3751d18b7edaaeeb658c9ce21ec150661",
+        "url": "https://files.pythonhosted.org/packages/60/45/c7b5c3168458db837e8ceab06dc77824e18202679d0463f0e8f002143a97/tinycss2-1.5.1-py3-none-any.whl"
+      },
+      "direct": false,
+      "name": "tinycss2",
+      "purl": "pkg:pypi/tinycss2@1.5.1",
+      "version": "1.5.1"
+    },
+    {
+      "artifact": {
+        "filename": "tinyhtml5-2.1.0-py3-none-any.whl",
+        "sha256": "6e11cfff38515834268daf89d5f85bbde0b6dd02e8d9e212d1385c2289b89f0a",
+        "url": "https://files.pythonhosted.org/packages/52/48/01695a036b695f83fea7aef6955d735db0f517b1c8e25ddb399ac0bdbcbf/tinyhtml5-2.1.0-py3-none-any.whl"
+      },
+      "direct": false,
+      "name": "tinyhtml5",
+      "purl": "pkg:pypi/tinyhtml5@2.1.0",
+      "version": "2.1.0"
+    },
+    {
+      "artifact": {
+        "filename": "typing_extensions-4.16.0-py3-none-any.whl",
+        "sha256": "481caa481374e813c1b176ada14e97f1f67a4539ce9cfeb3f350d78d6370c2e8",
+        "url": "https://files.pythonhosted.org/packages/49/d3/b8441a820a491ddfc024b0b0cf0393375b75ea13866d9c66727e54c2fc80/typing_extensions-4.16.0-py3-none-any.whl"
+      },
+      "direct": false,
+      "name": "typing-extensions",
+      "purl": "pkg:pypi/typing-extensions@4.16.0",
+      "version": "4.16.0"
+    },
+    {
+      "artifact": {
+        "filename": "urllib3-2.7.0-py3-none-any.whl",
+        "sha256": "9fb4c81ebbb1ce9531cce37674bbc6f1360472bc18ca9a553ede278ef7276897",
+        "url": "https://files.pythonhosted.org/packages/7f/3e/5db95bcf282c52709639744ca2a8b149baccf648e39c8cc87553df9eae0c/urllib3-2.7.0-py3-none-any.whl"
+      },
+      "direct": true,
+      "name": "urllib3",
+      "purl": "pkg:pypi/urllib3@2.7.0",
+      "version": "2.7.0"
+    },
+    {
+      "artifact": {
+        "filename": "weasyprint-69.0-py3-none-any.whl",
+        "sha256": "475951cfd917014de6d4d005caff48c6aa867e7e42b80cd5b16a0484a1609ee6",
+        "url": "https://files.pythonhosted.org/packages/93/cb/208525c6bd5033d7b2589b55e07bec23d9c61bb00703cbaf20ef52c3811f/weasyprint-69.0-py3-none-any.whl"
+      },
+      "direct": true,
+      "name": "weasyprint",
+      "purl": "pkg:pypi/weasyprint@69.0",
+      "version": "69.0"
+    },
+    {
+      "artifact": {
+        "filename": "webencodings-0.5.1-py2.py3-none-any.whl",
+        "sha256": "a0af1213f3c2226497a97e2b3aa01a7e4bee4f403f95be16fc9acd2947514a78",
+        "url": "https://files.pythonhosted.org/packages/f4/24/2a3e3df732393fed8b3ebf2ec078f05546de641fe1b667ee316ec1dcf3b7/webencodings-0.5.1-py2.py3-none-any.whl"
+      },
+      "direct": false,
+      "name": "webencodings",
+      "purl": "pkg:pypi/webencodings@0.5.1",
+      "version": "0.5.1"
+    },
+    {
+      "artifact": {
+        "filename": "zopfli-0.4.3-cp310-abi3-macosx_10_9_universal2.whl",
+        "sha256": "88f4fbe429aad72bc206275d81fab11a097e0f951a5848d1f51083c37ea73073",
+        "url": "https://files.pythonhosted.org/packages/a5/5f/b7d81b670daf990e15a0f7551da96c3c0700f69ae6d96b0245d6a19f51f3/zopfli-0.4.3-cp310-abi3-macosx_10_9_universal2.whl"
+      },
+      "direct": false,
+      "name": "zopfli",
+      "purl": "pkg:pypi/zopfli@0.4.3",
+      "version": "0.4.3"
+    }
+  ],
+  "environment": {
+    "abi": "cp311",
+    "arch": "arm64",
+    "implementation": "CPython",
+    "os": "macos",
+    "profile": "runtime",
+    "python_version": "3.11"
+  },
+  "evidence_class": "cross-target-pip-resolution-requiring-native-ci-confirmation",
+  "evidence_id": "runtime-macos-arm-cp311",
+  "normalization_notes": [],
+  "platform_policy": "Exact lowest-common lock with target-selected PyPI wheels",
+  "resolved_at": "2026-07-11T00:00:00Z",
+  "resolver": "pip / PyPI",
+  "schema_version": "1.0.0",
+  "source_date_epoch": 1783728000,
+  "source_environment": {
+    "implementation_name": "cpython",
+    "implementation_version": "3.14.4",
+    "os_name": "posix",
+    "platform_machine": "x86_64",
+    "platform_python_implementation": "CPython",
+    "platform_release": "6.19.14-101.fc44.x86_64",
+    "platform_system": "Linux",
+    "platform_version": "#1 SMP PREEMPT_DYNAMIC Fri May  8 18:24:24 UTC 2026",
+    "python_full_version": "3.14.4",
+    "python_version": "3.14",
+    "sys_platform": "linux"
+  },
+  "source_pip_version": "26.0.1",
+  "source_report_sha256": "e5ca5803aafc907e8b99b94597d3050a7944bbdd9d4e662dee36f767af166e94"
+}

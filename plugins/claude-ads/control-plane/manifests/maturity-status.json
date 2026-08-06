@@ -1,0 +1,101 @@
+{
+  "schema_version": "1.0.0",
+  "evaluated_at": "2026-07-12",
+  "current": "domain-integrated",
+  "levels": [
+    {
+      "id": "inventory-baselined",
+      "ordinal": 1,
+      "requirements": [
+        "Current skills, agents, scripts, tests, commands, issues, pull requests, and security risks are inventoried.",
+        "Product boundaries and v2 target contracts are explicit."
+      ],
+      "satisfied": true,
+      "evidence": [
+        "control-plane/PRODUCT_BOUNDARIES.md",
+        "control-plane/manifests/capability-manifest.json",
+        "control-plane/manifests/ecosystem-dispositions.json"
+      ]
+    },
+    {
+      "id": "source-grounded",
+      "ordinal": 2,
+      "requirements": [
+        "All load-bearing platform, policy, API, regulation, specification, and benchmark claims have current dated sources.",
+        "Claim coverage, confidence, contradictions, licenses, and refresh dates pass audit."
+      ],
+      "satisfied": true,
+      "evidence": [
+        "control-plane/manifests/source-ledger.json",
+        "control-plane/manifests/claim-ledger.json",
+        "tests/audit/test_source_grounding.py",
+        "tests/references/test_cross_platform_references.py"
+      ]
+    },
+    {
+      "id": "domain-integrated",
+      "ordinal": 3,
+      "requirements": [
+        "All twelve platform contracts have normalized ingestion, findings, reports, fixtures, and tests.",
+        "Capability status matches executable behavior and adapter evidence.",
+        "Every catalog check has a typed runtime disposition; account-health scoring stays disabled until an approved source, severity, input, weight, and regression profile exists."
+      ],
+      "satisfied": true,
+      "evidence": [
+        "claude_ads_core/adapters/csv_export.py",
+        "claude_ads_core/adapters/native_export.py",
+        "claude_ads_core/adapters/mappings_v1.py",
+        "claude_ads_core/control_registry.py",
+        "control-plane/manifests/capability-manifest.json",
+        "control-plane/manifests/control-registry.json",
+        "control-plane/manifests/scoring-profiles.json",
+        "tests/fixtures/exports/",
+        "tests/fixtures/native_exports/",
+        "tests/core/test_adapters.py",
+        "tests/core/test_native_exports.py",
+        "tests/core/test_control_registry.py",
+        "tests/core/test_platform_report_contracts.py"
+      ]
+    },
+    {
+      "id": "eval-verified",
+      "ordinal": 4,
+      "requirements": [
+        "Deterministic, routing, safety, replay, rendering, and model evaluations meet release thresholds.",
+        "A fresh-context verifier confirms completion claims from artifacts."
+      ],
+      "satisfied": false,
+      "evidence": [
+        "evals/v2-behavior-evals.json",
+        "evals/model-eval-contract.json",
+        "evals/model_eval_gate.py",
+        "evals/results/2026-07-11-codex-forward.json",
+        "tests/routing/test_forward_eval_summary.py",
+        "tests/routing/test_model_eval_gate.py"
+      ]
+    },
+    {
+      "id": "release-ready",
+      "ordinal": 5,
+      "requirements": [
+        "All release requirements pass locally and in required remote CI.",
+        "Packaging, installation, security, privacy, licensing, and reproducibility gates pass with no critical blocker."
+      ],
+      "satisfied": false,
+      "evidence": []
+    }
+  ],
+  "automatic_demotion": [
+    "A load-bearing source passes refresh_due without re-verification.",
+    "A critical security, privacy, or licensing finding opens.",
+    "A declared capability loses implementation, fixture, or test evidence.",
+    "A required deterministic, routing, safety, or model evaluation regresses.",
+    "Required remote CI is skipped, unavailable, or failing."
+  ],
+  "blockers": [
+    "All twelve account-health scoring profiles are deliberately disabled. The audit catalog is typed for unscored discovery, but per-control severity, source, input, category-weight, and regression decisions have not been approved and must not be inferred.",
+    "The prior canonical Claude comparison, independent reviews, and remote CI bind commit 50eda33d73ab4f85fbb756a3bb032c8582adfcd9 only. They do not verify the current repository-cleanup subject.",
+    "Fresh code, evidence, security, privacy, and licensing approvals must bind the final cleanup commit and tree.",
+    "The final cleanup commit must pass the complete local, remote-CI, canonical-model, and release-evidence gates before merge or tag."
+  ]
+}

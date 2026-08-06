@@ -1,0 +1,147 @@
+{
+  "components": [
+    {
+      "artifact": {
+        "filename": "cffi-2.1.0-cp312-cp312-win_amd64.whl",
+        "sha256": "c97f080ea627e2863524c5af3836e2270b5f5dfff1f104392b959f8df0c5d384",
+        "url": "https://files.pythonhosted.org/packages/a8/eb/f636456ff21a83fc13c032b58cc5dde061691546ac79efa284b2989b7982/cffi-2.1.0-cp312-cp312-win_amd64.whl"
+      },
+      "direct": false,
+      "name": "cffi",
+      "purl": "pkg:pypi/cffi@2.1.0",
+      "version": "2.1.0"
+    },
+    {
+      "artifact": {
+        "filename": "colorama-0.4.6-py2.py3-none-any.whl",
+        "sha256": "4f1d9991f5acc0ca119f9d443620b77f9d6b33703e51011c16baf57afb285fc6",
+        "url": "https://files.pythonhosted.org/packages/d1/d6/3965ed04c63042e047cb6a3e6ed1a63a35087b6a609aa3a15ed8ac56c221/colorama-0.4.6-py2.py3-none-any.whl"
+      },
+      "direct": false,
+      "name": "colorama",
+      "purl": "pkg:pypi/colorama@0.4.6",
+      "version": "0.4.6"
+    },
+    {
+      "artifact": {
+        "filename": "cryptography-48.0.1-cp311-abi3-win_amd64.whl",
+        "sha256": "39489bfca54c7a1f6b297efcd8bc608ab92d16c4ca631b0cad4da46724588b24",
+        "url": "https://files.pythonhosted.org/packages/c5/69/0572c77dbace6fef72f33755bd52ea399c71367250d366237f8691826b9e/cryptography-48.0.1-cp311-abi3-win_amd64.whl"
+      },
+      "direct": true,
+      "name": "cryptography",
+      "purl": "pkg:pypi/cryptography@48.0.1",
+      "version": "48.0.1"
+    },
+    {
+      "artifact": {
+        "filename": "iniconfig-2.3.0-py3-none-any.whl",
+        "sha256": "f631c04d2c48c52b84d0d0549c99ff3859c98df65b3101406327ecc7d53fbf12",
+        "url": "https://files.pythonhosted.org/packages/cb/b1/3846dd7f199d53cb17f49cba7e651e9ce294d8497c8c150530ed11865bb8/iniconfig-2.3.0-py3-none-any.whl"
+      },
+      "direct": false,
+      "name": "iniconfig",
+      "purl": "pkg:pypi/iniconfig@2.3.0",
+      "version": "2.3.0"
+    },
+    {
+      "artifact": {
+        "filename": "packaging-26.2-py3-none-any.whl",
+        "sha256": "5fc45236b9446107ff2415ce77c807cee2862cb6fac22b8a73826d0693b0980e",
+        "url": "https://files.pythonhosted.org/packages/df/b2/87e62e8c3e2f4b32e5fe99e0b86d576da1312593b39f47d8ceef365e95ed/packaging-26.2-py3-none-any.whl"
+      },
+      "direct": false,
+      "name": "packaging",
+      "purl": "pkg:pypi/packaging@26.2",
+      "version": "26.2"
+    },
+    {
+      "artifact": {
+        "filename": "pluggy-1.6.0-py3-none-any.whl",
+        "sha256": "e920276dd6813095e9377c0bc5566d94c932c33b27a3e3945d8389c374dd4746",
+        "url": "https://files.pythonhosted.org/packages/54/20/4d324d65cc6d9205fabedc306948156824eb9f0ee1633355a8f7ec5c66bf/pluggy-1.6.0-py3-none-any.whl"
+      },
+      "direct": false,
+      "name": "pluggy",
+      "purl": "pkg:pypi/pluggy@1.6.0",
+      "version": "1.6.0"
+    },
+    {
+      "artifact": {
+        "filename": "pycparser-3.0-py3-none-any.whl",
+        "sha256": "b727414169a36b7d524c1c3e31839a521725078d7b2ff038656844266160a992",
+        "url": "https://files.pythonhosted.org/packages/0c/c3/44f3fbbfa403ea2a7c779186dc20772604442dde72947e7d01069cbe98e3/pycparser-3.0-py3-none-any.whl"
+      },
+      "direct": false,
+      "name": "pycparser",
+      "purl": "pkg:pypi/pycparser@3.0",
+      "version": "3.0"
+    },
+    {
+      "artifact": {
+        "filename": "pygments-2.20.0-py3-none-any.whl",
+        "sha256": "81a9e26dd42fd28a23a2d169d86d7ac03b46e2f8b59ed4698fb4785f946d0176",
+        "url": "https://files.pythonhosted.org/packages/f4/7e/a72dd26f3b0f4f2bf1dd8923c85f7ceb43172af56d63c7383eb62b332364/pygments-2.20.0-py3-none-any.whl"
+      },
+      "direct": false,
+      "name": "pygments",
+      "purl": "pkg:pypi/pygments@2.20.0",
+      "version": "2.20.0"
+    },
+    {
+      "artifact": {
+        "filename": "pytest-9.0.3-py3-none-any.whl",
+        "sha256": "2c5efc453d45394fdd706ade797c0a81091eccd1d6e4bccfcd476e2b8e0ab5d9",
+        "url": "https://files.pythonhosted.org/packages/d4/24/a372aaf5c9b7208e7112038812994107bc65a84cd00e0354a88c2c77a617/pytest-9.0.3-py3-none-any.whl"
+      },
+      "direct": true,
+      "name": "pytest",
+      "purl": "pkg:pypi/pytest@9.0.3",
+      "version": "9.0.3"
+    },
+    {
+      "artifact": {
+        "filename": "pyyaml-6.0.3-cp312-cp312-win_amd64.whl",
+        "sha256": "5fcd34e47f6e0b794d17de1b4ff496c00986e1c83f7ab2fb8fcfe9616ff7477b",
+        "url": "https://files.pythonhosted.org/packages/86/bf/899e81e4cce32febab4fb42bb97dcdf66bc135272882d1987881a4b519e9/pyyaml-6.0.3-cp312-cp312-win_amd64.whl"
+      },
+      "direct": true,
+      "name": "pyyaml",
+      "purl": "pkg:pypi/pyyaml@6.0.3",
+      "version": "6.0.3"
+    }
+  ],
+  "environment": {
+    "abi": "cp312",
+    "arch": "amd64",
+    "implementation": "CPython",
+    "os": "windows",
+    "profile": "development",
+    "python_version": "3.12"
+  },
+  "evidence_class": "cross-target-pip-resolution-requiring-native-ci-confirmation",
+  "evidence_id": "development-windows-cp312",
+  "normalization_notes": [
+    "The foreign-platform source report did not evaluate the win32 colorama marker; the exact lock marker supplies that occurrence and native CI must confirm it."
+  ],
+  "platform_policy": "Exact lowest-common lock with target-selected PyPI wheels",
+  "resolved_at": "2026-07-11T00:00:00Z",
+  "resolver": "pip / PyPI",
+  "schema_version": "1.0.0",
+  "source_date_epoch": 1783728000,
+  "source_environment": {
+    "implementation_name": "cpython",
+    "implementation_version": "3.14.4",
+    "os_name": "posix",
+    "platform_machine": "x86_64",
+    "platform_python_implementation": "CPython",
+    "platform_release": "6.19.14-101.fc44.x86_64",
+    "platform_system": "Linux",
+    "platform_version": "#1 SMP PREEMPT_DYNAMIC Fri May  8 18:24:24 UTC 2026",
+    "python_full_version": "3.14.4",
+    "python_version": "3.14",
+    "sys_platform": "linux"
+  },
+  "source_pip_version": "26.0.1",
+  "source_report_sha256": "887a2658aabee1933e970cbfc639f054ef787fc5a4b52c00381433ba686f104f"
+}

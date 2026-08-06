@@ -1,0 +1,2 @@
+date,account_id,account_name,campaign_id,campaign_name,campaign_status,creative_id,creative_name,conversion_action,conversions,budget,spend,currency
+2026-06-15,demo-microsoft-account,Sanitized Microsoft Demo,demo-microsoft-campaign,Sanitized Search Campaign,paused,demo-microsoft-creative,Sanitized Search Ad,purchase,7,100.00,37.50,USD

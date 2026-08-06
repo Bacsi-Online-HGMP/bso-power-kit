@@ -1,0 +1,36 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:ai-marketing-hub:claude-ads:schema:core:v1:account-snapshot.schema.json",
+  "title": "AccountSnapshot v1",
+  "type": "object",
+  "required": ["schema_version", "account", "window", "currency", "campaigns", "creatives", "conversions", "budgets"],
+  "properties": {
+    "schema_version": {"const": "1.0.0"},
+    "account": {
+      "type": "object",
+      "required": ["platform", "account_id"],
+      "properties": {
+        "platform": {"enum": ["google", "meta", "youtube", "linkedin", "tiktok", "microsoft", "apple", "amazon", "reddit", "pinterest", "snapchat", "x"]},
+        "account_id": {"type": "string", "minLength": 1},
+        "name": {"type": "string"}
+      },
+      "additionalProperties": true
+    },
+    "window": {
+      "type": "object",
+      "required": ["start", "end"],
+      "properties": {
+        "start": {"type": "string", "format": "date"},
+        "end": {"type": "string", "format": "date"}
+      },
+      "additionalProperties": false
+    },
+    "currency": {"type": "string", "pattern": "^[A-Z]{3}$"},
+    "spend": {"type": ["number", "null"], "minimum": 0},
+    "campaigns": {"type": "array", "items": {"type": "object"}},
+    "creatives": {"type": "array", "items": {"type": "object"}},
+    "conversions": {"type": "array", "items": {"type": "object"}},
+    "budgets": {"type": "array", "items": {"type": "object"}}
+  },
+  "additionalProperties": true
+}

@@ -1,0 +1,4 @@
+[Parsed_showinfo_1 @ 0x55a1234] n:   0 pts:      0 pts_time:0       pos:      548 fmt:yuv420p sar:1/1 s:1920x1080 i:P iskey:1 type:I checksum:ABC12345 plane_checksum:[DEF12345 GHI12345 JKL12345] mean:[16 128 128] stdev:[0.0 0.0 0.0]
+[Parsed_showinfo_1 @ 0x55a1234] n:   1 pts:   7500 pts_time:5       pos:   125000 fmt:yuv420p sar:1/1 s:1920x1080 i:P iskey:0 type:P checksum:MNO12345 plane_checksum:[PQR12345 STU12345 VWX12345] mean:[120 130 125] stdev:[45.2 5.1 4.8]
+[Parsed_showinfo_1 @ 0x55a1234] n:   2 pts:  18750 pts_time:12.5    pos:   340000 fmt:yuv420p sar:1/1 s:1920x1080 i:P iskey:0 type:P checksum:YZA12345 plane_checksum:[BCD12345 EFG12345 HIJ12345] mean:[95 127 131] stdev:[52.1 6.3 5.9]
+[Parsed_showinfo_1 @ 0x55a1234] n:   3 pts:  45000 pts_time:30      pos:   780000 fmt:yuv420p sar:1/1 s:1920x1080 i:P iskey:0 type:P checksum:KLM12345 plane_checksum:[NOP12345 QRS12345 TUV12345] mean:[110 125 129] stdev:[38.7 4.5 4.2]

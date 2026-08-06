@@ -1,0 +1,23 @@
+{
+  "schema_version": "1.0.0",
+  "policy_id": "claude-ads-data-lifecycle",
+  "effective_at": "2026-07-11",
+  "principles": [
+    "Collect and persist only the minimum data required for the declared run purpose.",
+    "A product contract imposes no minimum retention beyond zero seconds; the operator must declare any longer purpose-bound period.",
+    "Non-public persisted artifacts require verified encryption at rest and in transit with external evidence references.",
+    "Deletion is incomplete until a separate verification artifact records the result.",
+    "Raw prompts, private provider payloads, and resolved local paths do not enter shipped JSON outputs."
+  ],
+  "classifications": [
+    {"id": "public", "minimum_retention_seconds": 0, "repository_allowed": true, "encryption_at_rest_required": false, "encryption_in_transit_required": false, "access_rule": "Read access may follow the repository or release audience.", "deletion_rule": "Delete when the declared purpose ends unless the operator records a continuing purpose.", "verification_required": true},
+    {"id": "internal", "minimum_retention_seconds": 0, "repository_allowed": true, "encryption_at_rest_required": true, "encryption_in_transit_required": true, "access_rule": "Limit access to roles declared in the run lifecycle contract.", "deletion_rule": "Schedule deletion at run creation and retain the deletion verification artifact.", "verification_required": true},
+    {"id": "confidential", "minimum_retention_seconds": 0, "repository_allowed": false, "encryption_at_rest_required": true, "encryption_in_transit_required": true, "access_rule": "Use least-privilege named roles and an external access record.", "deletion_rule": "Keep outside the checkout, delete at the declared deadline, and verify independently.", "verification_required": true},
+    {"id": "restricted", "minimum_retention_seconds": 0, "repository_allowed": false, "encryption_at_rest_required": true, "encryption_in_transit_required": true, "access_rule": "Do not persist in product artifacts; use an approved ephemeral secret or evidence channel.", "deletion_rule": "Remove immediately after the operation and verify that no product artifact contains the value.", "verification_required": true}
+  ],
+  "incident_handling": {
+    "private_channel": "Private GitHub Security Advisory for this repository",
+    "required_record_fields": ["discovered_at", "classification", "affected_artifacts", "containment", "owner", "deletion_or_rotation_verification"],
+    "release_effect": "An open privacy incident or missing containment evidence blocks release."
+  }
+}

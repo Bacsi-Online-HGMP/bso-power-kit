@@ -1,0 +1,34 @@
+Licensing for anti-slop-brain
+=============================
+
+This directory is part of the `anti-slop` repository and inherits its
+licences. It is not separately licensed.
+
+  Code (scripts/, tests/, schemas/, anti_slop_brain/)
+      Apache License 2.0, see ../LICENSE
+
+  Vault notes under wiki/markers/
+      CC BY-SA 4.0, adapted from Wikipedia:Signs of AI writing.
+      Copyleft: adaptations must stay CC BY-SA 4.0 and carry attribution.
+
+  All other prose, notes, and documentation
+      CC BY 4.0
+
+Full terms are in ../LICENSE-CONTENT. Attribution is in ../NOTICE.
+
+If you extract this directory
+-----------------------------
+
+This directory is built so it can be lifted out and used on its own: it carries
+its own `pyproject.toml`, `install.sh`, `.claude-plugin/marketplace.json` and
+standalone CI workflow. Those relative paths above then break, and an extracted
+copy on its own satisfies neither the CC BY 4.0 nor the CC BY-SA 4.0
+attribution requirements.
+
+Extraction is therefore only complete if you also copy `LICENSE-CONTENT` and
+`NOTICE` from the repository root into the extracted directory, alongside a copy
+of the Apache 2.0 text from the root `LICENSE`. Nothing in this directory is
+relicensed by being moved, and the CC BY-SA 4.0 copyleft on `wiki/markers/`
+travels with it.
+
+Copyright 2026 Daniel Agrici.

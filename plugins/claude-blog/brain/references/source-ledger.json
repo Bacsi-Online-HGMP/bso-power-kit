@@ -1,0 +1,2811 @@
+{
+  "schema": "brainstein.source-ledger.v1",
+  "version": 1,
+  "status": "researched",
+  "domain": "blog content creation, optimization, and management dual-optimized for Google rankings (E-E-A-T, the 2026 core updates) and AI citations (GEO/AEO), spanning writing, rewriting and freshness, SERP-informed briefs and outlines, editorial calendars and strategy, semantic topic clusters, schema and internal linking, multilingual publishing, the FLOW framework, factchecking, personas, distribution, and the blog delivery contract, grounded in the claude-blog skill",
+  "generated_at": "2026-07-09",
+  "last_verified": "2026-07-10",
+  "refresh_cadence": "monthly for Google algorithm updates and Search Central policy; before every release for E-E-A-T framing, schema deprecations, and GEO/AEO citation claims; on-changelog for the claude-blog skill",
+  "provenance": "Derived from data/google-updates.json, immutable local snapshots of the claude-blog v1.11.0 skill surface recorded in .raw/.manifest.json, the 2026 Blog-SEO Research Substrate, blog-relevant entries in Claude SEO Brain references/source-ledger.json, and URLs cited by the claude-blog skill references. Raw snapshot hashes cover the local skill surface and data/google-updates.json. External web sources are recorded by URL, retrieval date, source type, confidence, evidence tier, and claim coverage; 84 of 118 external sources do not have raw_snapshot_path or raw_snapshot_sha256 as of the 2026-07-10 integrity review.",
+  "rules": {
+    "researched_requires": [
+      "at least two captured sources for fast-moving or high-stakes domains",
+      "at least one official/primary source for lower-risk domains",
+      "retrieved dates, refresh_due dates, source_type, confidence, and claim coverage",
+      "no placeholder/example URLs"
+    ],
+    "accepted_primary_types": [
+      "official",
+      "primary",
+      "vendor",
+      "regulator",
+      "government",
+      "standards",
+      "standards-body",
+      "authority",
+      "api-docs"
+    ],
+    "confidence_enum": [
+      "high",
+      "medium",
+      "low"
+    ],
+    "evidence_tier_enum": [
+      "EVIDENCE-BASED",
+      "PRACTITIONER",
+      "CONTESTED",
+      "FOLKLORE"
+    ],
+    "date_fields": [
+      "published",
+      "last_updated",
+      "retrieved",
+      "date_precision",
+      "living_doc"
+    ],
+    "raw_snapshot_required_for_market_ready": false,
+    "raw_snapshot_policy": "Raw snapshots are complete for the local claude-blog skill surface and repo data captured in .raw/.manifest.json. External web sources are not all raw-snapshotted; when a raw web snapshot exists, record raw_snapshot_path and raw_snapshot_sha256, otherwise rely on URL, retrieved date, source type, confidence, evidence tier, limitations, and claim coverage.",
+    "date_precision_enum": [
+      "day",
+      "month",
+      "year",
+      "unknown"
+    ],
+    "raw_snapshot_fields": [
+      "raw_snapshot_path",
+      "raw_snapshot_sha256"
+    ],
+    "accepted_internal_types": [
+      "local-skill-source",
+      "repo-data"
+    ]
+  },
+  "sources": [
+    {
+      "id": "g-core-spam-2024-03",
+      "title": "March 2024 Core Update and spam policies",
+      "url": "https://developers.google.com/search/blog/2024/03/core-update-spam-policies",
+      "source_type": "official",
+      "retrieved": "2026-07-06",
+      "last_verified": "2026-07-06",
+      "published": "2024-03-05",
+      "refresh_due": "2026-08-01",
+      "confidence": "high",
+      "section": "monitoring",
+      "claims": [
+        "Helpful Content System merged into core ranking; scaled content, site reputation, and expired-domain abuse spam policies."
+      ],
+      "supports_claims": [
+        "Helpful Content System merged into core ranking; scaled content, site reputation, and expired-domain abuse spam policies."
+      ],
+      "source_pool": "Claude SEO Brain references/source-ledger.json",
+      "evidence_tier": "EVIDENCE-BASED",
+      "living_doc": false,
+      "date_precision": "day"
+    },
+    {
+      "id": "g-ranking-history",
+      "title": "Google Search Status Dashboard ranking history",
+      "url": "https://status.search.google.com/products/rGHU1u87FJnkP6W2GwMi/history",
+      "source_type": "official",
+      "retrieved": "2026-07-09",
+      "last_verified": "2026-07-09",
+      "refresh_due": "2026-08-01",
+      "confidence": "high",
+      "section": "monitoring",
+      "claims": [
+        "Canonical official history page for confirmed ranking updates and rollout durations. Use it for rollout status, not third-party impact analysis."
+      ],
+      "supports_claims": [
+        "Canonical official history page for confirmed ranking updates and rollout durations. Use it for rollout status, not third-party impact analysis."
+      ],
+      "source_pool": "Claude SEO Brain references/source-ledger.json",
+      "evidence_tier": "EVIDENCE-BASED",
+      "living_doc": true,
+      "last_updated": "2026-06-24",
+      "date_precision": "day"
+    },
+    {
+      "id": "g-aug-2024-core",
+      "title": "August 2024 Core Update",
+      "url": "https://developers.google.com/search/blog/2024/08/august-2024-core-update",
+      "source_type": "official",
+      "retrieved": "2026-07-06",
+      "last_verified": "2026-07-06",
+      "published": "2024-08-15",
+      "refresh_due": "2026-08-01",
+      "confidence": "high",
+      "section": "monitoring",
+      "claims": [
+        "Core update rewarding genuinely helpful content after the 2023 HCU."
+      ],
+      "supports_claims": [
+        "Core update rewarding genuinely helpful content after the 2023 HCU."
+      ],
+      "source_pool": "Claude SEO Brain references/source-ledger.json",
+      "evidence_tier": "EVIDENCE-BASED",
+      "living_doc": false,
+      "date_precision": "day"
+    },
+    {
+      "id": "g-site-rep-abuse",
+      "title": "Site reputation abuse policy update",
+      "url": "https://developers.google.com/search/blog/2024/11/site-reputation-abuse",
+      "source_type": "official",
+      "retrieved": "2026-07-06",
+      "last_verified": "2026-07-06",
+      "published": "2024-11-19",
+      "refresh_due": "2026-08-01",
+      "confidence": "high",
+      "section": "monitoring",
+      "claims": [
+        "Clarifies parasite SEO; third-party content hosted to exploit host authority is abuse regardless of oversight."
+      ],
+      "supports_claims": [
+        "Clarifies parasite SEO; third-party content hosted to exploit host authority is abuse regardless of oversight."
+      ],
+      "source_pool": "Claude SEO Brain references/source-ledger.json",
+      "evidence_tier": "EVIDENCE-BASED",
+      "living_doc": false,
+      "date_precision": "day"
+    },
+    {
+      "id": "g-simplify-results",
+      "title": "Simplifying search results (structured data)",
+      "url": "https://developers.google.com/search/blog/2025/06/simplifying-search-results",
+      "source_type": "official",
+      "retrieved": "2026-07-06",
+      "last_verified": "2026-07-06",
+      "published": "2025-06-19",
+      "refresh_due": "2026-08-01",
+      "confidence": "high",
+      "section": "schema",
+      "claims": [
+        "Deprecation of several structured-data visual features; JSON-LD still parsed for understanding."
+      ],
+      "supports_claims": [
+        "Deprecation of several structured-data visual features; JSON-LD still parsed for understanding."
+      ],
+      "source_pool": "Claude SEO Brain references/source-ledger.json",
+      "evidence_tier": "EVIDENCE-BASED",
+      "living_doc": false,
+      "date_precision": "day"
+    },
+    {
+      "id": "g-helpful-content",
+      "title": "Creating helpful, reliable, people-first content",
+      "url": "https://developers.google.com/search/docs/fundamentals/creating-helpful-content",
+      "source_type": "official",
+      "retrieved": "2026-07-09",
+      "last_verified": "2026-07-09",
+      "refresh_due": "2026-08-01",
+      "confidence": "high",
+      "section": "content",
+      "claims": [
+        "Self-assessment questions and E-E-A-T guidance for people-first content."
+      ],
+      "supports_claims": [
+        "Self-assessment questions and E-E-A-T guidance for people-first content."
+      ],
+      "source_pool": "Claude SEO Brain references/source-ledger.json",
+      "evidence_tier": "EVIDENCE-BASED",
+      "living_doc": true,
+      "last_updated": "2025-12-10",
+      "date_precision": "day"
+    },
+    {
+      "id": "g-intro-sd",
+      "title": "Intro to structured data markup",
+      "url": "https://developers.google.com/search/docs/appearance/structured-data/intro-structured-data",
+      "source_type": "official",
+      "retrieved": "2026-07-09",
+      "last_verified": "2026-07-09",
+      "refresh_due": "2026-08-01",
+      "confidence": "high",
+      "section": "schema",
+      "claims": [
+        "JSON-LD recommended; eligibility and general structured-data guidelines."
+      ],
+      "supports_claims": [
+        "JSON-LD recommended; eligibility and general structured-data guidelines."
+      ],
+      "source_pool": "Claude SEO Brain references/source-ledger.json",
+      "evidence_tier": "EVIDENCE-BASED",
+      "living_doc": true,
+      "last_updated": "2025-12-10",
+      "date_precision": "day"
+    },
+    {
+      "id": "g-product-sd",
+      "title": "Product structured data",
+      "url": "https://developers.google.com/search/docs/appearance/structured-data/product",
+      "source_type": "official",
+      "retrieved": "2026-07-09",
+      "last_verified": "2026-07-09",
+      "refresh_due": "2026-08-01",
+      "confidence": "high",
+      "section": "ecommerce",
+      "claims": [
+        "The Product structured data overview distinguishes product snippets from merchant listings and points implementers to the feature-specific documentation for requirements."
+      ],
+      "supports_claims": [
+        "The Product structured data overview distinguishes product snippets from merchant listings and points implementers to the feature-specific documentation for requirements."
+      ],
+      "source_pool": "Claude SEO Brain references/source-ledger.json",
+      "evidence_tier": "EVIDENCE-BASED",
+      "living_doc": true,
+      "last_updated": "2025-12-10",
+      "date_precision": "day"
+    },
+    {
+      "id": "g-merchant-listing-sd",
+      "title": "Merchant listing structured data",
+      "url": "https://developers.google.com/search/docs/appearance/structured-data/merchant-listing",
+      "source_type": "official",
+      "retrieved": "2026-07-09",
+      "last_verified": "2026-07-09",
+      "last_updated": "2026-07-07",
+      "date_precision": "day",
+      "living_doc": true,
+      "refresh_due": "2026-08-09",
+      "confidence": "high",
+      "section": "ecommerce",
+      "claims": [
+        "Merchant listing structured data documents Product.category use with Text and CategoryCode values.",
+        "Merchant listing structured data documents sale duration with validFrom, validThrough, and priceValidUntil for sale prices."
+      ],
+      "supports_claims": [
+        "Merchant listing structured data documents Product.category use with Text and CategoryCode values.",
+        "Merchant listing structured data documents sale duration with validFrom, validThrough, and priceValidUntil for sale prices."
+      ],
+      "source_pool": "direct official refresh 2026-07-09",
+      "evidence_tier": "EVIDENCE-BASED"
+    },
+    {
+      "id": "g-faqpage-sd",
+      "title": "FAQ rich result deprecation changelog",
+      "url": "https://developers.google.com/search/updates#deprecating-the-faq-rich-result-feature",
+      "source_type": "official",
+      "retrieved": "2026-07-09",
+      "last_verified": "2026-07-09",
+      "refresh_due": "2026-08-01",
+      "confidence": "high",
+      "section": "schema",
+      "claims": [
+        "FAQ rich results no longer appear in Google Search, and Google removed the old FAQ rich result documentation. Visible Q and A content may still help readers, but FAQPage markup is not a current rich-result tactic or documented machine-citation signal."
+      ],
+      "supports_claims": [
+        "FAQ rich results no longer appear in Google Search, and Google removed the old FAQ rich result documentation. Visible Q and A content may still help readers, but FAQPage markup is not a current rich-result tactic or documented machine-citation signal."
+      ],
+      "source_pool": "Claude SEO Brain references/source-ledger.json",
+      "evidence_tier": "EVIDENCE-BASED",
+      "living_doc": true,
+      "last_updated": "2026-06-15",
+      "date_precision": "day"
+    },
+    {
+      "id": "g-block-indexing",
+      "title": "Block search indexing with noindex",
+      "url": "https://developers.google.com/search/docs/crawling-indexing/block-indexing",
+      "source_type": "official",
+      "retrieved": "2026-07-09",
+      "last_verified": "2026-07-09",
+      "refresh_due": "2026-08-01",
+      "confidence": "high",
+      "section": "technical",
+      "claims": [
+        "noindex robots meta and header; must be crawlable to be honored."
+      ],
+      "supports_claims": [
+        "noindex robots meta and header; must be crawlable to be honored."
+      ],
+      "source_pool": "Claude SEO Brain references/source-ledger.json",
+      "evidence_tier": "EVIDENCE-BASED",
+      "living_doc": true,
+      "last_updated": "2025-12-10",
+      "date_precision": "day"
+    },
+    {
+      "id": "g-robots-intro",
+      "title": "Robots.txt introduction and guide",
+      "url": "https://developers.google.com/search/docs/crawling-indexing/robots/intro",
+      "source_type": "official",
+      "retrieved": "2026-07-09",
+      "last_verified": "2026-07-09",
+      "refresh_due": "2026-08-01",
+      "confidence": "high",
+      "section": "technical",
+      "claims": [
+        "Robots.txt controls crawling, not indexing; blocked URLs can still be indexed."
+      ],
+      "supports_claims": [
+        "Robots.txt controls crawling, not indexing; blocked URLs can still be indexed."
+      ],
+      "source_pool": "Claude SEO Brain references/source-ledger.json",
+      "evidence_tier": "EVIDENCE-BASED",
+      "living_doc": true,
+      "last_updated": "2025-12-10",
+      "date_precision": "day"
+    },
+    {
+      "id": "g-canonical",
+      "title": "Consolidate duplicate URLs (canonicalization)",
+      "url": "https://developers.google.com/search/docs/crawling-indexing/consolidate-duplicate-urls",
+      "source_type": "official",
+      "retrieved": "2026-07-09",
+      "last_verified": "2026-07-09",
+      "refresh_due": "2026-08-01",
+      "confidence": "high",
+      "section": "technical",
+      "claims": [
+        "rel=canonical, redirects, and signals Google uses to pick a canonical."
+      ],
+      "supports_claims": [
+        "rel=canonical, redirects, and signals Google uses to pick a canonical."
+      ],
+      "source_pool": "Claude SEO Brain references/source-ledger.json",
+      "evidence_tier": "EVIDENCE-BASED",
+      "living_doc": true,
+      "last_updated": "2026-03-27",
+      "date_precision": "day"
+    },
+    {
+      "id": "g-sitemaps",
+      "title": "Sitemaps overview",
+      "url": "https://developers.google.com/search/docs/crawling-indexing/sitemaps/overview",
+      "source_type": "official",
+      "retrieved": "2026-07-09",
+      "last_verified": "2026-07-09",
+      "refresh_due": "2026-08-01",
+      "confidence": "high",
+      "section": "technical",
+      "claims": [
+        "XML sitemap formats, size limits (50k URLs / 50MB), and submission."
+      ],
+      "supports_claims": [
+        "XML sitemap formats, size limits (50k URLs / 50MB), and submission."
+      ],
+      "source_pool": "Claude SEO Brain references/source-ledger.json",
+      "evidence_tier": "EVIDENCE-BASED",
+      "living_doc": true,
+      "last_updated": "2025-12-10",
+      "date_precision": "day"
+    },
+    {
+      "id": "g-crawl-budget",
+      "title": "Managing crawl budget for large sites",
+      "url": "https://developers.google.com/crawling/docs/crawl-budget",
+      "source_type": "official",
+      "retrieved": "2026-07-09",
+      "last_verified": "2026-07-09",
+      "refresh_due": "2026-08-01",
+      "confidence": "high",
+      "section": "technical",
+      "claims": [
+        "Crawl capacity and crawl demand; relevant above ~1M pages or frequent change."
+      ],
+      "supports_claims": [
+        "Crawl capacity and crawl demand; relevant above ~1M pages or frequent change."
+      ],
+      "source_pool": "Claude SEO Brain references/source-ledger.json",
+      "evidence_tier": "EVIDENCE-BASED",
+      "living_doc": true,
+      "last_updated": "2025-12-19",
+      "date_precision": "day"
+    },
+    {
+      "id": "g-js-seo",
+      "title": "JavaScript SEO basics",
+      "url": "https://developers.google.com/search/docs/crawling-indexing/javascript/javascript-seo-basics",
+      "source_type": "official",
+      "retrieved": "2026-07-09",
+      "last_verified": "2026-07-09",
+      "refresh_due": "2026-08-01",
+      "confidence": "high",
+      "section": "technical",
+      "claims": [
+        "Three-phase crawl-render-index; rendering queue; hydration pitfalls."
+      ],
+      "supports_claims": [
+        "Three-phase crawl-render-index; rendering queue; hydration pitfalls."
+      ],
+      "source_pool": "Claude SEO Brain references/source-ledger.json",
+      "evidence_tier": "EVIDENCE-BASED",
+      "living_doc": true,
+      "last_updated": "2026-03-04",
+      "date_precision": "day"
+    },
+    {
+      "id": "g-mobile-first",
+      "title": "Mobile-first indexing",
+      "url": "https://developers.google.com/search/docs/crawling-indexing/mobile/mobile-sites-mobile-first-indexing",
+      "source_type": "official",
+      "retrieved": "2026-07-09",
+      "last_verified": "2026-07-09",
+      "refresh_due": "2026-08-01",
+      "confidence": "high",
+      "section": "technical",
+      "claims": [
+        "Google indexes the mobile version; parity of content and structured data required."
+      ],
+      "supports_claims": [
+        "Google indexes the mobile version; parity of content and structured data required."
+      ],
+      "source_pool": "Claude SEO Brain references/source-ledger.json",
+      "evidence_tier": "EVIDENCE-BASED",
+      "living_doc": true,
+      "last_updated": "2025-12-10",
+      "date_precision": "day"
+    },
+    {
+      "id": "g-ai-features",
+      "title": "AI features and your website",
+      "url": "https://developers.google.com/search/docs/appearance/ai-features",
+      "source_type": "official",
+      "retrieved": "2026-07-09",
+      "last_verified": "2026-07-09",
+      "refresh_due": "2026-08-01",
+      "confidence": "high",
+      "section": "geo",
+      "claims": [
+        "How AI Overviews and AI Mode surface content; standard crawling and preview controls."
+      ],
+      "supports_claims": [
+        "How AI Overviews and AI Mode surface content; standard crawling and preview controls."
+      ],
+      "source_pool": "Claude SEO Brain references/source-ledger.json",
+      "evidence_tier": "EVIDENCE-BASED",
+      "living_doc": true,
+      "last_updated": "2025-12-10",
+      "date_precision": "day"
+    },
+    {
+      "id": "g-google-images",
+      "title": "Google Images best practices",
+      "url": "https://developers.google.com/search/docs/appearance/google-images",
+      "source_type": "official",
+      "retrieved": "2026-07-09",
+      "last_verified": "2026-07-09",
+      "refresh_due": "2026-08-01",
+      "confidence": "high",
+      "section": "images",
+      "claims": [
+        "Descriptive alt text, high-quality images, structured data, and image sitemaps."
+      ],
+      "supports_claims": [
+        "Descriptive alt text, high-quality images, structured data, and image sitemaps."
+      ],
+      "source_pool": "Claude SEO Brain references/source-ledger.json",
+      "evidence_tier": "EVIDENCE-BASED",
+      "living_doc": true,
+      "last_updated": "2026-03-02",
+      "date_precision": "day"
+    },
+    {
+      "id": "g-video",
+      "title": "Video SEO best practices",
+      "url": "https://developers.google.com/search/docs/appearance/video",
+      "source_type": "official",
+      "retrieved": "2026-07-09",
+      "last_verified": "2026-07-09",
+      "refresh_due": "2026-08-01",
+      "confidence": "high",
+      "section": "images",
+      "claims": [
+        "VideoObject markup, video sitemaps, and thumbnail requirements."
+      ],
+      "supports_claims": [
+        "VideoObject markup, video sitemaps, and thumbnail requirements."
+      ],
+      "source_pool": "Claude SEO Brain references/source-ledger.json",
+      "evidence_tier": "EVIDENCE-BASED",
+      "living_doc": true,
+      "last_updated": "2025-12-18",
+      "date_precision": "day"
+    },
+    {
+      "id": "g-localized",
+      "title": "Localized versions of pages (hreflang)",
+      "url": "https://developers.google.com/search/docs/specialty/international/localized-versions",
+      "source_type": "official",
+      "retrieved": "2026-07-09",
+      "last_verified": "2026-07-09",
+      "refresh_due": "2026-08-01",
+      "confidence": "high",
+      "section": "international",
+      "claims": [
+        "hreflang annotations, return-link requirement, x-default handling."
+      ],
+      "supports_claims": [
+        "hreflang annotations, return-link requirement, x-default handling."
+      ],
+      "source_pool": "Claude SEO Brain references/source-ledger.json",
+      "evidence_tier": "EVIDENCE-BASED",
+      "living_doc": true,
+      "last_updated": "2025-12-22",
+      "date_precision": "day"
+    },
+    {
+      "id": "g-multiregional",
+      "title": "Managing multi-regional and multilingual sites",
+      "url": "https://developers.google.com/search/docs/specialty/international/managing-multi-regional-sites",
+      "source_type": "official",
+      "retrieved": "2026-07-09",
+      "last_verified": "2026-07-09",
+      "refresh_due": "2026-08-01",
+      "confidence": "high",
+      "section": "international",
+      "claims": [
+        "URL structures (ccTLD, subdomain, subdirectory) and locale targeting."
+      ],
+      "supports_claims": [
+        "URL structures (ccTLD, subdomain, subdirectory) and locale targeting."
+      ],
+      "source_pool": "Claude SEO Brain references/source-ledger.json",
+      "evidence_tier": "EVIDENCE-BASED",
+      "living_doc": true,
+      "last_updated": "2025-12-10",
+      "date_precision": "day"
+    },
+    {
+      "id": "g-qrg",
+      "title": "Search Quality Rater Guidelines overview deck (36pp)",
+      "url": "https://services.google.com/fh/files/misc/hsw-sqrg.pdf",
+      "source_type": "official",
+      "retrieved": "2026-07-06",
+      "last_verified": "2026-07-06",
+      "published": "2025-09-11",
+      "refresh_due": "2026-08-01",
+      "confidence": "high",
+      "section": "content",
+      "claims": [
+        "The services.google.com hsw-sqrg.pdf file is a short overview deck, not the authoritative full Search Quality Rater Guidelines. Route full QRG claims to g-qrg-full."
+      ],
+      "supports_claims": [
+        "The services.google.com hsw-sqrg.pdf file is a short overview deck, not the authoritative full Search Quality Rater Guidelines. Route full QRG claims to g-qrg-full."
+      ],
+      "source_pool": "Claude SEO Brain references/source-ledger.json",
+      "evidence_tier": "EVIDENCE-BASED",
+      "living_doc": false,
+      "date_precision": "day"
+    },
+    {
+      "id": "g-gsc-api",
+      "title": "Search Console Search Analytics API",
+      "url": "https://developers.google.com/webmaster-tools/v1/searchanalytics/query",
+      "source_type": "api-docs",
+      "retrieved": "2026-07-09",
+      "last_verified": "2026-07-09",
+      "refresh_due": "2026-08-01",
+      "confidence": "high",
+      "section": "data-sources",
+      "claims": [
+        "Query clicks, impressions, CTR, and position by dimension."
+      ],
+      "supports_claims": [
+        "Query clicks, impressions, CTR, and position by dimension."
+      ],
+      "source_pool": "Claude SEO Brain references/source-ledger.json",
+      "evidence_tier": "EVIDENCE-BASED",
+      "living_doc": true,
+      "last_updated": "2026-05-20",
+      "date_precision": "day"
+    },
+    {
+      "id": "g-urlinspect",
+      "title": "URL Inspection API",
+      "url": "https://developers.google.com/webmaster-tools/v1/urlInspection.index/inspect",
+      "source_type": "api-docs",
+      "retrieved": "2026-07-09",
+      "last_verified": "2026-07-09",
+      "refresh_due": "2026-08-01",
+      "confidence": "high",
+      "section": "data-sources",
+      "claims": [
+        "Index status, coverage, and rich-results state per URL."
+      ],
+      "supports_claims": [
+        "Index status, coverage, and rich-results state per URL."
+      ],
+      "source_pool": "Claude SEO Brain references/source-ledger.json",
+      "evidence_tier": "EVIDENCE-BASED",
+      "living_doc": true,
+      "last_updated": "2024-07-23",
+      "date_precision": "day"
+    },
+    {
+      "id": "g-psi",
+      "title": "PageSpeed Insights API v5",
+      "url": "https://developers.google.com/speed/docs/insights/v5/get-started",
+      "source_type": "api-docs",
+      "retrieved": "2026-07-09",
+      "last_verified": "2026-07-09",
+      "refresh_due": "2026-08-01",
+      "confidence": "high",
+      "section": "data-sources",
+      "claims": [
+        "Lab (Lighthouse) plus CrUX field data per URL."
+      ],
+      "supports_claims": [
+        "Lab (Lighthouse) plus CrUX field data per URL."
+      ],
+      "source_pool": "Claude SEO Brain references/source-ledger.json",
+      "evidence_tier": "EVIDENCE-BASED",
+      "living_doc": true,
+      "last_updated": "2025-08-28",
+      "date_precision": "day"
+    },
+    {
+      "id": "chrome-crux",
+      "title": "CrUX API",
+      "url": "https://developer.chrome.com/docs/crux/api",
+      "source_type": "api-docs",
+      "retrieved": "2026-07-09",
+      "last_verified": "2026-07-09",
+      "refresh_due": "2026-08-01",
+      "confidence": "high",
+      "section": "data-sources",
+      "claims": [
+        "75th-percentile field Core Web Vitals by origin and URL."
+      ],
+      "supports_claims": [
+        "75th-percentile field Core Web Vitals by origin and URL."
+      ],
+      "source_pool": "Claude SEO Brain references/source-ledger.json",
+      "evidence_tier": "EVIDENCE-BASED",
+      "living_doc": true,
+      "last_updated": "2025-02-11",
+      "date_precision": "day"
+    },
+    {
+      "id": "chrome-crux-history",
+      "title": "CrUX History API",
+      "url": "https://developer.chrome.com/docs/crux/history-api",
+      "source_type": "api-docs",
+      "retrieved": "2026-07-09",
+      "last_verified": "2026-07-09",
+      "refresh_due": "2026-08-01",
+      "confidence": "high",
+      "section": "data-sources",
+      "claims": [
+        "Up to 25 weeks of trailing CWV field data."
+      ],
+      "supports_claims": [
+        "Up to 25 weeks of trailing CWV field data."
+      ],
+      "source_pool": "Claude SEO Brain references/source-ledger.json",
+      "evidence_tier": "EVIDENCE-BASED",
+      "living_doc": true,
+      "last_updated": "2025-04-11",
+      "date_precision": "day"
+    },
+    {
+      "id": "g-ga4-data",
+      "title": "GA4 Data API",
+      "url": "https://developers.google.com/analytics/devguides/reporting/data/v1",
+      "source_type": "api-docs",
+      "retrieved": "2026-07-09",
+      "last_verified": "2026-07-09",
+      "refresh_due": "2026-08-01",
+      "confidence": "high",
+      "section": "data-sources",
+      "claims": [
+        "Programmatic organic-traffic and engagement reporting."
+      ],
+      "supports_claims": [
+        "Programmatic organic-traffic and engagement reporting."
+      ],
+      "source_pool": "Claude SEO Brain references/source-ledger.json",
+      "evidence_tier": "EVIDENCE-BASED",
+      "living_doc": true,
+      "last_updated": "2026-06-29",
+      "date_precision": "day"
+    },
+    {
+      "id": "g-nlp",
+      "title": "Cloud Natural Language API",
+      "url": "https://docs.cloud.google.com/natural-language/docs",
+      "source_type": "api-docs",
+      "retrieved": "2026-07-09",
+      "last_verified": "2026-07-09",
+      "refresh_due": "2026-08-01",
+      "confidence": "high",
+      "section": "content",
+      "claims": [
+        "Entity, salience, and Knowledge Graph mid extraction for topical analysis."
+      ],
+      "supports_claims": [
+        "Entity, salience, and Knowledge Graph mid extraction for topical analysis."
+      ],
+      "source_pool": "Claude SEO Brain references/source-ledger.json",
+      "evidence_tier": "EVIDENCE-BASED",
+      "living_doc": true,
+      "last_updated": "2026-07-07",
+      "date_precision": "day"
+    },
+    {
+      "id": "g-ads-kw",
+      "title": "Google Ads Keyword Planning API",
+      "url": "https://developers.google.com/google-ads/api/docs/keyword-planning/overview",
+      "source_type": "api-docs",
+      "retrieved": "2026-07-09",
+      "last_verified": "2026-07-09",
+      "refresh_due": "2026-08-01",
+      "confidence": "high",
+      "section": "content",
+      "claims": [
+        "Keyword ideas and volume for research."
+      ],
+      "supports_claims": [
+        "Keyword ideas and volume for research."
+      ],
+      "source_pool": "Claude SEO Brain references/source-ledger.json",
+      "evidence_tier": "EVIDENCE-BASED",
+      "living_doc": true,
+      "last_updated": "2026-06-24",
+      "date_precision": "day"
+    },
+    {
+      "id": "wd-inp",
+      "title": "Interaction to Next Paint (INP)",
+      "url": "https://web.dev/articles/inp",
+      "source_type": "official",
+      "retrieved": "2026-07-06",
+      "last_verified": "2026-07-06",
+      "refresh_due": "2026-08-01",
+      "confidence": "high",
+      "section": "technical",
+      "claims": [
+        "INP replaced FID as a Core Web Vital; target <= 200ms at p75."
+      ],
+      "supports_claims": [
+        "INP replaced FID as a Core Web Vital; target <= 200ms at p75."
+      ],
+      "source_pool": "Claude SEO Brain references/source-ledger.json",
+      "evidence_tier": "EVIDENCE-BASED",
+      "living_doc": true,
+      "last_updated": "2024-03-05",
+      "date_precision": "day"
+    },
+    {
+      "id": "wd-lcp",
+      "title": "Largest Contentful Paint (LCP)",
+      "url": "https://web.dev/articles/lcp",
+      "source_type": "official",
+      "retrieved": "2026-07-09",
+      "last_verified": "2026-07-09",
+      "refresh_due": "2026-08-01",
+      "confidence": "high",
+      "section": "technical",
+      "claims": [
+        "Target <= 2.5s; subparts TTFB, load delay, load time, render delay."
+      ],
+      "supports_claims": [
+        "Target <= 2.5s; subparts TTFB, load delay, load time, render delay."
+      ],
+      "source_pool": "Claude SEO Brain references/source-ledger.json",
+      "evidence_tier": "EVIDENCE-BASED",
+      "living_doc": true,
+      "last_updated": "2025-09-04",
+      "date_precision": "day"
+    },
+    {
+      "id": "wd-cls",
+      "title": "Cumulative Layout Shift (CLS)",
+      "url": "https://web.dev/articles/cls",
+      "source_type": "official",
+      "retrieved": "2026-07-09",
+      "last_verified": "2026-07-09",
+      "refresh_due": "2026-08-01",
+      "confidence": "high",
+      "section": "technical",
+      "claims": [
+        "Target <= 0.1; reserve space for media and embeds."
+      ],
+      "supports_claims": [
+        "Target <= 0.1; reserve space for media and embeds."
+      ],
+      "source_pool": "Claude SEO Brain references/source-ledger.json",
+      "evidence_tier": "EVIDENCE-BASED",
+      "living_doc": true,
+      "last_updated": "2023-04-12",
+      "date_precision": "day"
+    },
+    {
+      "id": "wd-vitals",
+      "title": "Web Vitals",
+      "url": "https://web.dev/articles/vitals",
+      "source_type": "official",
+      "retrieved": "2026-07-09",
+      "last_verified": "2026-07-09",
+      "refresh_due": "2026-08-01",
+      "confidence": "high",
+      "section": "technical",
+      "claims": [
+        "LCP, INP, CLS thresholds and field vs lab measurement."
+      ],
+      "supports_claims": [
+        "LCP, INP, CLS thresholds and field vs lab measurement."
+      ],
+      "source_pool": "Claude SEO Brain references/source-ledger.json",
+      "evidence_tier": "EVIDENCE-BASED",
+      "living_doc": true,
+      "last_updated": "2024-10-31",
+      "date_precision": "day"
+    },
+    {
+      "id": "wd-opt-inp",
+      "title": "Optimize INP",
+      "url": "https://web.dev/articles/optimize-inp",
+      "source_type": "official",
+      "retrieved": "2026-07-09",
+      "last_verified": "2026-07-09",
+      "refresh_due": "2026-08-01",
+      "confidence": "high",
+      "section": "technical",
+      "claims": [
+        "Reduce input delay, processing time, and presentation delay."
+      ],
+      "supports_claims": [
+        "Reduce input delay, processing time, and presentation delay."
+      ],
+      "source_pool": "Claude SEO Brain references/source-ledger.json",
+      "evidence_tier": "EVIDENCE-BASED",
+      "living_doc": true,
+      "last_updated": "2025-09-02",
+      "date_precision": "day"
+    },
+    {
+      "id": "wd-ttfb",
+      "title": "Time to First Byte (TTFB)",
+      "url": "https://web.dev/articles/ttfb",
+      "source_type": "official",
+      "retrieved": "2026-07-09",
+      "last_verified": "2026-07-09",
+      "refresh_due": "2026-08-01",
+      "confidence": "high",
+      "section": "technical",
+      "claims": [
+        "Server response timing; a component of LCP."
+      ],
+      "supports_claims": [
+        "Server response timing; a component of LCP."
+      ],
+      "source_pool": "Claude SEO Brain references/source-ledger.json",
+      "evidence_tier": "EVIDENCE-BASED",
+      "living_doc": true,
+      "last_updated": "2025-11-28",
+      "date_precision": "day"
+    },
+    {
+      "id": "chrome-soft-nav",
+      "title": "Soft Navigations experiment",
+      "url": "https://developer.chrome.com/docs/web-platform/soft-navigations",
+      "source_type": "official",
+      "retrieved": "2026-07-09",
+      "last_verified": "2026-07-09",
+      "refresh_due": "2026-08-01",
+      "confidence": "high",
+      "section": "technical",
+      "claims": [
+        "Attributes CWV to SPA route changes (Chrome 139+ trial)."
+      ],
+      "supports_claims": [
+        "Attributes CWV to SPA route changes (Chrome 139+ trial)."
+      ],
+      "source_pool": "Claude SEO Brain references/source-ledger.json",
+      "evidence_tier": "EVIDENCE-BASED",
+      "living_doc": true,
+      "last_updated": "2026-06-24",
+      "date_precision": "day"
+    },
+    {
+      "id": "schema-full",
+      "title": "Schema.org full type hierarchy",
+      "url": "https://schema.org/docs/full.html",
+      "source_type": "standards",
+      "retrieved": "2026-07-09",
+      "last_verified": "2026-07-09",
+      "refresh_due": "2026-08-01",
+      "confidence": "high",
+      "section": "schema",
+      "claims": [
+        "Complete vocabulary of types and properties."
+      ],
+      "supports_claims": [
+        "Complete vocabulary of types and properties."
+      ],
+      "source_pool": "Claude SEO Brain references/source-ledger.json",
+      "evidence_tier": "EVIDENCE-BASED",
+      "living_doc": true,
+      "date_precision": "unknown",
+      "source_date_note": "No page-level published or last-updated date was exposed in the fetched source on 2026-07-09; use retrieved date only."
+    },
+    {
+      "id": "schema-product",
+      "title": "Schema.org Product type",
+      "url": "https://schema.org/Product",
+      "source_type": "standards",
+      "retrieved": "2026-07-09",
+      "last_verified": "2026-07-09",
+      "refresh_due": "2026-08-01",
+      "confidence": "high",
+      "section": "ecommerce",
+      "claims": [
+        "Product properties, offers, aggregateRating."
+      ],
+      "supports_claims": [
+        "Product properties, offers, aggregateRating."
+      ],
+      "source_pool": "Claude SEO Brain references/source-ledger.json",
+      "evidence_tier": "EVIDENCE-BASED",
+      "living_doc": true,
+      "date_precision": "unknown",
+      "source_date_note": "No page-level published or last-updated date was exposed in the fetched source on 2026-07-09; use retrieved date only."
+    },
+    {
+      "id": "schema-org-type",
+      "title": "Schema.org Organization type",
+      "url": "https://schema.org/Organization",
+      "source_type": "standards",
+      "retrieved": "2026-07-09",
+      "last_verified": "2026-07-09",
+      "refresh_due": "2026-08-01",
+      "confidence": "high",
+      "section": "schema",
+      "claims": [
+        "Organization, sameAs, and knowledge-panel signals."
+      ],
+      "supports_claims": [
+        "Organization, sameAs, and knowledge-panel signals."
+      ],
+      "source_pool": "Claude SEO Brain references/source-ledger.json",
+      "evidence_tier": "EVIDENCE-BASED",
+      "living_doc": true,
+      "date_precision": "unknown",
+      "source_date_note": "No page-level published or last-updated date was exposed in the fetched source on 2026-07-09; use retrieved date only."
+    },
+    {
+      "id": "w3c-jsonld",
+      "title": "JSON-LD 1.1 specification",
+      "url": "https://www.w3.org/TR/json-ld11/",
+      "source_type": "standards",
+      "retrieved": "2026-07-09",
+      "last_verified": "2026-07-09",
+      "refresh_due": "2026-08-01",
+      "confidence": "high",
+      "section": "schema",
+      "claims": [
+        "Serialization of Linked Data recommended for structured data."
+      ],
+      "supports_claims": [
+        "Serialization of Linked Data recommended for structured data."
+      ],
+      "source_pool": "Claude SEO Brain references/source-ledger.json",
+      "evidence_tier": "EVIDENCE-BASED",
+      "living_doc": false,
+      "date_precision": "day",
+      "published": "2020-07-16",
+      "source_date_note": "W3C Recommendation publication date verified on 2026-07-09."
+    },
+    {
+      "id": "llmstxt",
+      "title": "llms.txt proposal",
+      "url": "https://llmstxt.org/",
+      "source_type": "standards",
+      "retrieved": "2026-07-06",
+      "last_verified": "2026-07-06",
+      "refresh_due": "2026-08-01",
+      "confidence": "high",
+      "section": "geo",
+      "claims": [
+        "The /llms.txt proposal may guide non-Google LLM consumers, but Google Search does not use llms.txt for Search, AI Overviews, or AI Mode visibility."
+      ],
+      "supports_claims": [
+        "The /llms.txt proposal may guide non-Google LLM consumers, but Google Search does not use llms.txt for Search, AI Overviews, or AI Mode visibility."
+      ],
+      "source_pool": "Claude SEO Brain references/source-ledger.json",
+      "evidence_tier": "EVIDENCE-BASED",
+      "living_doc": true,
+      "last_updated": "2024-09-03",
+      "date_precision": "day"
+    },
+    {
+      "id": "sitemaps-org",
+      "title": "Sitemaps.org protocol",
+      "url": "https://www.sitemaps.org/protocol.html",
+      "source_type": "standards",
+      "retrieved": "2026-07-09",
+      "last_verified": "2026-07-09",
+      "refresh_due": "2026-08-01",
+      "confidence": "high",
+      "section": "technical",
+      "claims": [
+        "XML sitemap protocol shared across major engines."
+      ],
+      "supports_claims": [
+        "XML sitemap protocol shared across major engines."
+      ],
+      "source_pool": "Claude SEO Brain references/source-ledger.json",
+      "evidence_tier": "EVIDENCE-BASED",
+      "living_doc": true,
+      "last_updated": "2016-11-21",
+      "date_precision": "day"
+    },
+    {
+      "id": "rfc9309",
+      "title": "RFC 9309 Robots Exclusion Protocol",
+      "url": "https://www.rfc-editor.org/rfc/rfc9309",
+      "source_type": "standards",
+      "retrieved": "2026-07-06",
+      "last_verified": "2026-07-06",
+      "refresh_due": "2026-08-01",
+      "confidence": "high",
+      "section": "technical",
+      "claims": [
+        "Standardized robots.txt parsing rules."
+      ],
+      "supports_claims": [
+        "Standardized robots.txt parsing rules."
+      ],
+      "source_pool": "Claude SEO Brain references/source-ledger.json",
+      "evidence_tier": "EVIDENCE-BASED",
+      "living_doc": true,
+      "last_updated": "2022-09-01",
+      "date_precision": "day"
+    },
+    {
+      "id": "dfs-api",
+      "title": "DataForSEO API v3 documentation",
+      "url": "https://docs.dataforseo.com/v3/",
+      "source_type": "vendor",
+      "retrieved": "2026-07-09",
+      "last_verified": "2026-07-09",
+      "refresh_due": "2026-08-01",
+      "confidence": "high",
+      "section": "data-sources",
+      "claims": [
+        "Live SERP, keyword, backlink, on-page, and business-listing endpoints."
+      ],
+      "supports_claims": [
+        "Live SERP, keyword, backlink, on-page, and business-listing endpoints."
+      ],
+      "source_pool": "Claude SEO Brain references/source-ledger.json",
+      "evidence_tier": "EVIDENCE-BASED",
+      "living_doc": true,
+      "date_precision": "unknown",
+      "source_date_note": "No page-level published or last-updated date was exposed in the fetched source on 2026-07-09; use retrieved date only."
+    },
+    {
+      "id": "dfs-labs",
+      "title": "DataForSEO Labs",
+      "url": "https://docs.dataforseo.com/v3/dataforseo_labs/overview/",
+      "source_type": "vendor",
+      "retrieved": "2026-07-09",
+      "last_verified": "2026-07-09",
+      "refresh_due": "2026-08-01",
+      "confidence": "high",
+      "section": "clusters",
+      "claims": [
+        "Ranked keywords, competitors, and SERP-overlap datasets."
+      ],
+      "supports_claims": [
+        "Ranked keywords, competitors, and SERP-overlap datasets."
+      ],
+      "source_pool": "Claude SEO Brain references/source-ledger.json",
+      "evidence_tier": "EVIDENCE-BASED",
+      "living_doc": true,
+      "date_precision": "unknown",
+      "source_date_note": "No page-level published or last-updated date was exposed in the fetched source on 2026-07-09; use retrieved date only."
+    },
+    {
+      "id": "bing-wmt",
+      "title": "Bing Webmaster Guidelines",
+      "url": "https://www.bing.com/webmasters/help/webmaster-guidelines-30fba23a",
+      "source_type": "vendor",
+      "retrieved": "2026-07-09",
+      "last_verified": "2026-07-09",
+      "refresh_due": "2026-08-01",
+      "confidence": "high",
+      "section": "data-sources",
+      "claims": [
+        "Bing crawling, indexing, and IndexNow guidance."
+      ],
+      "supports_claims": [
+        "Bing crawling, indexing, and IndexNow guidance."
+      ],
+      "source_pool": "Claude SEO Brain references/source-ledger.json",
+      "evidence_tier": "EVIDENCE-BASED",
+      "living_doc": true,
+      "date_precision": "unknown",
+      "source_date_note": "No page-level published or last-updated date was exposed in the fetched source on 2026-07-09; use retrieved date only."
+    },
+    {
+      "id": "bing-submit",
+      "title": "IndexNow URL submission protocol",
+      "url": "https://www.bing.com/indexnow",
+      "source_type": "api-docs",
+      "retrieved": "2026-07-09",
+      "last_verified": "2026-07-09",
+      "refresh_due": "2026-08-01",
+      "confidence": "high",
+      "section": "technical",
+      "claims": [
+        "IndexNow lets sites notify participating search engines about changed URLs. This source does not document Copilot citation behavior."
+      ],
+      "supports_claims": [
+        "IndexNow lets sites notify participating search engines about changed URLs. This source does not document Copilot citation behavior."
+      ],
+      "source_pool": "Claude SEO Brain references/source-ledger.json",
+      "evidence_tier": "EVIDENCE-BASED",
+      "living_doc": true,
+      "date_precision": "unknown",
+      "source_date_note": "No page-level published or last-updated date was exposed in the fetched source on 2026-07-09; use retrieved date only."
+    },
+    {
+      "id": "ahrefs-api",
+      "title": "Ahrefs API and MCP",
+      "url": "https://docs.ahrefs.com/",
+      "source_type": "vendor",
+      "retrieved": "2026-07-09",
+      "last_verified": "2026-07-09",
+      "refresh_due": "2026-08-01",
+      "confidence": "high",
+      "section": "backlinks",
+      "claims": [
+        "Referring domains, backlinks, organic keywords, content explorer."
+      ],
+      "supports_claims": [
+        "Referring domains, backlinks, organic keywords, content explorer."
+      ],
+      "source_pool": "Claude SEO Brain references/source-ledger.json",
+      "evidence_tier": "EVIDENCE-BASED",
+      "living_doc": true,
+      "date_precision": "unknown",
+      "source_date_note": "No page-level published or last-updated date was exposed in the fetched source on 2026-07-09; use retrieved date only."
+    },
+    {
+      "id": "firecrawl",
+      "title": "Firecrawl documentation",
+      "url": "https://docs.firecrawl.dev/introduction",
+      "source_type": "vendor",
+      "retrieved": "2026-07-09",
+      "last_verified": "2026-07-09",
+      "refresh_due": "2026-08-01",
+      "confidence": "high",
+      "section": "technical",
+      "claims": [
+        "Full-site crawl, map, and JS-rendered scrape."
+      ],
+      "supports_claims": [
+        "Full-site crawl, map, and JS-rendered scrape."
+      ],
+      "source_pool": "Claude SEO Brain references/source-ledger.json",
+      "evidence_tier": "EVIDENCE-BASED",
+      "living_doc": true,
+      "date_precision": "unknown",
+      "source_date_note": "No page-level published or last-updated date was exposed in the fetched source on 2026-07-09; use retrieved date only."
+    },
+    {
+      "id": "ahrefs-aio",
+      "title": "Ahrefs: AI Overviews reduce clicks",
+      "url": "https://ahrefs.com/blog/ai-overviews-reduce-clicks-update/",
+      "source_type": "primary",
+      "retrieved": "2026-07-06",
+      "last_verified": "2026-07-06",
+      "published": "2026-02-04",
+      "refresh_due": "2026-08-01",
+      "confidence": "medium",
+      "section": "geo",
+      "claims": [
+        "Position-one CTR ~58% lower when an AI Overview is present (Dec 2025 data)."
+      ],
+      "supports_claims": [
+        "Position-one CTR ~58% lower when an AI Overview is present (Dec 2025 data)."
+      ],
+      "source_pool": "Claude SEO Brain references/source-ledger.json",
+      "evidence_tier": "PRACTITIONER",
+      "living_doc": false,
+      "date_precision": "day"
+    },
+    {
+      "id": "seoclarity-chatgpt",
+      "title": "seoClarity: top ChatGPT-cited pages",
+      "url": "https://www.seoclarity.net/research/analysis-of-top-cited-pages-from-chatgpt",
+      "source_type": "primary",
+      "retrieved": "2026-07-08",
+      "last_verified": "2026-07-08",
+      "published": "2025-11-20",
+      "refresh_due": "2026-08-01",
+      "confidence": "medium",
+      "section": "geo",
+      "claims": [
+        "25% of top 1,000 ChatGPT-cited URLs have zero Google organic visibility."
+      ],
+      "supports_claims": [
+        "25% of top 1,000 ChatGPT-cited URLs have zero Google organic visibility."
+      ],
+      "source_pool": "Claude SEO Brain references/source-ledger.json",
+      "evidence_tier": "PRACTITIONER",
+      "living_doc": false,
+      "date_precision": "day"
+    },
+    {
+      "id": "pew-ai",
+      "title": "Pew Research: clicks with AI summaries",
+      "url": "https://www.pewresearch.org/short-reads/2025/07/22/google-users-are-less-likely-to-click-on-links-when-an-ai-summary-appears-in-the-results/",
+      "source_type": "primary",
+      "retrieved": "2026-07-06",
+      "last_verified": "2026-07-06",
+      "published": "2025-07-22",
+      "refresh_due": "2026-08-01",
+      "confidence": "high",
+      "section": "geo",
+      "claims": [
+        "8% click-through with an AI summary vs 15% without."
+      ],
+      "supports_claims": [
+        "8% click-through with an AI summary vs 15% without."
+      ],
+      "source_pool": "Claude SEO Brain references/source-ledger.json",
+      "evidence_tier": "EVIDENCE-BASED",
+      "living_doc": false,
+      "date_precision": "day"
+    },
+    {
+      "id": "semrush-aio",
+      "title": "Semrush AI Overviews study",
+      "url": "https://www.semrush.com/blog/semrush-ai-overviews-study/",
+      "source_type": "primary",
+      "retrieved": "2026-07-06",
+      "last_verified": "2026-07-06",
+      "published": "2025-12-15",
+      "refresh_due": "2026-08-01",
+      "confidence": "medium",
+      "section": "geo",
+      "claims": [
+        "Presence and composition of AI Overviews across query types."
+      ],
+      "supports_claims": [
+        "Presence and composition of AI Overviews across query types."
+      ],
+      "source_pool": "Claude SEO Brain references/source-ledger.json",
+      "evidence_tier": "PRACTITIONER",
+      "living_doc": false,
+      "date_precision": "day"
+    },
+    {
+      "id": "statcounter",
+      "title": "StatCounter search engine market share",
+      "url": "https://gs.statcounter.com/search-engine-market-share",
+      "source_type": "primary",
+      "retrieved": "2026-07-08",
+      "last_verified": "2026-07-08",
+      "refresh_due": "2026-08-01",
+      "confidence": "medium",
+      "section": "data-sources",
+      "claims": [
+        "Search-engine market share is a dynamic dataset and must be quoted with dataset month, geography, and platform filter."
+      ],
+      "supports_claims": [
+        "Search-engine market share is a dynamic dataset and must be quoted with dataset month, geography, and platform filter."
+      ],
+      "source_pool": "Claude SEO Brain references/source-ledger.json",
+      "evidence_tier": "PRACTITIONER",
+      "living_doc": true,
+      "last_updated": "2026-04-25",
+      "date_precision": "day",
+      "methodology": "Dynamic StatCounter Global Stats chart. Record dataset month, geography, and platform filter when quoting exact shares.",
+      "limitations": "Do not treat the page as a fixed published report. Exact shares can drift as the selected month, geography, and device filter changes.",
+      "dataset_month": "2026-04",
+      "geography": "worldwide and United States, as separately filtered",
+      "platform_filter": "all platforms unless otherwise recorded"
+    },
+    {
+      "id": "blog-aimode",
+      "title": "Google: AI Mode in Search",
+      "url": "https://blog.google/products/search/ai-mode-search/",
+      "source_type": "official",
+      "retrieved": "2026-07-06",
+      "last_verified": "2026-07-06",
+      "published": "2025-03-05",
+      "refresh_due": "2026-08-01",
+      "confidence": "high",
+      "section": "geo",
+      "claims": [
+        "AI Mode launch; a distinct citation surface from AI Overviews."
+      ],
+      "supports_claims": [
+        "AI Mode launch; a distinct citation surface from AI Overviews."
+      ],
+      "source_pool": "Claude SEO Brain references/source-ledger.json",
+      "evidence_tier": "EVIDENCE-BASED",
+      "living_doc": false,
+      "date_precision": "day"
+    },
+    {
+      "id": "blog-io2026",
+      "title": "Google I/O 2026 Search updates",
+      "url": "https://blog.google/products-and-platforms/products/search/search-io-2026/",
+      "source_type": "official",
+      "retrieved": "2026-07-08",
+      "last_verified": "2026-07-08",
+      "published": "2026-05-19",
+      "refresh_due": "2026-08-01",
+      "confidence": "high",
+      "section": "geo",
+      "claims": [
+        "Gemini 3.5 Flash powers AI Mode; 1B+ monthly users."
+      ],
+      "supports_claims": [
+        "Gemini 3.5 Flash powers AI Mode; 1B+ monthly users."
+      ],
+      "source_pool": "Claude SEO Brain references/source-ledger.json",
+      "evidence_tier": "EVIDENCE-BASED",
+      "living_doc": false,
+      "date_precision": "day"
+    },
+    {
+      "id": "g-status-dashboard",
+      "title": "Google Search Status Dashboard (ranking history)",
+      "url": "https://status.search.google.com/products/rGHU1u87FJnkP6W2GwMi/history",
+      "source_type": "official",
+      "retrieved": "2026-07-06",
+      "last_verified": "2026-07-06",
+      "refresh_due": "2026-08-01",
+      "confidence": "high",
+      "section": "monitoring",
+      "claims": [
+        "Authoritative confirmed ranking-update history; ranking-update-history now redirects here."
+      ],
+      "supports_claims": [
+        "Authoritative confirmed ranking-update history; ranking-update-history now redirects here."
+      ],
+      "source_pool": "Claude SEO Brain references/source-ledger.json",
+      "evidence_tier": "EVIDENCE-BASED",
+      "living_doc": true,
+      "last_updated": "2026-07-01",
+      "date_precision": "day"
+    },
+    {
+      "id": "g-qrg-full",
+      "title": "Search Quality Rater General Guidelines (182pp)",
+      "url": "https://guidelines.raterhub.com/searchqualityevaluatorguidelines.pdf",
+      "source_type": "official",
+      "retrieved": "2026-07-08",
+      "last_verified": "2026-07-08",
+      "published": "2025-09-11",
+      "refresh_due": "2026-08-01",
+      "confidence": "high",
+      "section": "content",
+      "claims": [
+        "Authoritative 182-page Search Quality Rater General Guidelines PDF dated 2025-09-11."
+      ],
+      "supports_claims": [
+        "Authoritative 182-page Search Quality Rater General Guidelines PDF dated 2025-09-11."
+      ],
+      "source_pool": "Claude SEO Brain references/source-ledger.json",
+      "evidence_tier": "EVIDENCE-BASED",
+      "living_doc": false,
+      "date_precision": "day"
+    },
+    {
+      "id": "g-genai-reports",
+      "title": "Search Console Search Generative AI performance reports",
+      "url": "https://developers.google.com/search/blog/2026/06/gen-ai-performance-reports",
+      "source_type": "official",
+      "retrieved": "2026-07-08",
+      "last_verified": "2026-07-08",
+      "published": "2026-06-03",
+      "refresh_due": "2026-08-01",
+      "confidence": "high",
+      "section": "geo",
+      "claims": [
+        "Search Console reports impressions in AI Overviews and AI Mode; June 2026."
+      ],
+      "supports_claims": [
+        "Search Console reports impressions in AI Overviews and AI Mode; June 2026."
+      ],
+      "source_pool": "Claude SEO Brain references/source-ledger.json",
+      "evidence_tier": "EVIDENCE-BASED",
+      "living_doc": false,
+      "date_precision": "day"
+    },
+    {
+      "id": "g-back-button",
+      "title": "Back button hijacking spam policy",
+      "url": "https://developers.google.com/search/blog/2026/04/back-button-hijacking",
+      "source_type": "official",
+      "retrieved": "2026-07-06",
+      "last_verified": "2026-07-06",
+      "published": "2026-04-01",
+      "refresh_due": "2026-08-01",
+      "confidence": "high",
+      "section": "monitoring",
+      "claims": [
+        "Malicious-practices spam policy; enforcement 2026-06-15."
+      ],
+      "supports_claims": [
+        "Malicious-practices spam policy; enforcement 2026-06-15."
+      ],
+      "source_pool": "Claude SEO Brain references/source-ledger.json",
+      "evidence_tier": "EVIDENCE-BASED",
+      "living_doc": false,
+      "date_precision": "day"
+    },
+    {
+      "id": "g-spam-policies",
+      "title": "Spam policies for Google web search",
+      "url": "https://developers.google.com/search/docs/essentials/spam-policies",
+      "source_type": "official",
+      "retrieved": "2026-07-06",
+      "last_verified": "2026-07-06",
+      "refresh_due": "2026-08-01",
+      "confidence": "high",
+      "section": "monitoring",
+      "claims": [
+        "Scaled content abuse, site reputation abuse, cloaking, link spam; updated 2026-05-15."
+      ],
+      "supports_claims": [
+        "Scaled content abuse, site reputation abuse, cloaking, link spam; updated 2026-05-15."
+      ],
+      "source_pool": "Claude SEO Brain references/source-ledger.json",
+      "evidence_tier": "EVIDENCE-BASED",
+      "living_doc": true,
+      "last_updated": "2026-05-15",
+      "date_precision": "day"
+    },
+    {
+      "id": "g-ai-opt-guide",
+      "title": "AI features optimization guide (llms.txt stance)",
+      "url": "https://developers.google.com/search/docs/fundamentals/ai-optimization-guide",
+      "source_type": "official",
+      "retrieved": "2026-07-10",
+      "last_verified": "2026-07-10",
+      "refresh_due": "2026-08-01",
+      "confidence": "high",
+      "section": "geo",
+      "claims": [
+        "Google does not use llms.txt; no special AI files or schema required for AI features."
+      ],
+      "supports_claims": [
+        "Google does not use llms.txt; no special AI files or schema required for AI features."
+      ],
+      "source_pool": "Claude SEO Brain references/source-ledger.json",
+      "evidence_tier": "EVIDENCE-BASED",
+      "living_doc": true,
+      "last_updated": "2026-06-29",
+      "page_last_updated": "2026-06-29",
+      "changelog_event": {
+        "date": "2026-06-15",
+        "source_id": "g-update-2026-06-15-llms-txt-clarified-as-unused-by-google-search",
+        "summary": "Search documentation update clarified that llms.txt is not needed for Google Search visibility."
+      },
+      "date_precision": "day"
+    },
+    {
+      "id": "g-search-gallery",
+      "title": "Structured data search gallery (supported types)",
+      "url": "https://developers.google.com/search/docs/appearance/structured-data/search-gallery",
+      "source_type": "official",
+      "retrieved": "2026-07-08",
+      "last_verified": "2026-07-08",
+      "refresh_due": "2026-08-01",
+      "confidence": "high",
+      "section": "schema",
+      "claims": [
+        "Authoritative list of supported rich-result types; Reservation and OrderAction are not included."
+      ],
+      "supports_claims": [
+        "Authoritative list of supported rich-result types; Reservation and OrderAction are not included."
+      ],
+      "source_pool": "Claude SEO Brain references/source-ledger.json",
+      "evidence_tier": "EVIDENCE-BASED",
+      "living_doc": true,
+      "last_updated": "2026-07-01",
+      "date_precision": "day"
+    },
+    {
+      "id": "g-inside-googlebot",
+      "title": "Inside Googlebot (2MB fetch, HTTP caching)",
+      "url": "https://developers.google.com/search/blog/2026/03/crawler-blog-post",
+      "source_type": "official",
+      "retrieved": "2026-07-06",
+      "last_verified": "2026-07-06",
+      "published": "2026-03-01",
+      "refresh_due": "2026-08-01",
+      "confidence": "high",
+      "section": "technical",
+      "claims": [
+        "Googlebot fetches first 2MB per URL; use ETag/If-None-Match and 304 for crawl efficiency."
+      ],
+      "supports_claims": [
+        "Googlebot fetches first 2MB per URL; use ETag/If-None-Match and 304 for crawl efficiency."
+      ],
+      "source_pool": "Claude SEO Brain references/source-ledger.json",
+      "evidence_tier": "EVIDENCE-BASED",
+      "living_doc": false,
+      "date_precision": "day"
+    },
+    {
+      "id": "g-googlebot",
+      "title": "Googlebot documentation",
+      "url": "https://developers.google.com/search/docs/crawling-indexing/googlebot",
+      "source_type": "official",
+      "retrieved": "2026-07-06",
+      "last_verified": "2026-07-06",
+      "refresh_due": "2026-08-01",
+      "confidence": "high",
+      "section": "technical",
+      "claims": [
+        "Crawls first 2MB of a file (PDF 64MB); evergreen Chromium rendering."
+      ],
+      "supports_claims": [
+        "Crawls first 2MB of a file (PDF 64MB); evergreen Chromium rendering."
+      ],
+      "source_pool": "Claude SEO Brain references/source-ledger.json",
+      "evidence_tier": "EVIDENCE-BASED",
+      "living_doc": true,
+      "last_updated": "2026-02-03",
+      "date_precision": "day"
+    },
+    {
+      "id": "g-common-crawlers",
+      "title": "Google common crawlers (Google-Extended)",
+      "url": "https://developers.google.com/search/docs/crawling-indexing/google-common-crawlers",
+      "source_type": "official",
+      "retrieved": "2026-07-06",
+      "last_verified": "2026-07-06",
+      "refresh_due": "2026-08-01",
+      "confidence": "high",
+      "section": "technical",
+      "claims": [
+        "Google-Extended AI-training opt-out; not a ranking signal."
+      ],
+      "supports_claims": [
+        "Google-Extended AI-training opt-out; not a ranking signal."
+      ],
+      "source_pool": "Claude SEO Brain references/source-ledger.json",
+      "evidence_tier": "EVIDENCE-BASED",
+      "living_doc": true,
+      "last_updated": "2026-04-23",
+      "date_precision": "day"
+    },
+    {
+      "id": "g-qualify-links",
+      "title": "Qualify your outbound links",
+      "url": "https://developers.google.com/search/docs/crawling-indexing/qualify-outbound-links",
+      "source_type": "official",
+      "retrieved": "2026-07-06",
+      "last_verified": "2026-07-06",
+      "refresh_due": "2026-08-01",
+      "confidence": "high",
+      "section": "backlinks",
+      "claims": [
+        "rel=sponsored preferred for paid, ugc for user content, nofollow otherwise; treated as hints."
+      ],
+      "supports_claims": [
+        "rel=sponsored preferred for paid, ugc for user content, nofollow otherwise; treated as hints."
+      ],
+      "source_pool": "Claude SEO Brain references/source-ledger.json",
+      "evidence_tier": "EVIDENCE-BASED",
+      "living_doc": true,
+      "last_updated": "2025-12-10",
+      "date_precision": "day"
+    },
+    {
+      "id": "chrome-crux-notes",
+      "title": "CrUX release notes",
+      "url": "https://developer.chrome.com/docs/crux/release-notes",
+      "source_type": "official",
+      "retrieved": "2026-07-06",
+      "last_verified": "2026-07-06",
+      "refresh_due": "2026-08-01",
+      "confidence": "high",
+      "section": "technical",
+      "claims": [
+        "May 2026 release (pub 2026-06-09): 55.9% of origins pass CWV; no metric change."
+      ],
+      "supports_claims": [
+        "May 2026 release (pub 2026-06-09): 55.9% of origins pass CWV; no metric change."
+      ],
+      "source_pool": "Claude SEO Brain references/source-ledger.json",
+      "evidence_tier": "EVIDENCE-BASED",
+      "living_doc": true,
+      "last_updated": "2026-06-09",
+      "date_precision": "day"
+    },
+    {
+      "id": "wd-inp-mar12",
+      "title": "INP becomes a Core Web Vital (March 12)",
+      "url": "https://web.dev/blog/inp-cwv-march-12",
+      "source_type": "official",
+      "retrieved": "2026-07-06",
+      "last_verified": "2026-07-06",
+      "published": "2024-03-12",
+      "refresh_due": "2026-08-01",
+      "confidence": "high",
+      "section": "technical",
+      "claims": [
+        "INP became a CWV on 2024-03-12, replacing FID; FID fully removed from tools ~2024-09-09."
+      ],
+      "supports_claims": [
+        "INP became a CWV on 2024-03-12, replacing FID; FID fully removed from tools ~2024-09-09."
+      ],
+      "source_pool": "Claude SEO Brain references/source-ledger.json",
+      "evidence_tier": "EVIDENCE-BASED",
+      "living_doc": false,
+      "date_precision": "day"
+    },
+    {
+      "id": "chrome-softnav-final",
+      "title": "Final Soft Navigations origin trial",
+      "url": "https://developer.chrome.com/blog/final-soft-navigations-origin-trial",
+      "source_type": "official",
+      "retrieved": "2026-07-06",
+      "last_verified": "2026-07-06",
+      "published": "2026-04-20",
+      "refresh_due": "2026-08-01",
+      "confidence": "high",
+      "section": "technical",
+      "claims": [
+        "Final origin trial Chrome 147 to 149; targeting unflagged ship ~Chrome 151 later in 2026."
+      ],
+      "supports_claims": [
+        "Final origin trial Chrome 147 to 149; targeting unflagged ship ~Chrome 151 later in 2026."
+      ],
+      "source_pool": "Claude SEO Brain references/source-ledger.json",
+      "evidence_tier": "EVIDENCE-BASED",
+      "living_doc": false,
+      "date_precision": "day"
+    },
+    {
+      "id": "ahrefs-aio-vs-aimode",
+      "title": "Ahrefs: AI Overviews vs AI Mode",
+      "url": "https://ahrefs.com/blog/ai-overviews-vs-ai-mode/",
+      "source_type": "primary",
+      "retrieved": "2026-07-08",
+      "last_verified": "2026-07-08",
+      "published": "2025-12-15",
+      "refresh_due": "2026-08-01",
+      "confidence": "medium",
+      "section": "geo",
+      "claims": [
+        "Only 13.7% citation overlap between AI Overviews and AI Mode across 540K query pairs."
+      ],
+      "supports_claims": [
+        "Only 13.7% citation overlap between AI Overviews and AI Mode across 540K query pairs."
+      ],
+      "source_pool": "Claude SEO Brain references/source-ledger.json",
+      "evidence_tier": "PRACTITIONER",
+      "living_doc": false,
+      "date_precision": "day"
+    },
+    {
+      "id": "seer-aio-ctr",
+      "title": "Seer: AI Overviews CTR recovery",
+      "url": "https://searchengineland.com/google-ai-overviews-ctr-recovery-study-475566",
+      "source_type": "primary",
+      "retrieved": "2026-07-06",
+      "last_verified": "2026-07-06",
+      "published": "2026-04-24",
+      "refresh_due": "2026-08-01",
+      "confidence": "medium",
+      "section": "geo",
+      "claims": [
+        "Cited-in-AIO pages ~2.1% CTR vs 0.9% not cited; AIO CTR recovered 1.3% Dec 2025 to 2.4% Feb 2026."
+      ],
+      "supports_claims": [
+        "Cited-in-AIO pages ~2.1% CTR vs 0.9% not cited; AIO CTR recovered 1.3% Dec 2025 to 2.4% Feb 2026."
+      ],
+      "source_pool": "Claude SEO Brain references/source-ledger.json",
+      "evidence_tier": "PRACTITIONER",
+      "living_doc": false,
+      "date_precision": "day"
+    },
+    {
+      "id": "gh-flow-framework",
+      "title": "FLOW framework bibliography",
+      "url": "https://github.com/AgriciDaniel/flow",
+      "source_type": "primary",
+      "retrieved": "2026-07-06",
+      "last_verified": "2026-07-06",
+      "published": "2026-06-22",
+      "refresh_due": "2026-08-01",
+      "confidence": "high",
+      "section": "prompts",
+      "claims": [
+        "Source of the FLOW stage prompt corpus summarized in wiki/prompts FLOW pages."
+      ],
+      "supports_claims": [
+        "Source of the FLOW stage prompt corpus summarized in wiki/prompts FLOW pages."
+      ],
+      "source_pool": "Claude SEO Brain references/source-ledger.json",
+      "evidence_tier": "EVIDENCE-BASED",
+      "living_doc": false,
+      "date_precision": "day"
+    },
+    {
+      "id": "g-update-2024-03-05-march-2024-core-update-spam-updates",
+      "title": "March 2024 Core Update + spam updates",
+      "url": "https://developers.google.com/search/blog/2024/03/core-update-spam-policies",
+      "source_type": "official",
+      "retrieved": "2026-07-06",
+      "last_verified": "2026-07-06",
+      "published": "2024-03-05",
+      "refresh_due": "2026-08-06",
+      "confidence": "high",
+      "section": "algorithm-ledger",
+      "claims": [
+        "Helpful Content System merged into core ranking; new spam policies for scaled content, site reputation, and expired domain abuse."
+      ],
+      "supports_claims": [
+        "Helpful Content System merged into core ranking; new spam policies for scaled content, site reputation, and expired domain abuse."
+      ],
+      "source_pool": "data/google-updates.json",
+      "evidence_tier": "EVIDENCE-BASED",
+      "living_doc": false,
+      "date_precision": "day",
+      "raw_snapshot_path": ".raw/sources/claude-blog-brain-data/google-updates.json",
+      "raw_snapshot_sha256": "9ca5e729bdf30f27b4e6d49139c4c50a128a4dc48e7791621515d6b800d7e86b",
+      "hash_algorithm": "sha256"
+    },
+    {
+      "id": "g-update-2024-03-05-inp-replaces-fid",
+      "title": "INP replaces FID",
+      "url": "https://web.dev/articles/inp",
+      "source_type": "official",
+      "retrieved": "2026-07-06",
+      "last_verified": "2026-07-06",
+      "refresh_due": "2026-08-06",
+      "confidence": "high",
+      "section": "performance",
+      "claims": [
+        "INP becomes a stable Core Web Vital. FID dropped from CrUX/PSI 2024-09-09."
+      ],
+      "supports_claims": [
+        "INP becomes a stable Core Web Vital. FID dropped from CrUX/PSI 2024-09-09."
+      ],
+      "source_pool": "data/google-updates.json",
+      "evidence_tier": "EVIDENCE-BASED",
+      "living_doc": true,
+      "last_updated": "2024-03-05",
+      "date_precision": "day",
+      "raw_snapshot_path": ".raw/sources/claude-blog-brain-data/google-updates.json",
+      "raw_snapshot_sha256": "9ca5e729bdf30f27b4e6d49139c4c50a128a4dc48e7791621515d6b800d7e86b",
+      "hash_algorithm": "sha256"
+    },
+    {
+      "id": "g-update-2024-05-05-site-reputation-abuse-enforcement-begins",
+      "title": "Site reputation abuse enforcement begins",
+      "url": "https://developers.google.com/search/blog/2024/03/core-update-spam-policies",
+      "source_type": "official",
+      "retrieved": "2026-07-06",
+      "last_verified": "2026-07-06",
+      "published": "2024-05-05",
+      "refresh_due": "2026-08-06",
+      "confidence": "high",
+      "section": "policy",
+      "claims": [
+        "Site reputation abuse enforcement began as a policy enforcement phase for qualifying third-party content. Named-site impact requires separate reporting sources."
+      ],
+      "supports_claims": [
+        "Site reputation abuse enforcement began as a policy enforcement phase for qualifying third-party content. Named-site impact requires separate reporting sources."
+      ],
+      "source_pool": "data/google-updates.json",
+      "evidence_tier": "EVIDENCE-BASED",
+      "living_doc": false,
+      "date_precision": "day",
+      "raw_snapshot_path": ".raw/sources/claude-blog-brain-data/google-updates.json",
+      "raw_snapshot_sha256": "9ca5e729bdf30f27b4e6d49139c4c50a128a4dc48e7791621515d6b800d7e86b",
+      "hash_algorithm": "sha256"
+    },
+    {
+      "id": "g-update-2024-06-20-june-2024-spam-update",
+      "title": "June 2024 Spam Update",
+      "url": "https://status.search.google.com/products/rGHU1u87FJnkP6W2GwMi/history",
+      "source_type": "official",
+      "retrieved": "2026-07-06",
+      "last_verified": "2026-07-06",
+      "published": "2024-06-20",
+      "refresh_due": "2026-08-06",
+      "confidence": "high",
+      "section": "algorithm-ledger",
+      "claims": [
+        "June 2024 spam update started 2024-06-20 and was recorded in the Google Search Status Dashboard history."
+      ],
+      "supports_claims": [
+        "June 2024 spam update started 2024-06-20 and was recorded in the Google Search Status Dashboard history."
+      ],
+      "source_pool": "data/google-updates.json",
+      "evidence_tier": "EVIDENCE-BASED",
+      "living_doc": false,
+      "date_precision": "day",
+      "raw_snapshot_path": ".raw/sources/claude-blog-brain-data/google-updates.json",
+      "raw_snapshot_sha256": "9ca5e729bdf30f27b4e6d49139c4c50a128a4dc48e7791621515d6b800d7e86b",
+      "hash_algorithm": "sha256"
+    },
+    {
+      "id": "g-update-2024-08-15-august-2024-core-update",
+      "title": "August 2024 Core Update",
+      "url": "https://developers.google.com/search/blog/2024/08/august-2024-core-update",
+      "source_type": "official",
+      "retrieved": "2026-07-06",
+      "last_verified": "2026-07-06",
+      "published": "2024-08-15",
+      "refresh_due": "2026-08-06",
+      "confidence": "high",
+      "section": "algorithm-ledger",
+      "claims": [
+        "Google said the August 2024 core update was designed to surface more useful content and better capture improvements. Recovery examples require separate site or third-party evidence."
+      ],
+      "supports_claims": [
+        "Google said the August 2024 core update was designed to surface more useful content and better capture improvements. Recovery examples require separate site or third-party evidence."
+      ],
+      "source_pool": "data/google-updates.json",
+      "evidence_tier": "EVIDENCE-BASED",
+      "living_doc": false,
+      "date_precision": "day",
+      "raw_snapshot_path": ".raw/sources/claude-blog-brain-data/google-updates.json",
+      "raw_snapshot_sha256": "9ca5e729bdf30f27b4e6d49139c4c50a128a4dc48e7791621515d6b800d7e86b",
+      "hash_algorithm": "sha256"
+    },
+    {
+      "id": "g-update-2024-11-11-november-2024-core-update",
+      "title": "November 2024 Core Update",
+      "url": "https://status.search.google.com/products/rGHU1u87FJnkP6W2GwMi/history",
+      "source_type": "official",
+      "retrieved": "2026-07-09",
+      "last_verified": "2026-07-09",
+      "published": "2024-11-11",
+      "refresh_due": "2026-08-06",
+      "confidence": "high",
+      "section": "algorithm-ledger",
+      "claims": [
+        "24-day rollout."
+      ],
+      "supports_claims": [
+        "24-day rollout."
+      ],
+      "source_pool": "data/google-updates.json",
+      "evidence_tier": "EVIDENCE-BASED",
+      "living_doc": false,
+      "date_precision": "day",
+      "raw_snapshot_path": ".raw/sources/claude-blog-brain-data/google-updates.json",
+      "raw_snapshot_sha256": "9ca5e729bdf30f27b4e6d49139c4c50a128a4dc48e7791621515d6b800d7e86b",
+      "hash_algorithm": "sha256"
+    },
+    {
+      "id": "g-update-2024-11-19-site-reputation-abuse-policy-clarified",
+      "title": "Site Reputation Abuse policy clarified",
+      "url": "https://developers.google.com/search/blog/2024/11/site-reputation-abuse",
+      "source_type": "official",
+      "retrieved": "2026-07-06",
+      "last_verified": "2026-07-06",
+      "published": "2024-11-19",
+      "refresh_due": "2026-08-06",
+      "confidence": "high",
+      "section": "policy",
+      "claims": [
+        "Google clarified that first-party involvement or oversight does not change the third-party nature of content when the site reputation abuse policy conditions are met."
+      ],
+      "supports_claims": [
+        "Google clarified that first-party involvement or oversight does not change the third-party nature of content when the site reputation abuse policy conditions are met."
+      ],
+      "source_pool": "data/google-updates.json",
+      "evidence_tier": "EVIDENCE-BASED",
+      "living_doc": false,
+      "date_precision": "day",
+      "raw_snapshot_path": ".raw/sources/claude-blog-brain-data/google-updates.json",
+      "raw_snapshot_sha256": "9ca5e729bdf30f27b4e6d49139c4c50a128a4dc48e7791621515d6b800d7e86b",
+      "hash_algorithm": "sha256"
+    },
+    {
+      "id": "g-update-2024-12-12-december-2024-core-update",
+      "title": "December 2024 Core Update",
+      "url": "https://status.search.google.com/products/rGHU1u87FJnkP6W2GwMi/history",
+      "source_type": "official",
+      "retrieved": "2026-07-09",
+      "last_verified": "2026-07-09",
+      "published": "2024-12-12",
+      "refresh_due": "2026-08-06",
+      "confidence": "high",
+      "section": "algorithm-ledger",
+      "claims": [
+        "Tight rollout (~7 days)."
+      ],
+      "supports_claims": [
+        "Tight rollout (~7 days)."
+      ],
+      "source_pool": "data/google-updates.json",
+      "evidence_tier": "EVIDENCE-BASED",
+      "living_doc": false,
+      "date_precision": "day",
+      "raw_snapshot_path": ".raw/sources/claude-blog-brain-data/google-updates.json",
+      "raw_snapshot_sha256": "9ca5e729bdf30f27b4e6d49139c4c50a128a4dc48e7791621515d6b800d7e86b",
+      "hash_algorithm": "sha256"
+    },
+    {
+      "id": "g-update-2024-12-19-december-2024-spam-update",
+      "title": "December 2024 Spam Update",
+      "url": "https://status.search.google.com/products/rGHU1u87FJnkP6W2GwMi/history",
+      "source_type": "official",
+      "retrieved": "2026-07-09",
+      "last_verified": "2026-07-09",
+      "published": "2024-12-19",
+      "refresh_due": "2026-08-06",
+      "confidence": "high",
+      "section": "algorithm-ledger",
+      "claims": [
+        "Cited as targeting scaled content abuse."
+      ],
+      "supports_claims": [
+        "Cited as targeting scaled content abuse."
+      ],
+      "source_pool": "data/google-updates.json",
+      "evidence_tier": "EVIDENCE-BASED",
+      "living_doc": false,
+      "date_precision": "day",
+      "raw_snapshot_path": ".raw/sources/claude-blog-brain-data/google-updates.json",
+      "raw_snapshot_sha256": "9ca5e729bdf30f27b4e6d49139c4c50a128a4dc48e7791621515d6b800d7e86b",
+      "hash_algorithm": "sha256"
+    },
+    {
+      "id": "g-update-2025-01-23-qrg-update-jan-2025",
+      "title": "QRG update (Jan 2025)",
+      "url": "https://guidelines.raterhub.com/searchqualityevaluatorguidelines.pdf",
+      "source_type": "official",
+      "retrieved": "2026-07-06",
+      "last_verified": "2026-07-06",
+      "published": "2025-01-23",
+      "refresh_due": "2026-08-06",
+      "confidence": "high",
+      "section": "quality-rater-guidelines",
+      "claims": [
+        "Adds formal definition of generative AI (§2.1). Defines scaled content abuse, expired-domain abuse, filler content under §4.6 Spammy Webpages. Lowest rating triggered when all/almost all MC is copied, paraphrased, or AI-generated."
+      ],
+      "supports_claims": [
+        "Adds formal definition of generative AI (§2.1). Defines scaled content abuse, expired-domain abuse, filler content under §4.6 Spammy Webpages. Lowest rating triggered when all/almost all MC is copied, paraphrased, or AI-generated."
+      ],
+      "source_pool": "data/google-updates.json",
+      "evidence_tier": "EVIDENCE-BASED",
+      "living_doc": false,
+      "date_precision": "day",
+      "raw_snapshot_path": ".raw/sources/claude-blog-brain-data/google-updates.json",
+      "raw_snapshot_sha256": "9ca5e729bdf30f27b4e6d49139c4c50a128a4dc48e7791621515d6b800d7e86b",
+      "hash_algorithm": "sha256"
+    },
+    {
+      "id": "g-update-2025-03-05-ai-mode-experimental-launch",
+      "title": "AI Mode experimental launch",
+      "url": "https://blog.google/products/search/ai-mode-search/",
+      "source_type": "official",
+      "retrieved": "2026-07-06",
+      "last_verified": "2026-07-06",
+      "published": "2025-03-05",
+      "refresh_due": "2026-08-06",
+      "confidence": "high",
+      "section": "ai-search",
+      "claims": [
+        "Initially Google One AI Premium / Labs (US). Gemini 2.0 backend. Query fan-out technique."
+      ],
+      "supports_claims": [
+        "Initially Google One AI Premium / Labs (US). Gemini 2.0 backend. Query fan-out technique."
+      ],
+      "source_pool": "data/google-updates.json",
+      "evidence_tier": "EVIDENCE-BASED",
+      "living_doc": false,
+      "date_precision": "day",
+      "raw_snapshot_path": ".raw/sources/claude-blog-brain-data/google-updates.json",
+      "raw_snapshot_sha256": "9ca5e729bdf30f27b4e6d49139c4c50a128a4dc48e7791621515d6b800d7e86b",
+      "hash_algorithm": "sha256"
+    },
+    {
+      "id": "g-update-2025-03-13-march-2025-core-update",
+      "title": "March 2025 Core Update",
+      "url": "https://status.search.google.com/products/rGHU1u87FJnkP6W2GwMi/history",
+      "source_type": "official",
+      "retrieved": "2026-07-09",
+      "last_verified": "2026-07-09",
+      "published": "2025-03-13",
+      "refresh_due": "2026-08-06",
+      "confidence": "high",
+      "section": "algorithm-ledger",
+      "claims": [
+        "14-day rollout."
+      ],
+      "supports_claims": [
+        "14-day rollout."
+      ],
+      "source_pool": "data/google-updates.json",
+      "evidence_tier": "EVIDENCE-BASED",
+      "living_doc": false,
+      "date_precision": "day",
+      "raw_snapshot_path": ".raw/sources/claude-blog-brain-data/google-updates.json",
+      "raw_snapshot_sha256": "9ca5e729bdf30f27b4e6d49139c4c50a128a4dc48e7791621515d6b800d7e86b",
+      "hash_algorithm": "sha256"
+    },
+    {
+      "id": "g-update-2025-05-20-ai-mode-general-rollout-us",
+      "title": "AI Mode general rollout (US)",
+      "url": "https://blog.google/products/search/google-search-ai-mode-update/",
+      "source_type": "official",
+      "retrieved": "2026-07-06",
+      "last_verified": "2026-07-06",
+      "published": "2025-05-20",
+      "refresh_due": "2026-08-06",
+      "confidence": "high",
+      "section": "ai-search",
+      "claims": [
+        "No Labs sign-up required. Gemini 2.5 in AI Mode and AI Overviews."
+      ],
+      "supports_claims": [
+        "No Labs sign-up required. Gemini 2.5 in AI Mode and AI Overviews."
+      ],
+      "source_pool": "data/google-updates.json",
+      "evidence_tier": "EVIDENCE-BASED",
+      "living_doc": false,
+      "date_precision": "day",
+      "raw_snapshot_path": ".raw/sources/claude-blog-brain-data/google-updates.json",
+      "raw_snapshot_sha256": "9ca5e729bdf30f27b4e6d49139c4c50a128a4dc48e7791621515d6b800d7e86b",
+      "hash_algorithm": "sha256"
+    },
+    {
+      "id": "g-update-2025-06-19-structured-data-deprecation",
+      "title": "Structured data deprecation",
+      "url": "https://developers.google.com/search/blog/2025/06/simplifying-search-results",
+      "source_type": "official",
+      "retrieved": "2026-07-06",
+      "last_verified": "2026-07-06",
+      "published": "2025-06-19",
+      "refresh_due": "2026-08-06",
+      "confidence": "high",
+      "section": "schema",
+      "claims": [
+        "Phased out: Course Info, Claim Review, Estimated Salary, Learning Video, Special Announcement (carryover), Vehicle Listing."
+      ],
+      "supports_claims": [
+        "Phased out: Course Info, Claim Review, Estimated Salary, Learning Video, Special Announcement (carryover), Vehicle Listing."
+      ],
+      "source_pool": "data/google-updates.json",
+      "evidence_tier": "EVIDENCE-BASED",
+      "living_doc": false,
+      "date_precision": "day",
+      "raw_snapshot_path": ".raw/sources/claude-blog-brain-data/google-updates.json",
+      "raw_snapshot_sha256": "9ca5e729bdf30f27b4e6d49139c4c50a128a4dc48e7791621515d6b800d7e86b",
+      "hash_algorithm": "sha256"
+    },
+    {
+      "id": "g-update-2025-06-30-june-2025-core-update",
+      "title": "June 2025 Core Update",
+      "url": "https://status.search.google.com/products/rGHU1u87FJnkP6W2GwMi/history",
+      "source_type": "official",
+      "retrieved": "2026-07-09",
+      "last_verified": "2026-07-09",
+      "published": "2025-06-30",
+      "refresh_due": "2026-08-06",
+      "confidence": "high",
+      "section": "algorithm-ledger",
+      "claims": [
+        "June 2025 core update had a 16-day rollout in the official Google Search Status Dashboard history."
+      ],
+      "supports_claims": [
+        "June 2025 core update had a 16-day rollout in the official Google Search Status Dashboard history."
+      ],
+      "source_pool": "data/google-updates.json",
+      "evidence_tier": "EVIDENCE-BASED",
+      "living_doc": false,
+      "date_precision": "day",
+      "raw_snapshot_path": ".raw/sources/claude-blog-brain-data/google-updates.json",
+      "raw_snapshot_sha256": "9ca5e729bdf30f27b4e6d49139c4c50a128a4dc48e7791621515d6b800d7e86b",
+      "hash_algorithm": "sha256",
+      "limitations": "This official source does not support HCU recovery claims; cite a separate practitioner or reporting source before making recovery claims."
+    },
+    {
+      "id": "g-update-2025-08-21-ai-mode-expands-to-180-countries",
+      "title": "AI Mode expands to 180+ countries",
+      "url": "https://blog.google/products/search/google-search-ai-mode-update/",
+      "source_type": "official",
+      "retrieved": "2026-07-06",
+      "last_verified": "2026-07-06",
+      "published": "2025-08-21",
+      "refresh_due": "2026-08-06",
+      "confidence": "high",
+      "section": "ai-search",
+      "claims": [
+        "English first. Robby Stein: 'active' AI Mode begins with dining reservations."
+      ],
+      "supports_claims": [
+        "English first. Robby Stein: 'active' AI Mode begins with dining reservations."
+      ],
+      "source_pool": "data/google-updates.json",
+      "evidence_tier": "EVIDENCE-BASED",
+      "living_doc": false,
+      "date_precision": "day",
+      "raw_snapshot_path": ".raw/sources/claude-blog-brain-data/google-updates.json",
+      "raw_snapshot_sha256": "9ca5e729bdf30f27b4e6d49139c4c50a128a4dc48e7791621515d6b800d7e86b",
+      "hash_algorithm": "sha256"
+    },
+    {
+      "id": "g-update-2025-09-11-qrg-update-sept-2025",
+      "title": "QRG update (Sept 2025)",
+      "url": "https://guidelines.raterhub.com/searchqualityevaluatorguidelines.pdf",
+      "source_type": "official",
+      "retrieved": "2026-07-06",
+      "last_verified": "2026-07-06",
+      "published": "2025-09-11",
+      "refresh_due": "2026-08-06",
+      "confidence": "high",
+      "section": "quality-rater-guidelines",
+      "claims": [
+        "Adds AI Overview rating examples. Expands YMYL to include political/social topics. Google: 'no change to rating guidance'."
+      ],
+      "supports_claims": [
+        "Adds AI Overview rating examples. Expands YMYL to include political/social topics. Google: 'no change to rating guidance'."
+      ],
+      "source_pool": "data/google-updates.json",
+      "evidence_tier": "EVIDENCE-BASED",
+      "living_doc": false,
+      "date_precision": "day",
+      "raw_snapshot_path": ".raw/sources/claude-blog-brain-data/google-updates.json",
+      "raw_snapshot_sha256": "9ca5e729bdf30f27b4e6d49139c4c50a128a4dc48e7791621515d6b800d7e86b",
+      "hash_algorithm": "sha256"
+    },
+    {
+      "id": "g-update-2025-12-11-december-2025-core-update",
+      "title": "December 2025 Core Update",
+      "url": "https://status.search.google.com/products/rGHU1u87FJnkP6W2GwMi/history",
+      "source_type": "official",
+      "retrieved": "2026-07-09",
+      "last_verified": "2026-07-09",
+      "published": "2025-12-11",
+      "refresh_due": "2026-08-06",
+      "confidence": "high",
+      "section": "algorithm-ledger",
+      "claims": [
+        "December 2025 core update had an 18-day rollout and was the third core update of 2025 in the official Google Search Status Dashboard history."
+      ],
+      "supports_claims": [
+        "December 2025 core update had an 18-day rollout and was the third core update of 2025 in the official Google Search Status Dashboard history."
+      ],
+      "source_pool": "data/google-updates.json",
+      "evidence_tier": "EVIDENCE-BASED",
+      "living_doc": false,
+      "date_precision": "day",
+      "raw_snapshot_path": ".raw/sources/claude-blog-brain-data/google-updates.json",
+      "raw_snapshot_sha256": "9ca5e729bdf30f27b4e6d49139c4c50a128a4dc48e7791621515d6b800d7e86b",
+      "hash_algorithm": "sha256",
+      "limitations": "This official source does not support ecommerce-sector impact claims; cite a separate practitioner source before making sector-impact claims."
+    },
+    {
+      "id": "g-update-2026-02-05-february-2026-discover-update",
+      "title": "February 2026 Discover Update",
+      "url": "https://status.search.google.com/products/rGHU1u87FJnkP6W2GwMi/history",
+      "source_type": "official",
+      "retrieved": "2026-07-06",
+      "last_verified": "2026-07-06",
+      "published": "2026-02-05",
+      "refresh_due": "2026-08-06",
+      "confidence": "high",
+      "section": "discovery-surface",
+      "claims": [
+        "Started Feb 5, 21-day rollout. Discover-surface ranking update per the Google status dashboard (verified 2026-07-02)."
+      ],
+      "supports_claims": [
+        "Started Feb 5, 21-day rollout. Discover-surface ranking update per the Google status dashboard (verified 2026-07-02)."
+      ],
+      "source_pool": "data/google-updates.json",
+      "evidence_tier": "EVIDENCE-BASED",
+      "living_doc": false,
+      "date_precision": "day",
+      "raw_snapshot_path": ".raw/sources/claude-blog-brain-data/google-updates.json",
+      "raw_snapshot_sha256": "9ca5e729bdf30f27b4e6d49139c4c50a128a4dc48e7791621515d6b800d7e86b",
+      "hash_algorithm": "sha256"
+    },
+    {
+      "id": "g-update-2026-03-24-march-2026-spam-update",
+      "title": "March 2026 Spam Update",
+      "url": "https://status.search.google.com/products/rGHU1u87FJnkP6W2GwMi/history",
+      "source_type": "official",
+      "retrieved": "2026-07-06",
+      "last_verified": "2026-07-06",
+      "published": "2026-03-24",
+      "refresh_due": "2026-08-06",
+      "confidence": "high",
+      "section": "algorithm-ledger",
+      "claims": [
+        "Started Mar 24, completed in under a day (19.5-hour rollout). Per the Google status dashboard (verified 2026-07-02)."
+      ],
+      "supports_claims": [
+        "Started Mar 24, completed in under a day (19.5-hour rollout). Per the Google status dashboard (verified 2026-07-02)."
+      ],
+      "source_pool": "data/google-updates.json",
+      "evidence_tier": "EVIDENCE-BASED",
+      "living_doc": false,
+      "date_precision": "day",
+      "raw_snapshot_path": ".raw/sources/claude-blog-brain-data/google-updates.json",
+      "raw_snapshot_sha256": "9ca5e729bdf30f27b4e6d49139c4c50a128a4dc48e7791621515d6b800d7e86b",
+      "hash_algorithm": "sha256"
+    },
+    {
+      "id": "g-update-2026-03-27-march-2026-core-update",
+      "title": "March 2026 Core Update",
+      "url": "https://status.search.google.com/products/rGHU1u87FJnkP6W2GwMi/history",
+      "source_type": "official",
+      "retrieved": "2026-07-09",
+      "last_verified": "2026-07-09",
+      "published": "2026-03-27",
+      "refresh_due": "2026-08-06",
+      "confidence": "high",
+      "section": "algorithm-ledger",
+      "claims": [
+        "Started Mar 27, completed Apr 8 (12-day rollout). First core update of 2026. Promoted from unverified[] after Google status-dashboard confirmation."
+      ],
+      "supports_claims": [
+        "Started Mar 27, completed Apr 8 (12-day rollout). First core update of 2026. Promoted from unverified[] after Google status-dashboard confirmation."
+      ],
+      "source_pool": "data/google-updates.json",
+      "evidence_tier": "EVIDENCE-BASED",
+      "living_doc": false,
+      "date_precision": "day",
+      "raw_snapshot_path": ".raw/sources/claude-blog-brain-data/google-updates.json",
+      "raw_snapshot_sha256": "9ca5e729bdf30f27b4e6d49139c4c50a128a4dc48e7791621515d6b800d7e86b",
+      "hash_algorithm": "sha256"
+    },
+    {
+      "id": "g-update-2026-05-07-faq-rich-results-retired",
+      "title": "FAQ rich results retired",
+      "url": "https://developers.google.com/search/updates#deprecating-the-faq-rich-result-feature",
+      "source_type": "official",
+      "retrieved": "2026-07-08",
+      "last_verified": "2026-07-08",
+      "refresh_due": "2026-08-06",
+      "confidence": "high",
+      "section": "schema",
+      "claims": [
+        "FAQ rich results no longer show in Google Search. Rich Results Test and Search Console FAQ support are being removed, and QAPage should be reserved for genuine single-question pages."
+      ],
+      "supports_claims": [
+        "FAQ rich results no longer show in Google Search. Rich Results Test and Search Console FAQ support are being removed, and QAPage should be reserved for genuine single-question pages."
+      ],
+      "source_pool": "data/google-updates.json",
+      "evidence_tier": "EVIDENCE-BASED",
+      "living_doc": true,
+      "last_updated": "2026-05-07",
+      "date_precision": "day",
+      "raw_snapshot_path": ".raw/sources/claude-blog-brain-data/google-updates.json",
+      "raw_snapshot_sha256": "9ca5e729bdf30f27b4e6d49139c4c50a128a4dc48e7791621515d6b800d7e86b",
+      "hash_algorithm": "sha256"
+    },
+    {
+      "id": "g-update-2026-05-15-spam-policies-update-gen-ai-scaled-content",
+      "title": "Spam policies update (gen-AI scaled content)",
+      "url": "https://developers.google.com/search/docs/essentials/spam-policies",
+      "source_type": "official",
+      "retrieved": "2026-07-06",
+      "last_verified": "2026-07-06",
+      "refresh_due": "2026-08-06",
+      "confidence": "high",
+      "section": "policy",
+      "claims": [
+        "Scaled content abuse now explicitly names 'using generative AI tools to generate many pages without adding value' (and automated transformations like translating). Expired-domain and site-reputation abuse remain."
+      ],
+      "supports_claims": [
+        "Scaled content abuse now explicitly names 'using generative AI tools to generate many pages without adding value' (and automated transformations like translating). Expired-domain and site-reputation abuse remain."
+      ],
+      "source_pool": "data/google-updates.json",
+      "evidence_tier": "EVIDENCE-BASED",
+      "living_doc": true,
+      "last_updated": "2026-05-15",
+      "date_precision": "day",
+      "raw_snapshot_path": ".raw/sources/claude-blog-brain-data/google-updates.json",
+      "raw_snapshot_sha256": "9ca5e729bdf30f27b4e6d49139c4c50a128a4dc48e7791621515d6b800d7e86b",
+      "hash_algorithm": "sha256"
+    },
+    {
+      "id": "g-update-2026-05-15-new-generative-ai-optimization-guide",
+      "title": "New Generative AI optimization guide",
+      "url": "https://developers.google.com/search/blog/2026/05/a-new-resource-for-optimizing",
+      "source_type": "official",
+      "retrieved": "2026-07-06",
+      "last_verified": "2026-07-06",
+      "published": "2026-05-15",
+      "refresh_due": "2026-08-06",
+      "confidence": "high",
+      "section": "ai-search",
+      "claims": [
+        "New 'Generative AI fundamentals / ai-optimization-guide' doc: gen-AI optimization IS SEO; you do NOT need new AI files/markup/Markdown/chunking/AI-rewrites. The guide page was last updated 2026-06-29; the llms.txt clarification was a 2026-06-15 changelog event."
+      ],
+      "supports_claims": [
+        "New 'Generative AI fundamentals / ai-optimization-guide' doc: gen-AI optimization IS SEO; you do NOT need new AI files/markup/Markdown/chunking/AI-rewrites. The guide page was last updated 2026-06-29; the llms.txt clarification was a 2026-06-15 changelog event."
+      ],
+      "source_pool": "data/google-updates.json",
+      "evidence_tier": "EVIDENCE-BASED",
+      "living_doc": false,
+      "page_last_updated": "2026-06-29",
+      "changelog_event": {
+        "date": "2026-06-15",
+        "source_id": "g-update-2026-06-15-llms-txt-clarified-as-unused-by-google-search",
+        "summary": "Search documentation update clarified that llms.txt is not needed for Google Search visibility."
+      },
+      "date_precision": "day",
+      "raw_snapshot_path": ".raw/sources/claude-blog-brain-data/google-updates.json",
+      "raw_snapshot_sha256": "9ca5e729bdf30f27b4e6d49139c4c50a128a4dc48e7791621515d6b800d7e86b",
+      "hash_algorithm": "sha256"
+    },
+    {
+      "id": "g-update-2026-05-19-google-i-o-2026-gemini-3-5-flash-powers-ai-mode",
+      "title": "Google I/O 2026: Gemini 3.5 Flash powers AI Mode",
+      "url": "https://blog.google/products-and-platforms/products/search/search-io-2026/",
+      "source_type": "official",
+      "retrieved": "2026-07-06",
+      "last_verified": "2026-07-06",
+      "published": "2026-05-19",
+      "refresh_due": "2026-08-06",
+      "confidence": "high",
+      "section": "ai-search",
+      "claims": [
+        "Gemini 3.5 Flash becomes the default model in AI Mode globally. AI Mode surpassed 1B+ monthly users. New intelligent Search box; Information Agents, generative UI, and agentic checkout rolling out summer 2026."
+      ],
+      "supports_claims": [
+        "Gemini 3.5 Flash becomes the default model in AI Mode globally. AI Mode surpassed 1B+ monthly users. New intelligent Search box; Information Agents, generative UI, and agentic checkout rolling out summer 2026."
+      ],
+      "source_pool": "data/google-updates.json",
+      "evidence_tier": "EVIDENCE-BASED",
+      "living_doc": false,
+      "date_precision": "day",
+      "raw_snapshot_path": ".raw/sources/claude-blog-brain-data/google-updates.json",
+      "raw_snapshot_sha256": "9ca5e729bdf30f27b4e6d49139c4c50a128a4dc48e7791621515d6b800d7e86b",
+      "hash_algorithm": "sha256"
+    },
+    {
+      "id": "g-update-2026-05-20-hasadultconsideration-property-added",
+      "title": "hasAdultConsideration property added",
+      "url": "https://developers.google.com/search/docs/appearance/structured-data/merchant-listing",
+      "source_type": "official",
+      "retrieved": "2026-07-06",
+      "last_verified": "2026-07-06",
+      "refresh_due": "2026-08-06",
+      "confidence": "high",
+      "section": "schema",
+      "claims": [
+        "Product variant / Merchant listing; required for adult-oriented products; only supported value https://schema.org/SexualContentConsideration."
+      ],
+      "supports_claims": [
+        "Product variant / Merchant listing; required for adult-oriented products; only supported value https://schema.org/SexualContentConsideration."
+      ],
+      "source_pool": "data/google-updates.json",
+      "evidence_tier": "EVIDENCE-BASED",
+      "living_doc": true,
+      "last_updated": "2026-05-20",
+      "date_precision": "day",
+      "raw_snapshot_path": ".raw/sources/claude-blog-brain-data/google-updates.json",
+      "raw_snapshot_sha256": "9ca5e729bdf30f27b4e6d49139c4c50a128a4dc48e7791621515d6b800d7e86b",
+      "hash_algorithm": "sha256"
+    },
+    {
+      "id": "g-update-2026-05-21-may-2026-core-update",
+      "title": "May 2026 Core Update",
+      "url": "https://status.search.google.com/products/rGHU1u87FJnkP6W2GwMi/history",
+      "source_type": "official",
+      "retrieved": "2026-07-09",
+      "last_verified": "2026-07-09",
+      "published": "2026-05-21",
+      "refresh_due": "2026-08-06",
+      "confidence": "high",
+      "section": "algorithm-ledger",
+      "claims": [
+        "Up to 2-week rollout. Second core update of 2026. Global, all languages. Google: 'a regular update designed to better surface relevant, satisfying content from all types of sites.'"
+      ],
+      "supports_claims": [
+        "Up to 2-week rollout. Second core update of 2026. Global, all languages. Google: 'a regular update designed to better surface relevant, satisfying content from all types of sites.'"
+      ],
+      "source_pool": "data/google-updates.json",
+      "evidence_tier": "EVIDENCE-BASED",
+      "living_doc": false,
+      "date_precision": "day",
+      "raw_snapshot_path": ".raw/sources/claude-blog-brain-data/google-updates.json",
+      "raw_snapshot_sha256": "9ca5e729bdf30f27b4e6d49139c4c50a128a4dc48e7791621515d6b800d7e86b",
+      "hash_algorithm": "sha256"
+    },
+    {
+      "id": "g-update-2026-06-02-may-2026-core-update-complete",
+      "title": "May 2026 Core Update complete",
+      "url": "https://status.search.google.com/products/rGHU1u87FJnkP6W2GwMi/history",
+      "source_type": "official",
+      "retrieved": "2026-07-06",
+      "last_verified": "2026-07-06",
+      "published": "2026-06-02",
+      "refresh_due": "2026-08-06",
+      "confidence": "high",
+      "section": "algorithm-ledger",
+      "claims": [
+        "May 2026 core update (started 2026-05-21) completed 2026-06-02."
+      ],
+      "supports_claims": [
+        "May 2026 core update (started 2026-05-21) completed 2026-06-02."
+      ],
+      "source_pool": "data/google-updates.json",
+      "evidence_tier": "EVIDENCE-BASED",
+      "living_doc": false,
+      "date_precision": "day",
+      "raw_snapshot_path": ".raw/sources/claude-blog-brain-data/google-updates.json",
+      "raw_snapshot_sha256": "9ca5e729bdf30f27b4e6d49139c4c50a128a4dc48e7791621515d6b800d7e86b",
+      "hash_algorithm": "sha256"
+    },
+    {
+      "id": "g-update-2026-06-03-search-console-search-generative-ai-performance-reports",
+      "title": "Search Console Search Generative AI performance reports",
+      "url": "https://developers.google.com/search/blog/2026/06/gen-ai-performance-reports",
+      "source_type": "official",
+      "retrieved": "2026-07-06",
+      "last_verified": "2026-07-06",
+      "published": "2026-06-03",
+      "refresh_due": "2026-08-06",
+      "confidence": "high",
+      "section": "measurement",
+      "claims": [
+        "New Search Console reporting of impressions in AI Overviews and AI Mode (and Discover). Rolling out to a subset; day-of-month lightly sourced, month confirmed."
+      ],
+      "supports_claims": [
+        "New Search Console reporting of impressions in AI Overviews and AI Mode (and Discover). Rolling out to a subset; day-of-month lightly sourced, month confirmed."
+      ],
+      "source_pool": "data/google-updates.json",
+      "evidence_tier": "EVIDENCE-BASED",
+      "living_doc": false,
+      "date_precision": "day",
+      "raw_snapshot_path": ".raw/sources/claude-blog-brain-data/google-updates.json",
+      "raw_snapshot_sha256": "9ca5e729bdf30f27b4e6d49139c4c50a128a4dc48e7791621515d6b800d7e86b",
+      "hash_algorithm": "sha256"
+    },
+    {
+      "id": "g-update-2026-06-05-guidance-on-third-party-seo-tools-services-and-advice",
+      "title": "Guidance on third-party SEO tools, services, and advice",
+      "url": "https://developers.google.com/search/docs/fundamentals/third-party-seo",
+      "source_type": "official",
+      "retrieved": "2026-07-06",
+      "last_verified": "2026-07-06",
+      "refresh_due": "2026-08-06",
+      "confidence": "high",
+      "section": "ai-search",
+      "claims": [
+        "No tool guarantees rankings; third-party tools lack access to Google's internal ranking data; Google doesn't endorse vendors; evaluate AEO/GEO claims vs official guidance; GSC is the first-party source."
+      ],
+      "supports_claims": [
+        "No tool guarantees rankings; third-party tools lack access to Google's internal ranking data; Google doesn't endorse vendors; evaluate AEO/GEO claims vs official guidance; GSC is the first-party source."
+      ],
+      "source_pool": "data/google-updates.json",
+      "evidence_tier": "EVIDENCE-BASED",
+      "living_doc": true,
+      "last_updated": "2026-06-05",
+      "date_precision": "day",
+      "raw_snapshot_path": ".raw/sources/claude-blog-brain-data/google-updates.json",
+      "raw_snapshot_sha256": "9ca5e729bdf30f27b4e6d49139c4c50a128a4dc48e7791621515d6b800d7e86b",
+      "hash_algorithm": "sha256"
+    },
+    {
+      "id": "g-update-2026-06-15-back-button-hijacking-spam-policy-in-effect",
+      "title": "Back button hijacking spam policy in effect",
+      "url": "https://developers.google.com/search/blog/2026/04/back-button-hijacking",
+      "source_type": "official",
+      "retrieved": "2026-07-06",
+      "last_verified": "2026-07-06",
+      "published": "2026-06-15",
+      "refresh_due": "2026-08-06",
+      "confidence": "high",
+      "section": "policy",
+      "claims": [
+        "Malicious-practices spam policy published 2026-04, enforcement began 2026-06-15."
+      ],
+      "supports_claims": [
+        "Malicious-practices spam policy published 2026-04, enforcement began 2026-06-15."
+      ],
+      "source_pool": "data/google-updates.json",
+      "evidence_tier": "EVIDENCE-BASED",
+      "living_doc": false,
+      "date_precision": "day",
+      "raw_snapshot_path": ".raw/sources/claude-blog-brain-data/google-updates.json",
+      "raw_snapshot_sha256": "9ca5e729bdf30f27b4e6d49139c4c50a128a4dc48e7791621515d6b800d7e86b",
+      "hash_algorithm": "sha256"
+    },
+    {
+      "id": "g-update-2026-06-15-llms-txt-clarified-as-unused-by-google-search",
+      "title": "llms.txt clarified as unused by Google Search",
+      "url": "https://developers.google.com/search/docs/fundamentals/ai-optimization-guide",
+      "source_type": "official",
+      "retrieved": "2026-07-10",
+      "last_verified": "2026-07-10",
+      "published": "2026-06-15",
+      "refresh_due": "2026-08-06",
+      "confidence": "high",
+      "section": "ai-search",
+      "claims": [
+        "Google Search does not use llms.txt; it neither helps nor harms Search, AI Overviews, or AI Mode visibility."
+      ],
+      "supports_claims": [
+        "Google Search does not use llms.txt; it neither helps nor harms Search, AI Overviews, or AI Mode visibility."
+      ],
+      "source_pool": "data/google-updates.json",
+      "evidence_tier": "EVIDENCE-BASED",
+      "living_doc": true,
+      "page_last_updated": "2026-06-29",
+      "changelog_event": {
+        "date": "2026-06-15",
+        "source_id": "g-update-2026-06-15-llms-txt-clarified-as-unused-by-google-search",
+        "summary": "Search documentation update clarified that llms.txt is not needed for Google Search visibility."
+      },
+      "date_precision": "day",
+      "raw_snapshot_path": ".raw/sources/claude-blog-brain-data/google-updates.json",
+      "raw_snapshot_sha256": "9ca5e729bdf30f27b4e6d49139c4c50a128a4dc48e7791621515d6b800d7e86b",
+      "hash_algorithm": "sha256"
+    },
+    {
+      "id": "g-update-2026-06-24-june-2026-spam-update",
+      "title": "June 2026 Spam Update",
+      "url": "https://status.search.google.com/products/rGHU1u87FJnkP6W2GwMi/history",
+      "source_type": "official",
+      "retrieved": "2026-07-06",
+      "last_verified": "2026-07-06",
+      "published": "2026-06-24",
+      "refresh_due": "2026-08-06",
+      "confidence": "high",
+      "section": "algorithm-ledger",
+      "claims": [
+        "Normal spam update, all languages/locations. Rolled out 2026-06-24, complete 2026-06-26. Not link-specific; enforces existing spam policies (scaled content, cloaking, sneaky redirects)."
+      ],
+      "supports_claims": [
+        "Normal spam update, all languages/locations. Rolled out 2026-06-24, complete 2026-06-26. Not link-specific; enforces existing spam policies (scaled content, cloaking, sneaky redirects)."
+      ],
+      "source_pool": "data/google-updates.json",
+      "evidence_tier": "EVIDENCE-BASED",
+      "living_doc": false,
+      "date_precision": "day",
+      "raw_snapshot_path": ".raw/sources/claude-blog-brain-data/google-updates.json",
+      "raw_snapshot_sha256": "9ca5e729bdf30f27b4e6d49139c4c50a128a4dc48e7791621515d6b800d7e86b",
+      "hash_algorithm": "sha256"
+    },
+    {
+      "id": "g-update-2026-06-30-merchant-center-product-videos-serving-eligible",
+      "title": "Merchant Center product videos serving-eligible",
+      "url": "https://support.google.com/merchants/answer/16989427",
+      "source_type": "official",
+      "retrieved": "2026-07-09",
+      "last_verified": "2026-07-09",
+      "published": "2026-06-30",
+      "refresh_due": "2026-08-06",
+      "confidence": "high",
+      "section": "schema",
+      "claims": [
+        "video_link attribute becomes eligible to serve on 2026-06-30."
+      ],
+      "supports_claims": [
+        "video_link attribute becomes eligible to serve on 2026-06-30."
+      ],
+      "source_pool": "data/google-updates.json",
+      "evidence_tier": "EVIDENCE-BASED",
+      "living_doc": false,
+      "date_precision": "day",
+      "raw_snapshot_path": ".raw/sources/claude-blog-brain-data/google-updates.json",
+      "raw_snapshot_sha256": "9ca5e729bdf30f27b4e6d49139c4c50a128a4dc48e7791621515d6b800d7e86b",
+      "hash_algorithm": "sha256"
+    },
+    {
+      "id": "sparktoro-zero-click-2026",
+      "title": "In 2026, less than one third of Google searches still send a click",
+      "url": "https://sparktoro.com/blog/in-2026-less-than-one-third-of-google-searches-still-send-a-click/",
+      "source_type": "primary",
+      "retrieved": "2026-07-08",
+      "last_verified": "2026-07-08",
+      "published": "2026-06-08",
+      "refresh_due": "2026-08-06",
+      "confidence": "medium",
+      "section": "market",
+      "claims": [
+        "US Google zero-click rate measured at 68.01% for January through April 2026, with about 276 clicks to the open web per 1,000 searches. SparkToro also reports AI Mode at 0.34% of searches in that same US January through April 2026 panel."
+      ],
+      "supports_claims": [
+        "US Google zero-click rate measured at 68.01% for January through April 2026, with about 276 clicks to the open web per 1,000 searches. SparkToro also reports AI Mode at 0.34% of searches in that same US January through April 2026 panel."
+      ],
+      "source_pool": "research-substrate.md and claude-blog skill references",
+      "evidence_tier": "PRACTITIONER",
+      "living_doc": false,
+      "date_precision": "day",
+      "methodology": "Similarweb desktop and mobile web panel for United States Google searches from January through April 2026; mobile and desktop weighting described by SparkToro.",
+      "limitations": "Directional third-party clickstream analysis. It excludes the Google mobile search app and combines panel sources that are not directly comparable to older studies."
+    },
+    {
+      "id": "seer-aio-impact-ctr-2026",
+      "title": "AIO impact on Google CTR 2026 update",
+      "url": "https://www.seerinteractive.com/insights/aio-impact-on-google-ctr-2026-update",
+      "source_type": "primary",
+      "retrieved": "2026-07-08",
+      "last_verified": "2026-07-08",
+      "published": "2026-04-24",
+      "refresh_due": "2026-08-06",
+      "confidence": "medium",
+      "section": "geo",
+      "claims": [
+        "AI Overview present organic CTR rebounded from about 1.3% in December 2025 to about 2.4% in February 2026 in the cited Seer analysis.",
+        "Being cited in an AI Overview is associated with about 120% more clicks per impression than not being cited."
+      ],
+      "supports_claims": [
+        "AI Overview present organic CTR rebounded from about 1.3% in December 2025 to about 2.4% in February 2026 in the cited Seer analysis.",
+        "Being cited in an AI Overview is associated with about 120% more clicks per impression than not being cited."
+      ],
+      "source_pool": "research-substrate.md and claude-blog skill references",
+      "evidence_tier": "PRACTITIONER",
+      "living_doc": false,
+      "date_precision": "day",
+      "methodology": "Seer analysis across 53 brands, 5.47M tracked queries, and 2.43B organic impressions from January 2025 through February 2026, with March 2026 projections.",
+      "limitations": "Directional practitioner analysis. Do not present AIO citation association as causal or guaranteed for a client site."
+    },
+    {
+      "id": "similarweb-gen-ai-stats-2026",
+      "title": "Gen AI stats for marketers",
+      "url": "https://www.similarweb.com/blog/marketing/geo/gen-ai-stats/",
+      "source_type": "primary",
+      "retrieved": "2026-07-06",
+      "last_verified": "2026-07-06",
+      "published": "2026-05-28",
+      "refresh_due": "2026-08-06",
+      "confidence": "medium",
+      "section": "market",
+      "claims": [
+        "AI referral traffic grew more than 3x year over year in the substrate summary.",
+        "Gemini share surged while ChatGPT share declined from the high 80s to the high 60s in the cited market context."
+      ],
+      "supports_claims": [
+        "AI referral traffic grew more than 3x year over year in the substrate summary.",
+        "Gemini share surged while ChatGPT share declined from the high 80s to the high 60s in the cited market context."
+      ],
+      "source_pool": "research-substrate.md and claude-blog skill references",
+      "evidence_tier": "PRACTITIONER",
+      "living_doc": false,
+      "date_precision": "day",
+      "limitations": "Vendor market analysis. Separate growth-rate claims from absolute traffic-share claims."
+    },
+    {
+      "id": "se-ranking-ai-mode-research",
+      "title": "AI Mode research: Volatility, source patterns, and differences from AIO and organic results",
+      "url": "https://seranking.com/blog/ai-mode-research/",
+      "source_type": "primary",
+      "retrieved": "2026-07-10",
+      "last_verified": "2026-07-10",
+      "published": "2025-08-29",
+      "refresh_due": "2026-08-09",
+      "confidence": "medium",
+      "section": "geo",
+      "claims": [
+        "SE Ranking reported an average of 12.6 links per AI Mode answer across 9,734 triggered responses from a 10,000-keyword US sample collected on 2025-06-20.",
+        "SE Ranking reported high AI Mode source volatility and limited overlap with AI Overviews and organic search results."
+      ],
+      "supports_claims": [
+        "SE Ranking reported an average of 12.6 links per AI Mode answer across 9,734 triggered responses from a 10,000-keyword US sample collected on 2025-06-20.",
+        "SE Ranking reported high AI Mode source volatility and limited overlap with AI Overviews and organic search results."
+      ],
+      "source_pool": "SE Ranking AI Mode study and claim-ledger remediation",
+      "evidence_tier": "PRACTITIONER",
+      "living_doc": false,
+      "date_precision": "day",
+      "limitations": "Vendor study using a 10,000-keyword US sample and 9,734 triggered AI Mode responses. Treat as a practitioner benchmark, not Google first-party truth."
+    },
+    {
+      "id": "semrush-ai-mode-comparison",
+      "title": "AI Mode comparison study",
+      "url": "https://www.semrush.com/blog/ai-mode-comparison-study/",
+      "source_type": "primary",
+      "retrieved": "2026-07-06",
+      "last_verified": "2026-07-06",
+      "published": "2025-07-21",
+      "refresh_due": "2026-08-06",
+      "confidence": "medium",
+      "section": "geo",
+      "claims": [
+        "Semrush reported that 92% of AI Mode responses in its 5,000-keyword desktop study used a sidebar with links averaging about seven unique domains.",
+        "AI Mode behavior should be handled as a distinct optimization surface from classic organic results and AI Overviews."
+      ],
+      "supports_claims": [
+        "Semrush reported that 92% of AI Mode responses in its 5,000-keyword desktop study used a sidebar with links averaging about seven unique domains.",
+        "AI Mode behavior should be handled as a distinct optimization surface from classic organic results and AI Overviews."
+      ],
+      "source_pool": "research-substrate.md and claude-blog skill references",
+      "evidence_tier": "PRACTITIONER",
+      "living_doc": false,
+      "date_precision": "day",
+      "limitations": "Vendor study of 5,000 desktop queries across four platforms. Does not support the 12.6 links-per-answer statistic, which belongs to se-ranking-ai-mode-research."
+    },
+    {
+      "id": "niemanlab-subscribed-publications-aio-2026",
+      "title": "Google highlights links from subscribed publications in new AI Overviews update",
+      "url": "https://www.niemanlab.org/2026/05/google-highlights-links-from-subscribed-publications-in-new-ai-overviews-update/",
+      "source_type": "primary",
+      "retrieved": "2026-07-06",
+      "last_verified": "2026-07-06",
+      "published": "2026-05",
+      "refresh_due": "2026-08-06",
+      "confidence": "medium",
+      "section": "distribution",
+      "claims": [
+        "AI Overviews can highlight links from publications a user subscribes to, making loyal audience and distribution signals relevant to blog visibility."
+      ],
+      "supports_claims": [
+        "AI Overviews can highlight links from publications a user subscribes to, making loyal audience and distribution signals relevant to blog visibility."
+      ],
+      "source_pool": "research-substrate.md and claude-blog skill references",
+      "evidence_tier": "PRACTITIONER",
+      "living_doc": false,
+      "date_precision": "month",
+      "limitations": "Month-only publication date retained because the exact article day was not verified in this remediation pass."
+    },
+    {
+      "id": "ziptie-aio-source-selection",
+      "title": "Google AI Overviews source selection",
+      "url": "https://ziptie.dev/blog/google-ai-overviews-source-selection/",
+      "source_type": "practitioner",
+      "retrieved": "2026-07-08",
+      "last_verified": "2026-07-08",
+      "published": "2026-03-25",
+      "refresh_due": "2026-08-06",
+      "confidence": "medium",
+      "section": "geo",
+      "claims": [
+        "The substrate treats passage-level extractability and self-contained answer blocks as practitioner guidance for improving AI citation readiness.",
+        "Use concise answer passages under headings, visible source attribution, and entity clarity for citation extraction."
+      ],
+      "supports_claims": [
+        "The substrate treats passage-level extractability and self-contained answer blocks as practitioner guidance for improving AI citation readiness.",
+        "Use concise answer passages under headings, visible source attribution, and entity clarity for citation extraction."
+      ],
+      "source_pool": "research-substrate.md and claude-blog skill references",
+      "evidence_tier": "PRACTITIONER",
+      "living_doc": false,
+      "date_precision": "day"
+    },
+    {
+      "id": "nng-editorial-heuristics",
+      "title": "10 Usability Heuristics for User Interface Design",
+      "url": "https://www.nngroup.com/articles/ten-usability-heuristics/",
+      "source_type": "authority",
+      "retrieved": "2026-07-06",
+      "last_verified": "2026-07-06",
+      "refresh_due": "2026-08-06",
+      "confidence": "high",
+      "section": "editorial-quality",
+      "claims": [
+        "Nielsen Norman Group heuristics are adapted in the claude-blog reference set as editorial ergonomics for content review."
+      ],
+      "supports_claims": [
+        "Nielsen Norman Group heuristics are adapted in the claude-blog reference set as editorial ergonomics for content review."
+      ],
+      "source_pool": "research-substrate.md and claude-blog skill references",
+      "evidence_tier": "EVIDENCE-BASED",
+      "living_doc": true,
+      "last_updated": "2020",
+      "date_precision": "year"
+    },
+    {
+      "id": "g-search-docs-updates-2026-07-07-product-structured-data",
+      "title": "Search Central documentation updates for Product structured data",
+      "url": "https://developers.google.com/search/updates#july-2026",
+      "source_type": "official",
+      "retrieved": "2026-07-09",
+      "last_verified": "2026-07-09",
+      "published": "2026-07-07",
+      "date_precision": "day",
+      "living_doc": false,
+      "refresh_due": "2026-08-08",
+      "confidence": "high",
+      "evidence_tier": "EVIDENCE-BASED",
+      "section": "schema",
+      "claims": [
+        "Google Search Central added Product.category guidance for merchant listing structured data on 2026-07-07.",
+        "Google Search Central added sale duration guidance for validFrom, validThrough, and priceValidUntil in Product structured data on 2026-07-07."
+      ],
+      "supports_claims": [
+        "Google Search Central added Product.category guidance for merchant listing structured data on 2026-07-07.",
+        "Google Search Central added sale duration guidance for validFrom, validThrough, and priceValidUntil in Product structured data on 2026-07-07."
+      ],
+      "source_pool": "direct official refresh 2026-07-08"
+    }
+  ]
+}

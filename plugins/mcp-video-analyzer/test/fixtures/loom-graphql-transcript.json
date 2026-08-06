@@ -1,0 +1,10 @@
+{
+  "data": {
+    "fetchVideoTranscript": {
+      "captions_source_url": "https://cdn.loom.com/captions/abc123def456/en.vtt",
+      "source_url": "https://cdn.loom.com/transcript/abc123def456.json",
+      "transcription_status": "COMPLETED",
+      "language": "en"
+    }
+  }
+}

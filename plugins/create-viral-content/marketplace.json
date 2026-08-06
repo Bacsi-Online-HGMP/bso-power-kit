@@ -1,0 +1,56 @@
+{
+    "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+    "name": "create-viral-content",
+    "version": "1.0.0",
+    "description": "Transform technical concepts into viral social content with integrated humanization. Creates Reddit posts, Twitter threads, LinkedIn content, YouTube comments, and more with viral mechanics that spread.",
+    "author": "Ice-ninja",
+    "license": "MIT",
+    "repository": {
+        "type": "git",
+        "url": "https://github.com/ice-ninja/skills"
+    },
+    "keywords": [
+        "viral-content",
+        "social-media",
+        "content-creation",
+        "reddit",
+        "twitter",
+        "linkedin",
+        "youtube",
+        "humanization",
+        "ai-tells",
+        "engagement"
+    ],
+    "skills": [
+        {
+            "name": "create-viral-content",
+            "source": "./SKILL.md",
+            "description": "Transform technical concepts into viral social content"
+        }
+    ],
+    "dependencies": {
+        "optional": [
+            {
+                "name": "humanize-writing",
+                "description": "Enhanced humanization pass for final polish"
+            }
+        ]
+    },
+    "resources": [
+        {
+            "name": "ai-tells",
+            "source": "./references/ai-tells.md",
+            "description": "AI detection guide with human alternatives"
+        },
+        {
+            "name": "platform-templates",
+            "source": "./references/platform-templates.md",
+            "description": "Platform-specific content templates"
+        },
+        {
+            "name": "refinement-protocol",
+            "source": "./references/refinement-protocol.md",
+            "description": "Adversarial refinement passes"
+        }
+    ]
+}

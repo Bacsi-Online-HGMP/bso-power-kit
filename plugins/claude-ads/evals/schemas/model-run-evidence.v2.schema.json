@@ -1,0 +1,195 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:ai-marketing-hub:claude-ads:schema:evals:model-run-evidence.v2.json",
+  "title": "Claude Ads external model-run evidence",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "evidence_class",
+    "contract_id",
+    "run_id",
+    "role",
+    "suite",
+    "subject",
+    "runtime",
+    "execution",
+    "evaluator",
+    "cases",
+    "authentication"
+  ],
+  "properties": {
+    "schema_version": {"const": "2.0.0"},
+    "evidence_class": {"const": "external_model_run"},
+    "contract_id": {"const": "claude-ads-v2-canonical-model-gate"},
+    "run_id": {"type": "string", "minLength": 1},
+    "role": {"enum": ["candidate", "retained-v1"]},
+    "suite": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "sha256", "case_count"],
+      "properties": {
+        "path": {"const": "evals/v2-behavior-evals.json"},
+        "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "case_count": {"type": "integer", "minimum": 1}
+      }
+    },
+    "subject": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["product_version", "git_ref", "git_commit", "git_tree", "artifact_sha256"],
+      "properties": {
+        "product_version": {"type": "string", "minLength": 1},
+        "git_ref": {"type": "string", "minLength": 1},
+        "git_commit": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+        "git_tree": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+        "artifact_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+      }
+    },
+    "runtime": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "family",
+        "cli_version",
+        "provider",
+        "model_id",
+        "model_snapshot",
+        "skill_entrypoint",
+        "invocation_mode",
+        "fresh_process_per_case",
+        "conversation_reuse",
+        "skill_loaded"
+      ],
+      "properties": {
+        "family": {"const": "claude-code"},
+        "cli_version": {"type": "string", "minLength": 1},
+        "provider": {"const": "anthropic"},
+        "model_id": {"type": "string", "minLength": 1},
+        "model_snapshot": {"type": "string", "minLength": 1},
+        "skill_entrypoint": {"const": "/claude-ads:ads"},
+        "invocation_mode": {"const": "explicit-plugin-skill"},
+        "fresh_process_per_case": {"const": true},
+        "conversation_reuse": {"const": false},
+        "skill_loaded": {"const": true}
+      }
+    },
+    "execution": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "started_at",
+        "finished_at",
+        "executor_identity",
+        "environment_id",
+        "clean_checkout",
+        "mutation_authority",
+        "receipt"
+      ],
+      "properties": {
+        "started_at": {"type": "string", "format": "date-time"},
+        "finished_at": {"type": "string", "format": "date-time"},
+        "executor_identity": {"type": "string", "minLength": 1},
+        "environment_id": {"type": "string", "minLength": 1},
+        "clean_checkout": {"const": true},
+        "mutation_authority": {"const": "none"},
+        "receipt": {"type": "string", "minLength": 1}
+      }
+    },
+    "evaluator": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "identity",
+        "rubric_id",
+        "independent_from_subject_run",
+        "evaluated_at",
+        "receipt"
+      ],
+      "properties": {
+        "kind": {"enum": ["human", "independent-model"]},
+        "identity": {"type": "string", "minLength": 1},
+        "rubric_id": {"const": "claude-ads-observable-behavior-v1"},
+        "independent_from_subject_run": {"const": true},
+        "evaluated_at": {"type": "string", "format": "date-time"},
+        "receipt": {"type": "string", "minLength": 1}
+      }
+    },
+    "cases": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "case_id",
+          "invocation_id",
+          "prompt_sha256",
+          "response_sha256",
+          "response",
+          "skill_invocation",
+          "required_behavior_results",
+          "forbidden_behavior_results"
+        ],
+        "properties": {
+          "case_id": {"type": "string", "minLength": 1},
+          "invocation_id": {"type": "string", "minLength": 1},
+          "prompt_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+          "response_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+          "response": {"type": "string", "minLength": 1},
+          "skill_invocation": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["entrypoint", "mode"],
+            "properties": {
+              "entrypoint": {"const": "/claude-ads:ads"},
+              "mode": {"const": "explicit-plugin-skill"}
+            }
+          },
+          "required_behavior_results": {"$ref": "#/$defs/judgments"},
+          "forbidden_behavior_results": {"$ref": "#/$defs/judgments"}
+        }
+      }
+    },
+    "authentication": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["runner", "evaluator"],
+      "properties": {
+        "runner": {"$ref": "#/$defs/signatureEnvelope"},
+        "evaluator": {"$ref": "#/$defs/signatureEnvelope"}
+      }
+    }
+  },
+  "$defs": {
+    "signatureEnvelope": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["signer_id", "key_id", "role", "signed_at", "binding", "signature_b64url"],
+      "properties": {
+        "signer_id": {"type": "string", "minLength": 1},
+        "key_id": {"type": "string", "minLength": 1},
+        "role": {"enum": ["runner", "evaluator"]},
+        "signed_at": {"type": "string", "format": "date-time"},
+        "binding": {"type": "object", "minProperties": 1},
+        "signature_b64url": {"type": "string", "pattern": "^[A-Za-z0-9_-]{86}$"}
+      }
+    },
+    "judgments": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["behavior", "observed", "rationale"],
+        "properties": {
+          "behavior": {"type": "string", "minLength": 1},
+          "observed": {"type": "boolean"},
+          "rationale": {"type": "string", "minLength": 1},
+          "evidence_excerpt": {"type": "string", "minLength": 1}
+        }
+      }
+    }
+  }
+}

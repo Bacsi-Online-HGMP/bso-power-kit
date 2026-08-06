@@ -1,0 +1,50 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:ai-marketing-hub:claude-ads:schema:control:v1:control-registry.schema.json",
+  "title": "Claude Ads control registry",
+  "type": "object",
+  "required": ["schema_version", "registry_version", "catalog_version", "controls"],
+  "properties": {
+    "schema_version": {"const": "1.0.0"},
+    "registry_version": {"const": "1.0.0"},
+    "catalog_version": {"type": "string", "minLength": 1},
+    "controls": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["platform", "control_id", "intent", "disposition", "source_claim_ids", "control_definition"],
+        "properties": {
+          "platform": {"enum": ["google", "meta", "youtube", "linkedin", "tiktok", "microsoft", "apple", "amazon", "reddit", "pinterest", "snapchat", "x"]},
+          "control_id": {"type": "string", "minLength": 1},
+          "intent": {"type": "string", "minLength": 1},
+          "disposition": {"enum": ["conditional_watchlist", "source_refresh_discovery", "opportunity", "health"]},
+          "source_claim_ids": {"type": "array", "items": {"type": "string", "minLength": 1}, "uniqueItems": true},
+          "control_definition": {"$ref": "#/$defs/control_definition"}
+        },
+        "additionalProperties": false
+      }
+    }
+  },
+  "$defs": {
+    "control_definition": {
+      "type": "object",
+      "required": ["schema_version", "control_id", "category", "severity", "required_inputs", "source_ids", "maturity", "geographies", "scoring_behavior", "stability"],
+      "properties": {
+        "schema_version": {"const": "1.0.0"},
+        "control_id": {"type": "string", "minLength": 1},
+        "category": {"type": "string", "minLength": 1},
+        "severity": {"enum": ["critical", "high", "medium", "informational"]},
+        "required_inputs": {"type": "array", "items": {"type": "string", "minLength": 1}, "uniqueItems": true},
+        "source_ids": {"type": "array", "items": {"type": "string", "minLength": 1}, "uniqueItems": true},
+        "maturity": {"enum": ["inventory-baselined", "source-grounded", "domain-integrated", "eval-verified", "release-ready"]},
+        "geographies": {"type": "array", "items": {"type": "string", "minLength": 1}, "uniqueItems": true},
+        "expires_at": {"type": ["string", "null"], "format": "date"},
+        "scoring_behavior": {"enum": ["health", "opportunity", "watchlist"]},
+        "stability": {"enum": ["stable", "experimental"]}
+      },
+      "additionalProperties": true
+    }
+  },
+  "additionalProperties": false
+}

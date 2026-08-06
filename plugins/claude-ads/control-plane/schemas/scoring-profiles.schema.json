@@ -1,0 +1,36 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:ai-marketing-hub:claude-ads:schema:control:v1:scoring-profiles.schema.json",
+  "title": "Claude Ads scoring profiles",
+  "type": "object",
+  "required": ["schema_version", "profile_version", "profiles"],
+  "properties": {
+    "schema_version": {"const": "1.0.0"},
+    "profile_version": {"const": "1.0.0"},
+    "profiles": {
+      "type": "array",
+      "minItems": 12,
+      "maxItems": 12,
+      "items": {
+        "type": "object",
+        "required": ["profile_id", "platform", "status", "category_weights", "health_control_ids"],
+        "properties": {
+          "profile_id": {"type": "string", "minLength": 1},
+          "platform": {"enum": ["google", "meta", "youtube", "linkedin", "tiktok", "microsoft", "apple", "amazon", "reddit", "pinterest", "snapchat", "x"]},
+          "status": {"enum": ["disabled", "enabled"]},
+          "category_weights": {"type": "object", "additionalProperties": {"type": "number", "minimum": 0, "maximum": 100}},
+          "health_control_ids": {"type": "array", "items": {"type": "string", "minLength": 1}, "uniqueItems": true},
+          "disabled_reason": {"type": "string", "minLength": 1}
+        },
+        "additionalProperties": false,
+        "allOf": [
+          {
+            "if": {"properties": {"status": {"const": "disabled"}}},
+            "then": {"required": ["disabled_reason"], "properties": {"category_weights": {"maxProperties": 0}, "health_control_ids": {"maxItems": 0}}}
+          }
+        ]
+      }
+    }
+  },
+  "additionalProperties": false
+}

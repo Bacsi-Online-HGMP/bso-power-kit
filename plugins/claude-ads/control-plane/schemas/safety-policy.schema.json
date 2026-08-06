@@ -1,0 +1,29 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:ai-marketing-hub:claude-ads:schema:control:v1:safety-policy.v1.json",
+  "title": "Claude Ads safety policy",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "default_mode", "privacy_classes", "trust_boundaries", "mutation_gates", "release_blockers"],
+  "properties": {
+    "schema_version": {"const": "1.0.0"},
+    "default_mode": {"const": "read-only"},
+    "privacy_classes": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "repository_allowed", "release_allowed", "examples"],
+        "properties": {
+          "id": {"enum": ["public", "internal", "confidential", "restricted"]},
+          "repository_allowed": {"type": "boolean"},
+          "release_allowed": {"type": "boolean"},
+          "examples": {"type": "array", "items": {"type": "string"}, "minItems": 1}
+        }
+      }
+    },
+    "trust_boundaries": {"type": "array", "items": {"type": "string"}, "minItems": 1},
+    "mutation_gates": {"type": "array", "items": {"type": "string"}, "minItems": 1},
+    "release_blockers": {"type": "array", "items": {"type": "string"}, "minItems": 1}
+  }
+}

@@ -1,0 +1,104 @@
+# OS files
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+dist/
+build/
+.eggs/
+*.egg
+.venv/
+venv/
+env/
+.pytest_cache/
+
+# Node
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Environment and secrets
+.env
+.env.*
+*.key
+*.pem
+credentials.json
+
+# MCP server configs (may carry inline credentials)
+# A tracked .mcp.example.json template lives alongside, with env-expansion only.
+.mcp.json
+.mcp.local.json
+**/.mcp.json
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# PDFs (binary assets not tracked)
+*.pdf
+
+# Archives
+*.zip
+*.tar.gz
+*.rar
+
+# Firebase
+firebase-debug.log
+
+# NotebookLM skill data (auth, browser state, library)
+**/browser_state/
+**/auth_info.json
+
+# Generated output
+output/
+demo-output/
+.raw/
+
+# Working documents
+definitive-resesarch-blueprint-for-claude-blog.md
+.github-audit/
+
+# Obsidian vault metadata (root only, not nested .obsidian dirs in skills)
+/.obsidian/
+/docs/superpowers/
+
+# Canvas files at repo root only (preserves canvas templates inside skills/)
+/*.canvas
+
+# Working images and screenshots at repo root only
+/Pasted image *.png
+/image-example-*.png
+/*-cover-16x9.gif
+/*-cover-square.png
+/*-cover-16x9.png
+/cosmic-brain-cover.gif
+/wiki-graph-grow.gif
+/welcome-canvas.gif
+/workflow-loop.gif
+
+# Working video clips at repo root only
+/short01-*.mp4
+
+# Dated scratch notes at repo root only (preserves dated content in skills/docs/tests)
+/2026-*.md
+/2026-*.txt
+/Ranking Plan.md
+/whats-new.html
+
+# Hex-named cached GIFs at repo root only (auto-downloaded artifacts)
+/[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]*.gif
+
+# Session-scoped audit evidence at repo root (regenerated per audit cycle)
+/audit-results.md
+
+# Local Claude Code settings (never commit)
+.claude/settings.local.json

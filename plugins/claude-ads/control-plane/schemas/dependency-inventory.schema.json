@@ -1,0 +1,45 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:ai-marketing-hub:claude-ads:schema:control:v1:dependency-inventory.v1.json",
+  "title": "Claude Ads per-target dependency inventory",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "inventory_id", "resolved_at", "resolution", "manifests", "direct_requirements", "targets", "component_catalog", "dependency_edges", "bundled_notices"],
+  "properties": {
+    "schema_version": {"const": "1.0.0"},
+    "inventory_id": {"const": "claude-ads-python-dependencies"},
+    "resolved_at": {"const": "2026-07-11T00:00:00Z", "format": "date-time"},
+    "resolution": {
+      "type": "object", "additionalProperties": false,
+      "required": ["index", "managed_lock_python_range", "supported_python_versions", "implementation", "source_date_epoch", "policy", "reviewed_metadata_sha256", "third_party_notices_sha256", "target_evidence_class", "subject_binding"],
+      "properties": {
+        "index": {"const": "https://pypi.org/simple"}, "managed_lock_python_range": {"const": ">=3.11,<3.13"},
+        "supported_python_versions": {"const": ["3.11", "3.12"]}, "implementation": {"const": "CPython"},
+        "source_date_epoch": {"const": 1783728000}, "policy": {"type": "string", "minLength": 1},
+        "reviewed_metadata_sha256": {"$ref": "#/$defs/sha256"}, "third_party_notices_sha256": {"$ref": "#/$defs/sha256"},
+        "target_evidence_class": {"const": "cross-target-pip-resolution-requiring-native-ci-confirmation"},
+        "subject_binding": {"type": "string", "minLength": 1}
+      }
+    },
+    "manifests": {"type": "array", "minItems": 5, "maxItems": 5, "uniqueItems": true, "items": {"$ref": "#/$defs/manifest"}},
+    "direct_requirements": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/directRequirement"}},
+    "targets": {"type": "array", "minItems": 16, "maxItems": 16, "items": {"$ref": "#/$defs/target"}},
+    "component_catalog": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/catalogComponent"}},
+    "dependency_edges": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/edge"}},
+    "bundled_notices": {"type": "array", "minItems": 39, "maxItems": 39, "items": {"$ref": "#/$defs/bundledNotice"}}
+  },
+  "$defs": {
+    "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "name": {"type": "string", "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$"},
+    "manifest": {"type": "object", "additionalProperties": false, "required": ["path", "sha256"], "properties": {"path": {"enum": ["requirements.txt", "requirements-dev.txt", "requirements.lock", "requirements-dev.lock", "pyproject.toml"]}, "sha256": {"$ref": "#/$defs/sha256"}}},
+    "directRequirement": {"type": "object", "additionalProperties": false, "required": ["name", "requirement", "source", "profile"], "properties": {"name": {"$ref": "#/$defs/name"}, "requirement": {"type": "string", "minLength": 1}, "source": {"type": "string", "minLength": 1}, "profile": {"enum": ["runtime", "development"]}}},
+    "artifact": {"type": "object", "additionalProperties": false, "required": ["filename", "url", "sha256"], "properties": {"filename": {"type": "string", "minLength": 1}, "url": {"type": "string", "pattern": "^https://files.pythonhosted.org/"}, "sha256": {"$ref": "#/$defs/sha256"}}},
+    "targetComponent": {"type": "object", "additionalProperties": false, "required": ["name", "version", "direct", "purl", "artifact"], "properties": {"name": {"$ref": "#/$defs/name"}, "version": {"type": "string", "minLength": 1}, "direct": {"type": "boolean"}, "purl": {"type": "string", "pattern": "^pkg:pypi/[a-z0-9-]+@[^/?#]+$"}, "artifact": {"$ref": "#/$defs/artifact"}}},
+    "target": {"type": "object", "additionalProperties": false, "required": ["id", "profile", "python_version", "implementation", "os", "arch", "abi", "platform_policy", "resolver", "resolution_evidence_sha256", "components"], "properties": {"id": {"type": "string", "minLength": 1}, "profile": {"enum": ["runtime", "development"]}, "python_version": {"enum": ["3.11", "3.12"]}, "implementation": {"const": "CPython"}, "os": {"enum": ["linux", "macos", "windows"]}, "arch": {"enum": ["x86_64", "arm64", "amd64"]}, "abi": {"enum": ["cp311", "cp312"]}, "platform_policy": {"const": "Exact lowest-common lock with target-selected PyPI wheels"}, "resolver": {"const": "pip / PyPI"}, "resolution_evidence_sha256": {"$ref": "#/$defs/sha256"}, "components": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/targetComponent"}}}},
+    "licenseProvenance": {"type": "object", "additionalProperties": false, "required": ["kind", "metadata_url", "evidence_sha256"], "properties": {"kind": {"const": "publisher-metadata-review"}, "metadata_url": {"type": "string", "pattern": "^https://pypi.org/pypi/.+/json$"}, "evidence_sha256": {"$ref": "#/$defs/sha256"}}},
+    "catalogComponent": {"type": "object", "additionalProperties": false, "required": ["name", "version", "purl", "license_expression", "license_provenance", "target_occurrences", "bundled_notice_ids"], "properties": {"name": {"$ref": "#/$defs/name"}, "version": {"type": "string", "minLength": 1}, "purl": {"type": "string", "minLength": 1}, "license_expression": {"type": "string", "minLength": 2}, "license_provenance": {"$ref": "#/$defs/licenseProvenance"}, "target_occurrences": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"type": "string", "minLength": 1}}, "bundled_notice_ids": {"type": "array", "uniqueItems": true, "items": {"type": "string", "minLength": 1}}}},
+    "edge": {"type": "object", "additionalProperties": false, "required": ["profile", "from", "to", "requirement", "specifier", "marker", "extras", "publisher_metadata_sha256"], "properties": {"profile": {"enum": ["runtime", "development"]}, "from": {"$ref": "#/$defs/name"}, "to": {"$ref": "#/$defs/name"}, "requirement": {"type": "string", "minLength": 1}, "specifier": {"type": "string"}, "marker": {"type": ["string", "null"]}, "extras": {"type": "array", "uniqueItems": true, "items": {"type": "string"}}, "publisher_metadata_sha256": {"$ref": "#/$defs/sha256"}}},
+    "bundledNotice": {"type": "object", "additionalProperties": false, "required": ["id", "component", "summary", "documents", "documentless_artifact_sha256s"], "properties": {"id": {"type": "string", "minLength": 1}, "component": {"$ref": "#/$defs/name"}, "summary": {"type": "string", "minLength": 1}, "documents": {"type": "array", "items": {"$ref": "#/$defs/noticeDocument"}}, "documentless_artifact_sha256s": {"type": "array", "uniqueItems": true, "items": {"$ref": "#/$defs/sha256"}}}},
+    "noticeDocument": {"type": "object", "additionalProperties": false, "required": ["path", "sha256", "text", "artifact_sha256s"], "properties": {"path": {"type": "string", "minLength": 1}, "sha256": {"$ref": "#/$defs/sha256"}, "text": {"type": "string", "minLength": 1}, "artifact_sha256s": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"$ref": "#/$defs/sha256"}}}}
+  }
+}

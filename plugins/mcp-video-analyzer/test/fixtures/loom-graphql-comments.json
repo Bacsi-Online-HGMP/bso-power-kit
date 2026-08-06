@@ -1,0 +1,32 @@
+{
+  "data": {
+    "getVideo": {
+      "comments": [
+        {
+          "id": "comment-1",
+          "plain_content": "This also happens on mobile",
+          "time_stamp": 12500,
+          "user_name": "John",
+          "createdAt": "2024-06-15T11:00:00Z",
+          "children_comments": [
+            {
+              "id": "comment-2",
+              "plain_content": "Confirmed on iOS Safari too",
+              "time_stamp": null,
+              "user_name": "Sarah",
+              "createdAt": "2024-06-15T11:15:00Z"
+            }
+          ]
+        },
+        {
+          "id": "comment-3",
+          "plain_content": "Fixed in PR #234",
+          "time_stamp": null,
+          "user_name": "Dev",
+          "createdAt": "2024-06-16T09:00:00Z",
+          "children_comments": []
+        }
+      ]
+    }
+  }
+}
