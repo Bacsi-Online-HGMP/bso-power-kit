@@ -1,0 +1,49 @@
+name: check-skill-refs
+
+# Plugins are added to this repo by hand, not only by build-standalone.sh, so the
+# patch scripts do not always run. Without this job a hand-added plugin can
+# reintroduce broken reference paths silently -- which is exactly how claude-blog
+# and claude-ads arrived carrying them.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  refs:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Skill reference paths resolve
+        run: bash check-skill-refs.sh --strict
+
+      - name: Marketplace manifest is valid and complete
+        run: |
+          python3 - <<'PY'
+          import json, os, sys
+          d = json.load(open('.claude-plugin/marketplace.json'))
+          missing = []
+          for p in d['plugins']:
+              for s in [p.get('source')] + p.get('skills', []):
+                  if s and s.startswith('./plugins/') and not os.path.exists(s):
+                      missing.append(f"{p['name']} -> {s}")
+          if missing:
+              print("Registered plugin sources that do not exist:")
+              print("\n".join("  " + m for m in missing))
+              sys.exit(1)
+          print(f"{len(d['plugins'])} plugins registered, all sources present.")
+          PY
+
+      - name: Vendor patches are already applied
+        run: |
+          bash patches/fix-skill-ref-paths.sh
+          if ! git diff --quiet; then
+            echo "::error::patches/fix-skill-ref-paths.sh changed tracked files."
+            echo "Run it locally and commit the result. Changed:"
+            git diff --name-only | sed 's/^/  /'
+            exit 1
+          fi
+          echo "No changes -- patches are committed."

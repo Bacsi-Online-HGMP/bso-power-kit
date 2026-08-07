@@ -78,7 +78,7 @@ Confirm the layout:
 Show the user a draft of:
 
 - The `## Agent skills` block to add to whichever of `CLAUDE.md` / `AGENTS.md` is being edited (see step 4 for selection rules)
-- The contents of `docs/agents/issue-tracker.md`, `docs/agents/triage-labels.md`, `docs/agents/domain.md`
+- The contents of `docs/agents/issue-tracker.md`, `triage-labels.md`, `domain.md`
 
 Let them edit before writing.
 
@@ -105,11 +105,11 @@ The block:
 
 ### Triage labels
 
-[one-line summary of the label vocabulary]. See `docs/agents/triage-labels.md`.
+[one-line summary of the label vocabulary]. See `triage-labels.md`.
 
 ### Domain docs
 
-[one-line summary of layout — "single-context" or "multi-context"]. See `docs/agents/domain.md`.
+[one-line summary of layout — "single-context" or "multi-context"]. See `domain.md`.
 ```
 
 Then write the three docs files using the seed templates in this skill folder as a starting point:

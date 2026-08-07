@@ -129,8 +129,8 @@ creative review, tracking, finance, or compliance only when they can proceed
 independently. Keep requirement interpretation, architecture decisions, scoring,
 and final acceptance in the conductor context.
 
-Use `agents/research-worker.md` for a bounded source, license, issue, pull-request,
-or repository slice. Use `agents/skill-reviewer.md` for a fresh-context review of
+Use `../agents/research-worker.md` for a bounded source, license, issue, pull-request,
+or repository slice. Use `../agents/skill-reviewer.md` for a fresh-context review of
 routing, progressive disclosure, prompt contracts, and safety boundaries.
 
 Every task packet specifies:

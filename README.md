@@ -85,6 +85,12 @@ Recorded so the decisions are not made twice. Full reasoning in `bootstrap-devic
 
 Every one of these is in the `renames` block of `marketplace.json` mapped to `null`, so a machine that already installed it detaches cleanly instead of erroring.
 
+Their directories have also been deleted from `plugins/`. They had stayed on disk
+after being dropped from the manifest — 164 MB registered nowhere, loaded by
+nothing, and misleading to anyone browsing the folder. `plugins/` now holds
+exactly the plugins `marketplace.json` registers, and CI fails if that stops
+being true.
+
 ## Registered separately, not vendored
 
 Four repos are marketplaces or frameworks in their own right. Vendoring them would bolt ~490 MB of someone else's catalogue onto this one, so register them directly instead:

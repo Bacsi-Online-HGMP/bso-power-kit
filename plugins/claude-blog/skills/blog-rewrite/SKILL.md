@@ -57,7 +57,7 @@ rewrite work, see `/blog flow optimize`.
      - "cutting-edge", "harness the power of", "leverage" (as verb)
      - "delve", "crucial", "elevate", "foster", "landscape" (overused)
      - "multifaceted", "robust", "tapestry", "embark"
-     - Full list in `agents/blog-writer.md`
+     - Full list in `../../agents/blog-writer.md`
    - **Vocabulary sample** - Report Type-Token Ratio (TTR) descriptively and
      interpret it against text length and specialist terminology.
    - Never estimate AI authorship from TTR, sentence-length variation, punctuation,
