@@ -30,10 +30,10 @@ You receive from the orchestrator:
 ## References
 
 Load before generating:
-- `references/platform-specs.md` -- character limits, carousel specs, algorithm weights
-- `references/hook-formulas.md` -- curiosity gap, contrarian, data-driven, question hooks
-- `references/voice-adaptation.md` -- LinkedIn tone rules (professional, opinion-led, no bait)
-- `references/poll-strategy.md` -- poll derivation, option constraints, follow-up strategy
+- `../repurpose/references/platform-specs.md` -- character limits, carousel specs, algorithm weights
+- `../repurpose/references/hook-formulas.md` -- curiosity gap, contrarian, data-driven, question hooks
+- `../repurpose/references/voice-adaptation.md` -- LinkedIn tone rules (professional, opinion-led, no bait)
+- `../repurpose/references/poll-strategy.md` -- poll derivation, option constraints, follow-up strategy
 
 ## Platform Rules
 

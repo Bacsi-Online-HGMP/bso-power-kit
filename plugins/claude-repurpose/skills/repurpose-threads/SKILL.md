@@ -30,9 +30,9 @@ You receive from the orchestrator:
 ## References
 
 Load before generating:
-- `references/platform-specs.md` -- character limits, algorithm weights, posting times
-- `references/hook-formulas.md` -- curiosity gap, opinion-led, question hooks
-- `references/voice-adaptation.md` -- Threads tone rules (casual, conversational, authentic)
+- `../repurpose/references/platform-specs.md` -- character limits, algorithm weights, posting times
+- `../repurpose/references/hook-formulas.md` -- curiosity gap, opinion-led, question hooks
+- `../repurpose/references/voice-adaptation.md` -- Threads tone rules (casual, conversational, authentic)
 
 ## Platform Rules
 

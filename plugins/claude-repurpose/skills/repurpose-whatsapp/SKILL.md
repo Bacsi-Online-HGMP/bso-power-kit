@@ -36,9 +36,9 @@ You receive from the orchestrator (`repurpose-broadcast`):
 
 Load before generating:
 
-- `references/platform-specs.md` -- character limits, formatting, posting cadence
-- `references/hook-formulas.md` -- curiosity gap and personal-tone openers
-- `references/voice-adaptation.md` -- WhatsApp tone rules (personal, direct, emoji-driven)
+- `../repurpose/references/platform-specs.md` -- character limits, formatting, posting cadence
+- `../repurpose/references/hook-formulas.md` -- curiosity gap and personal-tone openers
+- `../repurpose/references/voice-adaptation.md` -- WhatsApp tone rules (personal, direct, emoji-driven)
 
 ## Platform Rules
 

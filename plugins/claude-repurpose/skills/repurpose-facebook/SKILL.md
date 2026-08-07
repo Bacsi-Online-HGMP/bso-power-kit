@@ -30,9 +30,9 @@ You receive from the orchestrator:
 ## References
 
 Load before generating:
-- `references/platform-specs.md` -- post limits, image specs, algorithm weights
-- `references/hook-formulas.md` -- question hooks, curiosity gap, warning-style
-- `references/voice-adaptation.md` -- Facebook tone rules (warm, community-focused, question-ending)
+- `../repurpose/references/platform-specs.md` -- post limits, image specs, algorithm weights
+- `../repurpose/references/hook-formulas.md` -- question hooks, curiosity gap, warning-style
+- `../repurpose/references/voice-adaptation.md` -- Facebook tone rules (warm, community-focused, question-ending)
 
 ## Platform Rules
 

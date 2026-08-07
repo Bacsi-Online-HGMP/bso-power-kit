@@ -36,8 +36,8 @@ Received from the parent orchestrator:
 
 Load these before generating the calendar:
 
-- `references/platform-specs.md` -- posting limits and format rules
-- `references/engagement-benchmarks.md` -- optimal timing data and engagement windows
+- `../repurpose/references/platform-specs.md` -- posting limits and format rules
+- `../repurpose/references/engagement-benchmarks.md` -- optimal timing data and engagement windows
 
 ## Output: calendar.md
 

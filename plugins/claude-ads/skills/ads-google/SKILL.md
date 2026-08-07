@@ -10,7 +10,7 @@ description: "Audit Google Ads measurement, Search, Shopping, Performance Max, D
 1. Read the main `ads` operating contract and thinking framework.
 2. Collect objective, conversion definition, account and campaign age, geography,
    date window, timezone, currency, spend, targets, and available data sources.
-3. Read `ads/references/google-audit.md` and only the relevant shared measurement,
+3. Read `../../ads/references/google-audit.md` and only the relevant shared measurement,
    benchmark, creative, automation, policy, and scoring references.
 4. Normalize inputs and retain lineage to each export, screenshot, API result, or
    manual value.

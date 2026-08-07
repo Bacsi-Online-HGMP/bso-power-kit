@@ -38,9 +38,9 @@ Received from the parent agent (`repurpose-longform`):
 
 Load these before generating any output:
 
-- `references/voice-adaptation.md` -- tone rules for email/newsletter
-- `references/hook-formulas.md` -- subject line and opener formulas
-- `references/engagement-benchmarks.md` -- open rate and CTR targets
+- `../repurpose/references/voice-adaptation.md` -- tone rules for email/newsletter
+- `../repurpose/references/hook-formulas.md` -- subject line and opener formulas
+- `../repurpose/references/engagement-benchmarks.md` -- open rate and CTR targets
 
 ## Output 1: Newsletter Excerpt
 

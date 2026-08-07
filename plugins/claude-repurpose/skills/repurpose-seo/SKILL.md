@@ -38,8 +38,8 @@ Received from the parent agent (`repurpose-seo`):
 
 Load these before generating output:
 
-- `references/platform-specs.md` -- character limits, hashtag counts, formatting rules
-- `references/engagement-benchmarks.md` -- click-through and engagement baselines
+- `../repurpose/references/platform-specs.md` -- character limits, hashtag counts, formatting rules
+- `../repurpose/references/engagement-benchmarks.md` -- click-through and engagement baselines
 
 ## Output: seo-metadata.md
 

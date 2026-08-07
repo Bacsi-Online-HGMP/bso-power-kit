@@ -217,11 +217,11 @@ python3 ${SKILL_DIR}/gacha.py [次数]
 - `抽卡，给我来 3 只风格完全不同的龙虾`
 - `我已经有 SOUL.md 草稿了，帮我补全名字、底线规则和头像提示词`
 - 参考细节见：
-  - `references/identity-tension.md`
-  - `references/boundary-rules.md`
-  - `references/naming-system.md`
-  - `references/avatar-style.md`
-  - `references/output-template.md`
+  - `../../../../skills/openclaw-persona-forge/references/identity-tension.md`
+  - `../../../../skills/openclaw-persona-forge/references/boundary-rules.md`
+  - `../../../../skills/openclaw-persona-forge/references/naming-system.md`
+  - `../../../../skills/openclaw-persona-forge/references/avatar-style.md`
+  - `../../../../skills/openclaw-persona-forge/references/output-template.md`
 
 ---
 

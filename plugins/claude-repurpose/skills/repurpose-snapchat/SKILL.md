@@ -36,9 +36,9 @@ Received from the parent agent (`repurpose-visual`):
 ## References
 
 Load before generating:
-- `references/platform-specs.md` -- story specs, Spotlight dimensions, algorithm weights
-- `references/hook-formulas.md` -- visual hooks, fast-cut openers, curiosity loops
-- `references/voice-adaptation.md` -- Snapchat tone rules (ultra-casual, ephemeral, raw)
+- `../repurpose/references/platform-specs.md` -- story specs, Spotlight dimensions, algorithm weights
+- `../repurpose/references/hook-formulas.md` -- visual hooks, fast-cut openers, curiosity loops
+- `../repurpose/references/voice-adaptation.md` -- Snapchat tone rules (ultra-casual, ephemeral, raw)
 
 ## Platform Rules
 

@@ -12,7 +12,7 @@ description: "Create source-grounded paid-ad campaign concepts, messaging, copy,
 4. For each concept, define insight, promise, proof, hook, narrative, CTA, objections,
    platform adaptations, destination, and experiment hypothesis.
 5. Validate copy limits and policy against current platform references. Load only
-   the active files among `ads/references/google-creative-specs.md`,
+   the active files among `../../ads/references/google-creative-specs.md`,
    `meta-creative-specs.md`, `youtube-creative-specs.md`,
    `linkedin-creative-specs.md`, `tiktok-creative-specs.md`, and
    `microsoft-creative-specs.md`; use the dated source ledger for every current

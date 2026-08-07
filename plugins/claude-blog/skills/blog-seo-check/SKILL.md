@@ -121,7 +121,7 @@ title, publication date or study period, methodology and limitations, a stable
 URL, and a retrieval date for changeable or undated material. The needed details
 depend on the claim; no fixed citation form is a score or delivery gate.
 Unverifiable claims must be removed or replaced. See
-`skills/blog/references/flow-alignment.md`. For a one-shot prompt-driven check,
+`../blog/references/flow-alignment.md`. For a one-shot prompt-driven check,
 see `/blog flow optimize`.
 
 ### Step 7: Canonical URL

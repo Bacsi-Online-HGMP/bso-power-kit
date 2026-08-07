@@ -30,9 +30,9 @@ You receive from the orchestrator:
 ## References
 
 Load before generating:
-- `references/platform-specs.md` -- Skool specs, community health benchmarks
-- `references/hook-formulas.md` -- question hooks, challenge framing
-- `references/voice-adaptation.md` -- Skool tone rules (teacher/leader, empowering, action-oriented)
+- `../repurpose/references/platform-specs.md` -- Skool specs, community health benchmarks
+- `../repurpose/references/hook-formulas.md` -- question hooks, challenge framing
+- `../repurpose/references/voice-adaptation.md` -- Skool tone rules (teacher/leader, empowering, action-oriented)
 
 ## Platform Rules
 

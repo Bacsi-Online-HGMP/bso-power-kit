@@ -36,9 +36,9 @@ Received from the parent agent (`repurpose-visual`):
 ## References
 
 Load before generating:
-- `references/platform-specs.md` -- pin dimensions, algorithm weights, posting times
-- `references/hook-formulas.md` -- keyword-first titles, curiosity gap descriptions
-- `references/image-sourcing.md` -- 3-tier image pipeline, prompt templates, platform dimensions
+- `../repurpose/references/platform-specs.md` -- pin dimensions, algorithm weights, posting times
+- `../repurpose/references/hook-formulas.md` -- keyword-first titles, curiosity gap descriptions
+- `../repurpose/references/image-sourcing.md` -- 3-tier image pipeline, prompt templates, platform dimensions
 
 ## Platform Rules
 

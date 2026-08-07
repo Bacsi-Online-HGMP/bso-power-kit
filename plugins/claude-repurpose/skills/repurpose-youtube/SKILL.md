@@ -31,9 +31,9 @@ You receive from the orchestrator:
 ## References
 
 Load before generating:
-- `references/platform-specs.md` -- Community tab specs, poll limits, image sizes
-- `references/hook-formulas.md` -- question hooks, curiosity gap openers
-- `references/voice-adaptation.md` -- YouTube tone rules (casual, fan-oriented, interactive)
+- `../repurpose/references/platform-specs.md` -- Community tab specs, poll limits, image sizes
+- `../repurpose/references/hook-formulas.md` -- question hooks, curiosity gap openers
+- `../repurpose/references/voice-adaptation.md` -- YouTube tone rules (casual, fan-oriented, interactive)
 
 ## Platform Rules
 

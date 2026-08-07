@@ -36,9 +36,9 @@ You receive from the orchestrator (`repurpose-broadcast`):
 
 Load before generating:
 
-- `references/platform-specs.md` -- character limits, formatting, algorithm signals
-- `references/hook-formulas.md` -- headline and editorial hook formulas
-- `references/voice-adaptation.md` -- Telegram tone rules (structured, editorial, dense)
+- `../repurpose/references/platform-specs.md` -- character limits, formatting, algorithm signals
+- `../repurpose/references/hook-formulas.md` -- headline and editorial hook formulas
+- `../repurpose/references/voice-adaptation.md` -- Telegram tone rules (structured, editorial, dense)
 
 ## Platform Rules
 

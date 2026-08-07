@@ -37,9 +37,9 @@ Received from the parent agent (`repurpose-community`):
 
 Load before generating:
 
-- `references/platform-specs.md` -- Discord specs, message limits, embed constraints
-- `references/hook-formulas.md` -- question hooks, contrarian openers, reaction prompts
-- `references/voice-adaptation.md` -- Discord tone rules (casual, peer, emoji-friendly)
+- `../repurpose/references/platform-specs.md` -- Discord specs, message limits, embed constraints
+- `../repurpose/references/hook-formulas.md` -- question hooks, contrarian openers, reaction prompts
+- `../repurpose/references/voice-adaptation.md` -- Discord tone rules (casual, peer, emoji-friendly)
 
 ## Platform Rules
 

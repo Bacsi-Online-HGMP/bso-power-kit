@@ -35,7 +35,7 @@ merged into core during the March 2024 update).
 
 ## E-E-A-T Framework (updated Sept 2025 QRG)
 
-Read `skills/seo/references/eeat-framework.md` for full criteria.
+Read `../seo/references/eeat-framework.md` for full criteria.
 
 ### Experience (first-hand signals)
 - Original research, case studies, before/after results
@@ -160,7 +160,7 @@ Optimize for AI search engines (ChatGPT, Perplexity, Google AI Overviews):
 - **Multi-platform tracking:** Monitor visibility across Google AI Overviews, AI Mode, ChatGPT, Perplexity, and Bing Copilot, not just traditional rankings. Treat AI citation as a standalone KPI alongside organic rankings and traffic.
 
 **Generative Engine Optimization (GEO):**
-Per Google's AI optimization guide, "AEO" and "GEO" are rebranded labels for SEO: AI Overviews and AI Mode are grounded in the same ranking and quality systems as classic Search. The optimization signals that matter (quotability, attribution, heading hierarchy, freshness) are SEO fundamentals applied to AI-search surfaces, not a separate discipline. Cross-reference the `seo-geo` skill for detailed workflows; both surfaces share the primary-source synthesis in `skills/seo-geo/references/google-ai-optimization-guide.md`.
+Per Google's AI optimization guide, "AEO" and "GEO" are rebranded labels for SEO: AI Overviews and AI Mode are grounded in the same ranking and quality systems as classic Search. The optimization signals that matter (quotability, attribution, heading hierarchy, freshness) are SEO fundamentals applied to AI-search surfaces, not a separate discipline. Cross-reference the `seo-geo` skill for detailed workflows; both surfaces share the primary-source synthesis in `../seo-geo/references/google-ai-optimization-guide.md`.
 
 ## Content Freshness
 

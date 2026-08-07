@@ -98,7 +98,7 @@ Before entering the loops, understand the landscape. Keep this efficient — the
 
 1. **Search literature** for the research question. Use multiple sources — never stop at one:
    - **Exa MCP** (`web_search_exa`) if available — best for broad discovery and finding relevant papers quickly
-   - **Semantic Scholar** (`pip install semanticscholar`) — best for ML/AI papers, citation graphs, and specific paper lookup. See `20-ml-paper-writing` skill's `references/citation-workflow.md` for complete API code examples
+   - **Semantic Scholar** (`pip install semanticscholar`) — best for ML/AI papers, citation graphs, and specific paper lookup. See `20-ml-paper-writing` skill's `../20-ml-paper-writing/ml-paper-writing/references/citation-workflow.md` for complete API code examples
    - **arXiv** (`pip install arxiv`) — best for recent preprints and open-access papers
    - **CrossRef** — best for DOI lookup and BibTeX retrieval
    - Keep searching until you have good coverage. If one source comes up empty, try another with different keywords
@@ -393,7 +393,7 @@ Investigate, don't ignore. Return to literature — your protocol might have an 
 Ensure research-state.yaml and findings.md are updated after every action. These files are your memory across sessions.
 
 **Can't find relevant papers**
-Try multiple approaches in order: Exa MCP for broad search, Semantic Scholar for specific ML/AI paper lookup (`pip install semanticscholar`), arXiv for preprints (`pip install arxiv`). Check `20-ml-paper-writing` skill's `references/citation-workflow.md` for complete API code. Note: Google Scholar has no official API — use Semantic Scholar instead for programmatic search.
+Try multiple approaches in order: Exa MCP for broad search, Semantic Scholar for specific ML/AI paper lookup (`pip install semanticscholar`), arXiv for preprints (`pip install arxiv`). Check `20-ml-paper-writing` skill's `../20-ml-paper-writing/ml-paper-writing/references/citation-workflow.md` for complete API code. Note: Google Scholar has no official API — use Semantic Scholar instead for programmatic search.
 
 **No GPU available**
 Use CPU and scale experiments down. Many research tasks (analysis, interpretability, small model training) run fine on CPU. Adjust experiment design to fit available compute rather than blocking.

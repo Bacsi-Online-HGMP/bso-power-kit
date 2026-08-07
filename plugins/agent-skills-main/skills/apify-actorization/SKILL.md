@@ -131,7 +131,7 @@ Validate schemas against `@apify/json_schemas` npm package.
 
 **IMPORTANT:** Always generate a README.md as part of actorization. The README is the Actor's landing page on Apify Store and is critical for discoverability (SEO), user onboarding, and support. Do not consider an Actor complete without a proper README.
 
-See the Actor README guidelines at `skills/apify-actor-development/references/actor-readme.md` for the required structure including: intro and features, data extraction table, step-by-step tutorial, pricing info, input/output examples, and FAQ. Aim for at least 300 words with SEO-optimized H2/H3 headings. Also review these top Actors for best practices:
+See the Actor README guidelines at `../apify-actor-development/references/actor-readme.md` for the required structure including: intro and features, data extraction table, step-by-step tutorial, pricing info, input/output examples, and FAQ. Aim for at least 300 words with SEO-optimized H2/H3 headings. Also review these top Actors for best practices:
 
 - [Instagram Scraper](https://apify.com/apify/instagram-scraper)
 - [Google Maps Scraper](https://apify.com/compass/crawler-google-places)

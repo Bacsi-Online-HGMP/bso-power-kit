@@ -36,9 +36,9 @@ Received from the parent agent (`repurpose-longform`):
 ## References
 
 Load before generating:
-- `references/platform-specs.md` -- Quora character limits, posting times, algorithm weights
-- `references/voice-adaptation.md` -- Quora tone rules (expert, evidence-based)
-- `references/hook-formulas.md` -- opening hooks for answers and Space posts
+- `../repurpose/references/platform-specs.md` -- Quora character limits, posting times, algorithm weights
+- `../repurpose/references/voice-adaptation.md` -- Quora tone rules (expert, evidence-based)
+- `../repurpose/references/hook-formulas.md` -- opening hooks for answers and Space posts
 
 ## Core Principle: Authority Through Depth
 

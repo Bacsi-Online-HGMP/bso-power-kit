@@ -30,9 +30,9 @@ You receive from the orchestrator:
 ## References
 
 Load before generating:
-- `references/platform-specs.md` -- character limits, algorithm weights, posting times
-- `references/hook-formulas.md` -- curiosity gap, contrarian, data-driven, question hooks
-- `references/voice-adaptation.md` -- Twitter tone rules (concise, punchy, no hedging)
+- `../repurpose/references/platform-specs.md` -- character limits, algorithm weights, posting times
+- `../repurpose/references/hook-formulas.md` -- curiosity gap, contrarian, data-driven, question hooks
+- `../repurpose/references/voice-adaptation.md` -- Twitter tone rules (concise, punchy, no hedging)
 
 ## Platform Rules
 

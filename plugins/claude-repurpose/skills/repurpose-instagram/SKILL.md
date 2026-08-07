@@ -30,9 +30,9 @@ You receive from the orchestrator:
 ## References
 
 Load before generating:
-- `references/platform-specs.md` -- carousel specs, reel dimensions, algorithm weights
-- `references/hook-formulas.md` -- first-slide hooks, caption openers, reel hooks
-- `references/voice-adaptation.md` -- Instagram tone rules (relaxed, emoji-rich, visual-first)
+- `../repurpose/references/platform-specs.md` -- carousel specs, reel dimensions, algorithm weights
+- `../repurpose/references/hook-formulas.md` -- first-slide hooks, caption openers, reel hooks
+- `../repurpose/references/voice-adaptation.md` -- Instagram tone rules (relaxed, emoji-rich, visual-first)
 
 ## Platform Rules
 

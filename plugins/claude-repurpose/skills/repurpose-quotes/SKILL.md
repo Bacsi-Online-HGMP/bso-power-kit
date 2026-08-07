@@ -39,8 +39,8 @@ Received from the parent agent (`repurpose-visual`):
 
 Load these before generating output:
 
-- `references/image-sourcing.md` -- 3-tier image pipeline, prompt templates, platform dimensions
-- `references/platform-specs.md` -- image dimensions per platform
+- `../repurpose/references/image-sourcing.md` -- 3-tier image pipeline, prompt templates, platform dimensions
+- `../repurpose/references/platform-specs.md` -- image dimensions per platform
 
 ## Output 1: Quotable Moments
 
@@ -86,7 +86,7 @@ For each quote:
 **File:** `quotes/banana-prompts.md`
 
 For each of the 5 quotes, generate a /banana-compatible image prompt using the
-6-Component Brief (matching `references/image-sourcing.md`).
+6-Component Brief (matching `../repurpose/references/image-sourcing.md`).
 
 ### The 6-Component Brief
 

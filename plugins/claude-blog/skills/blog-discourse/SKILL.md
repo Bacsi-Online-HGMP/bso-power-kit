@@ -38,7 +38,7 @@ Adapted from the methodology of `last30days-skill` (Matt Van Horn, MIT, https://
 
 ### Phase 0: Topic Pre-Flight (mandatory)
 
-Before any search, run the four keyword-trap checks from `skills/blog/references/research-quality.md` (Class 1 demographic shopping, Class 2 numeric trap, Class 3 overly-literal phrase, Class 4 generic single-noun). If the topic matches a class:
+Before any search, run the four keyword-trap checks from `../blog/references/research-quality.md` (Class 1 demographic shopping, Class 2 numeric trap, Class 3 overly-literal phrase, Class 4 generic single-noun). If the topic matches a class:
 
 1. Emit a single one-line note: `Pre-Flight: matched Class N. Action: <reframe or clarifying question>.`
 2. If the action is a clarifying question, STOP and wait for the user.
@@ -135,7 +135,7 @@ python3 scripts/discourse_research.py \
 
 ### Phase 5: Synthesis Output
 
-Apply the 6 LAWs from `skills/blog/references/synthesis-contract.md`:
+Apply the 6 LAWs from `../blog/references/synthesis-contract.md`:
 - LAW 1: no trailing Sources block
 - LAW 2: no invented titles
 - LAW 3: no em-dashes or en-dashes

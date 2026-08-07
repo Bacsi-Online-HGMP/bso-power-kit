@@ -31,9 +31,9 @@ You receive from the orchestrator:
 ## References
 
 Load before generating:
-- `references/platform-specs.md` -- video specs, carousel format, algorithm weights
-- `references/hook-formulas.md` -- opening hooks, pattern interrupts
-- `references/voice-adaptation.md` -- TikTok tone rules (fast, casual, raw/authentic)
+- `../repurpose/references/platform-specs.md` -- video specs, carousel format, algorithm weights
+- `../repurpose/references/hook-formulas.md` -- opening hooks, pattern interrupts
+- `../repurpose/references/voice-adaptation.md` -- TikTok tone rules (fast, casual, raw/authentic)
 
 ## Platform Rules
 

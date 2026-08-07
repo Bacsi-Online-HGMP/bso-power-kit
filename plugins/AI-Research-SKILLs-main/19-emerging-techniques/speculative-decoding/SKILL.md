@@ -460,7 +460,7 @@ for output in outputs:
 
 ## See Also
 
-- `references/draft_model.md` - Draft model selection and training
+- references/draft_model.md (not shipped upstream) - Draft model selection and training
 - `references/medusa.md` - Medusa architecture and training
 - `references/lookahead.md` - Lookahead decoding implementation details
 

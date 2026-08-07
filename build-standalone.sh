@@ -93,6 +93,16 @@ for r in "${TOOLS[@]}"; do
   if [ -d "$SRC/$r" ]; then cp -R "$SRC/$r" "$HERE/tools/$r"; echo "  + $r"; else echo "  ! MISSING $r"; miss=1; fi
 done
 
+# Re-vendoring restores upstream's broken reference paths. Re-apply the fixes
+# and re-check, so a refresh cannot silently reintroduce them. See patches/README.md.
+echo
+echo "Applying vendor patches"
+for p in "$HERE"/patches/*.sh; do
+  [ -f "$p" ] && bash "$p"
+done
+echo "Checking skill reference paths"
+[ -f "$HERE/check-skill-refs.sh" ] && bash "$HERE/check-skill-refs.sh"
+
 echo
 du -sh "$HERE/plugins" "$HERE/tools" 2>/dev/null || true
 [ "$miss" -eq 0 ] && echo "Done — bundle is standalone." || echo "Done with warnings — some sources were missing (see ! lines)."

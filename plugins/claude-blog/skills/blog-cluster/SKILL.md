@@ -241,7 +241,7 @@ contradicted ones."
 
 This cascade preserves evidence discipline across batch execution without
 turning a fixed source-record format into a score or gate. See
-`skills/blog/references/flow-alignment.md`.
+`../blog/references/flow-alignment.md`.
 
 The context also instructs `blog-write` to run autonomously: skip topic clarification, skip outline approval, do not auto-detect template, do not pause.
 

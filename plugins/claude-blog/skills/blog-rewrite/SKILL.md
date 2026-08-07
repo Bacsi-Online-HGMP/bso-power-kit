@@ -20,12 +20,12 @@ and AI citation platforms. Preserves the author's voice while applying the
 6 pillars of optimization.
 
 **Key references:**
-- `skills/blog/references/quality-scoring.md` - 5-category scoring (Content 30, SEO 25, E-E-A-T 15, Technical 15, AI Citation 15)
-- `skills/blog/references/eeat-signals.md` - Experience, expertise, authority, trust markers
-- `skills/blog/references/internal-linking.md` - Linking strategy and anchor text rules
-- `skills/blog/references/visual-media.md` - Image sourcing and chart styling
-- `skills/blog/references/synthesis-contract.md` - 6 LAWs for re-citation hygiene during rewrite (v1.8.0; cross-skill ref lives in the orchestrator's references dir)
-- `skills/blog/references/research-quality.md` - cross-source clustering for replacement-statistic research (v1.8.0)
+- `../blog/references/quality-scoring.md` - 5-category scoring (Content 30, SEO 25, E-E-A-T 15, Technical 15, AI Citation 15)
+- `../blog/references/eeat-signals.md` - Experience, expertise, authority, trust markers
+- `../blog/references/internal-linking.md` - Linking strategy and anchor text rules
+- `../blog/references/visual-media.md` - Image sourcing and chart styling
+- `../blog/references/synthesis-contract.md` - 6 LAWs for re-citation hygiene during rewrite (v1.8.0; cross-skill ref lives in the orchestrator's references dir)
+- `../blog/references/research-quality.md` - cross-source clustering for replacement-statistic research (v1.8.0)
 
 ## Cross-reference
 
@@ -38,7 +38,7 @@ rewrite work, see `/blog flow optimize`.
 ### Phase 1: Audit (Read-Only)
 
 1. **Read the blog post** - Detect format (MDX, markdown, HTML)
-2. **Run the quality checklist** against `skills/blog/references/quality-scoring.md`:
+2. **Run the quality checklist** against `../blog/references/quality-scoring.md`:
    - Count fabricated vs sourced statistics
    - Check answer-first formatting (H2 -> stat in first sentence?)
    - Count images and charts (type diversity?)
@@ -65,7 +65,7 @@ rewrite work, see `/blog flow optimize`.
    - **Second-order structural reflex scan** (v1.8.0) - The first-order checks above
      are vocabulary-level. The second-order pass reviews structural repetition
      that can survive simple wording edits. Run against
-     `skills/blog/references/ai-slop-detection.md`. Flag at minimum:
+     `../blog/references/ai-slop-detection.md`. Flag at minimum:
      - Repetitive question-cadence H2s that do not suit reader intent
      - Three or more "Here..." paragraph openers
      - Three-clause sentence rhythm above 50% in any 200-word window
@@ -123,7 +123,7 @@ When the post needs more visual elements, invoke the `blog-chart` sub-skill:
 3. Embed the returned SVG directly within a `<figure>` wrapper
 4. Target 2-4 charts per 2,000-word post
 
-See `skills/blog/references/visual-media.md` for chart type selection and styling rules.
+See `../blog/references/visual-media.md` for chart type selection and styling rules.
 
 ### Phase 4: Content Rewrite
 
@@ -174,7 +174,7 @@ context each claim needs. Do not force statistics or word bands.
 
 #### 4h. Add Video Embeds
 If the post lacks YouTube video embeds:
-- Search 2-3 relevant videos using quality criteria from `skills/blog/references/video-embeds.md`
+- Search 2-3 relevant videos using quality criteria from `../blog/references/video-embeds.md`
 - Embed using platform-appropriate format (srcdoc lazy loading)
 - Place: 1 after introduction, 1-2 in mid-article sections
 - Include noscript fallback for AI crawlers
@@ -341,7 +341,7 @@ After rewriting, verify all quality gates pass:
 
 ## Phase 5.5: Delivery Contract Enforcement (v1.9.0)
 
-Before presenting the rewritten draft, run the 5-gate delivery contract per `skills/blog/references/blog-delivery-contract.md`. The contract applies to rewrites the same way it applies to new posts: the user is never the first reviewer.
+Before presenting the rewritten draft, run the 5-gate delivery contract per `../blog/references/blog-delivery-contract.md`. The contract applies to rewrites the same way it applies to new posts: the user is never the first reviewer.
 
 Steps:
 

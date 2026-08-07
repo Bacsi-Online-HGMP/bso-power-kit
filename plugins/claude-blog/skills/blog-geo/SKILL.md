@@ -30,7 +30,7 @@ for Google visibility. Use GEO/AEO as shorthand labels only.
 
 ## Cross-reference
 
-This skill covers FLOW surface 3 (AI assistant citations: ChatGPT, Perplexity, Claude, Gemini, Copilot, You.com) and contributes to surface 2 (SERP plus AI Overviews). Surface mapping: `skills/blog/references/flow-alignment.md`.
+This skill covers FLOW surface 3 (AI assistant citations: ChatGPT, Perplexity, Claude, Gemini, Copilot, You.com) and contributes to surface 2 (SERP plus AI Overviews). Surface mapping: `../blog/references/flow-alignment.md`.
 
 For directly relevant AI-citation prompts (AI-supporting-pages rewrite,
 evidence-based quality follow-up, ChatGPT discovery, visibility prompts), see

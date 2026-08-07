@@ -38,10 +38,10 @@ Received from the parent agent (`repurpose-broadcast`):
 
 Load before generating:
 
-- `references/platform-specs.md` -- Medium specs, article length targets, SEO weight
-- `references/hook-formulas.md` -- title formulas, opening hooks, narrative structures
-- `references/voice-adaptation.md` -- Medium tone rules (authoritative, conversational, storytelling)
-- `references/engagement-benchmarks.md` -- read time targets, clap benchmarks
+- `../repurpose/references/platform-specs.md` -- Medium specs, article length targets, SEO weight
+- `../repurpose/references/hook-formulas.md` -- title formulas, opening hooks, narrative structures
+- `../repurpose/references/voice-adaptation.md` -- Medium tone rules (authoritative, conversational, storytelling)
+- `../repurpose/references/engagement-benchmarks.md` -- read time targets, clap benchmarks
 
 ## Platform Rules
 
