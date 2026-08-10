@@ -30,10 +30,13 @@ if ! command -v python3 >/dev/null 2>&1; then
   exit 0
 fi
 
-python3 - "$ROOT" <<'PY'
+python3 - "$ROOT" "$HERE" <<'PY'
 import json, os, sys
 
 root = os.path.abspath(sys.argv[1])
+sys.path.insert(0, os.path.abspath(sys.argv[2]))
+import _apache_notice
+changed_files = {}
 if not os.path.isdir(root):
     print(f"fix-plugin-manifests: no such directory {root} -- nothing to do.")
     raise SystemExit(0)
@@ -94,7 +97,13 @@ for dirpath, dirnames, filenames in os.walk(root):
     print(f"  fixed  {rel}")
     for c in changes:
         print(f"           {c}")
+    changed_files[path] = '; '.join(changes)
     fixed += 1
+
+# Apache-2.0 4(b): modified files must carry a notice that they were changed.
+documented = _apache_notice.record(changed_files, root)
+for name in documented:
+    print(f"  notice {name}/MODIFICATIONS.md (Apache-2.0 4b)")
 
 print(f"fix-plugin-manifests: {fixed} manifest(s) repaired.")
 PY

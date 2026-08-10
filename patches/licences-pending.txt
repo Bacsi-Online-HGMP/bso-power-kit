@@ -1,0 +1,17 @@
+# Registered plugins with no licence file yet.
+#
+# Each declares a licence in its frontmatter or manifest but ships no licence
+# text. The text has to come from that project's upstream repository -- guessing
+# it would be worse than the gap, so these are tracked here instead.
+#
+# CI treats this list as known debt and fails on any plugin NOT listed, so a new
+# gap cannot slip in. CI also fails if a plugin here gains a licence file, so the
+# list cannot go stale.
+#
+# Format: <plugin-directory>  <declared-licence>
+# Remove a line once the real text is committed to that plugin.
+
+andrej-karpathy-skills-main   MIT
+create-viral-content          MIT
+cybersecurity-defense         Apache-2.0
+video-editing                 AGPL-3.0
