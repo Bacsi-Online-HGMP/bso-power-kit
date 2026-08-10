@@ -105,6 +105,30 @@ do.
 
 ---
 
+## `fix-plugin-manifests.sh`
+
+**Fixes:** `plugin.json` shape errors that fail `claude plugin validate`
+**Applies to:** every plugin under `plugins/`, automatically
+
+Two errors turn up in vendored manifests:
+
+| Wrong | Right | Consequence |
+|---|---|---|
+| `"author": "Someone"` | `"author": {"name": "Someone"}` | manifest rejected |
+| `"skills": ["./SKILL.md"]` | `"skills": ["."]` | the skill never loads — an entry must be a *directory* containing `SKILL.md`, not the file |
+
+Repaired four manifests: `claude-youtube` and `claude-shorts` (author),
+`youtuber` and `claude-blog/brain` (skills). Before this, `claude plugin
+validate .` failed outright — and one bad manifest reports as a failure for the
+whole repo, so genuine problems hide behind it.
+
+Validation now passes. Eight advisory warnings remain — upstream plugins missing
+`version`, `description` or `author`, plus a few fields Claude Code ignores at
+load time. Those are upstream's to fill in; inventing values for someone else's
+manifest would be worse than leaving them blank.
+
+---
+
 ## `check-skill-refs.sh` (repo root, not a patch)
 
 The detector for this whole class of bug.

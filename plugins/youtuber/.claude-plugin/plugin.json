@@ -16,7 +16,7 @@
     "youtube"
   ],
   "skills": [
-    "./SKILL.md"
+    "."
   ],
   "allowed-tools": [
     "Read",

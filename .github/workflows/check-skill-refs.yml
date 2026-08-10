@@ -39,10 +39,12 @@ jobs:
 
       - name: Vendor patches are already applied
         run: |
-          bash patches/fix-skill-ref-paths.sh
+          for p in patches/*.sh; do
+            [ -f "$p" ] && bash "$p"
+          done
           if ! git diff --quiet; then
-            echo "::error::patches/fix-skill-ref-paths.sh changed tracked files."
-            echo "Run it locally and commit the result. Changed:"
+            echo "::error::A script in patches/ changed tracked files."
+            echo "Run them locally and commit the result. Changed:"
             git diff --name-only | sed 's/^/  /'
             exit 1
           fi
