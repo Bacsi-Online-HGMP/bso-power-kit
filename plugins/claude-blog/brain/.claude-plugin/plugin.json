@@ -16,7 +16,7 @@
     "claude-blog"
   ],
   "skills": [
-    "./SKILL.md"
+    "."
   ],
   "allowed-tools": [
     "Read",

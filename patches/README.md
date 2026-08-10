@@ -105,6 +105,56 @@ do.
 
 ---
 
+## `fix-plugin-manifests.sh`
+
+**Fixes:** `plugin.json` shape errors that fail `claude plugin validate`
+**Applies to:** every plugin under `plugins/`, automatically
+
+Two errors turn up in vendored manifests:
+
+| Wrong | Right | Consequence |
+|---|---|---|
+| `"author": "Someone"` | `"author": {"name": "Someone"}` | manifest rejected |
+| `"skills": ["./SKILL.md"]` | `"skills": ["."]` | the skill never loads — an entry must be a *directory* containing `SKILL.md`, not the file |
+
+Repaired four manifests: `claude-youtube` and `claude-shorts` (author),
+`youtuber` and `claude-blog/brain` (skills). Before this, `claude plugin
+validate .` failed outright — and one bad manifest reports as a failure for the
+whole repo, so genuine problems hide behind it.
+
+Validation now passes. Eight advisory warnings remain — upstream plugins missing
+`version`, `description` or `author`, plus a few fields Claude Code ignores at
+load time. Those are upstream's to fill in; inventing values for someone else's
+manifest would be worse than leaving them blank.
+
+---
+
+## Licensing
+
+The repository is Apache-2.0. `LICENSE` at the root is the canonical unmodified
+text; `NOTICE` carries the copyright, the scope statement, and the inventory of
+vendored plugins with their licences.
+
+**The root licence does not relicense vendored work.** It covers this
+repository's own scripts, docs and authored plugins only. Everything under
+`plugins/` and `tools/` keeps the terms its own authors chose, and their
+`LICENSE` and `NOTICE` files are preserved untouched.
+
+**Apache-2.0 section 4(b)** requires modified files to carry a notice that they
+were changed. `_apache_notice.py` writes a `MODIFICATIONS.md` into any
+Apache-2.0 plugin the patch scripts touch, listing the changed files. It merges
+rather than replaces, because each script sees only its own changes and a
+replace would let the last one win. Non-Apache plugins get nothing — the
+obligation is specific to that licence.
+
+`patches/licences-pending.txt` tracks registered plugins that declare a licence
+but ship no text. CI fails on any unlisted gap, and also fails if a listed
+plugin gains a licence or leaves the manifest, so the list cannot go stale. The
+pending entries need the real text from each upstream; attaching a guessed
+licence would be worse than the gap.
+
+---
+
 ## `check-skill-refs.sh` (repo root, not a patch)
 
 The detector for this whole class of bug.

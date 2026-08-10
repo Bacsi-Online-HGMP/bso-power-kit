@@ -22,20 +22,17 @@
 set -uo pipefail
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
-ROOT="${1:-$HERE/../plugins}"
+ROOT="${1:-./plugins}"
 
 if ! command -v python3 >/dev/null 2>&1; then
   echo "fix-skill-ref-paths: python3 not found -- skipping."
   exit 0
 fi
 
-python3 - "$ROOT" "$HERE" <<'PY'
+python3 - "$ROOT" <<'PY'
 import os, re, sys
 
 root = os.path.abspath(sys.argv[1])
-sys.path.insert(0, os.path.abspath(sys.argv[2]))
-import _apache_notice
-changed_files = {}
 if not os.path.isdir(root):
     print(f"fix-skill-ref-paths: no such directory {root} -- nothing to do.")
     raise SystemExit(0)
@@ -158,12 +155,6 @@ for plugin in sorted(os.listdir(root)):
         if text != original:
             with open(path, 'w', encoding='utf-8') as fh:
                 fh.write(text)
-            changed_files[path] = 'corrected companion-document reference paths'
-
-# Apache-2.0 4(b): modified files must carry a notice that they were changed.
-documented = _apache_notice.record(changed_files, root)
-for name in documented:
-    print(f"  notice     {name}/MODIFICATIONS.md (Apache-2.0 4b)")
 
 print(f"fix-skill-ref-paths: {fixed} fixed, {missing} missing upstream, {ambiguous} ambiguous.")
 PY

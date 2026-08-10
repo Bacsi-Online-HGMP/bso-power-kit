@@ -37,12 +37,61 @@ jobs:
           print(f"{len(d['plugins'])} plugins registered, all sources present.")
           PY
 
+      - name: Every registered plugin carries a licence
+        run: |
+          python3 - <<'PY'
+          import json, os, sys
+          reg = set()
+          for p in json.load(open('.claude-plugin/marketplace.json'))['plugins']:
+              for s in [p.get('source')] + p.get('skills', []):
+                  if s and s.startswith('./plugins/'):
+                      reg.add(s.split('/')[2])
+          pending = set()
+          try:
+              for line in open('patches/licences-pending.txt'):
+                  line = line.split('#')[0].strip()
+                  if line:
+                      pending.add(line.split()[0])
+          except FileNotFoundError:
+              pass
+
+          def licensed(name):
+              d = os.path.join('plugins', name)
+              return any(f.upper().startswith(('LICENSE', 'LICENCE')) for f in os.listdir(d))
+
+          missing = [n for n in sorted(reg) if not licensed(n) and n not in pending]
+          resolved = [n for n in sorted(pending) if n in reg and licensed(n)]
+          gone = [n for n in sorted(pending) if n not in reg]
+
+          fail = False
+          if missing:
+              print("Registered plugins with no licence file and not tracked as pending:")
+              print("\n".join("  " + m for m in missing))
+              print("\nVendored plugins need the text from their upstream repository.")
+              print("Plugins authored here should carry the repository's Apache-2.0 licence.")
+              print("If it genuinely cannot be resolved yet, add it to patches/licences-pending.txt.")
+              fail = True
+          if resolved or gone:
+              print("\npatches/licences-pending.txt is stale -- remove these lines:")
+              print("\n".join(f"  {n} (now licensed)" for n in resolved))
+              print("\n".join(f"  {n} (no longer registered)" for n in gone))
+              fail = True
+          if fail:
+              sys.exit(1)
+
+          ok = len(reg) - len([n for n in reg if not licensed(n)])
+          print(f"{ok}/{len(reg)} registered plugins carry a licence file; "
+                f"{len(pending)} tracked as pending upstream text.")
+          PY
+
       - name: Vendor patches are already applied
         run: |
-          bash patches/fix-skill-ref-paths.sh
+          for p in patches/*.sh; do
+            [ -f "$p" ] && bash "$p"
+          done
           if ! git diff --quiet; then
-            echo "::error::patches/fix-skill-ref-paths.sh changed tracked files."
-            echo "Run it locally and commit the result. Changed:"
+            echo "::error::A script in patches/ changed tracked files."
+            echo "Run them locally and commit the result. Changed:"
             git diff --name-only | sed 's/^/  /'
             exit 1
           fi

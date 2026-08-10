@@ -1,0 +1,84 @@
+claude-power-kit
+Copyright 2026 Bacsi-Online-HGMP
+
+This product includes software developed by Bacsi-Online-HGMP.
+Licensed under the Apache License, Version 2.0 (see LICENSE).
+
+
+SCOPE OF THE ROOT LICENSE
+-------------------------
+
+The Apache-2.0 licence at the root of this repository covers only work
+authored by Bacsi-Online-HGMP:
+
+  - the repository's own scripts (build-standalone.sh, check-skill-refs.sh,
+    sync/update/bootstrap scripts, everything under patches/)
+  - the repository's documentation (README.md, SCORING.md, SYNC.md, and the
+    marketplace manifest)
+  - the plugins authored here: handoff, vendored-plugin-audit
+
+It does NOT relicense third-party work. Everything else under plugins/ and
+tools/ is vendored from upstream projects and remains under the terms its own
+authors chose. Those terms are listed below and the corresponding LICENSE and
+NOTICE files are preserved in each vendored directory.
+
+
+VENDORED PLUGINS AND THEIR LICENCES
+-----------------------------------
+
+  academic-research-skills-main   UNKNOWN
+  andrej-karpathy-skills-main     MIT (declared, no text)
+  anti-slop                       Apache-2.0
+  brooks-lint-main                MIT
+  caveman-main                    MIT
+  claude-ads                      MIT
+  claude-blog                     MIT
+  claude-repurpose                MIT
+  claude-seo                      MIT
+  claude-shorts                   MIT
+  claude-youtube                  MIT
+  create-viral-content            MIT (declared, no text)
+  cybersecurity-defense           Apache-2.0 (declared, no text)
+  handoff                         Apache-2.0
+  idea-validation-agents          MIT
+  impeccable-main                 Apache-2.0
+  last30days-skill-main           MIT
+  mattpocock-skills-main          MIT
+  mcp-video-analyzer              MIT
+  modern-web-guidance-main        Apache-2.0
+  ponytail-main                   MIT
+  taste-skill                     MIT
+  threads-carousel-claude-skill   MIT
+  ui-ux-pro-max-skill             MIT
+  vendored-plugin-audit           Apache-2.0
+  verification-before-completion  MIT
+  video-editing                   AGPL-3.0 (declared, no text)
+  viral-hooks-skill               MIT
+  watch                           MIT
+  worktrunk-main                  MIT
+  youtube-shorts-pipeline         MIT
+  youtuber                        Apache-2.0
+
+NOTES
+-----
+
+"declared, no text" means the plugin states its licence in frontmatter or a
+manifest but ships no licence file. The declaration is recorded here; the
+authoritative text must come from that project's upstream repository.
+
+academic-research-skills-main states no licence anywhere and ships a NOTICE.md
+only. Its terms are unknown. Treat it as all-rights-reserved until its upstream
+confirms otherwise.
+
+video-editing is AGPL-3.0. Redistributing this repository redistributes that
+plugin, and the AGPL obligations attach to it. It is aggregated here, not
+combined with the rest of the repository.
+
+Upstream NOTICE files are preserved at:
+  plugins/anti-slop/NOTICE
+  plugins/claude-blog/NOTICE
+  plugins/academic-research-skills-main/NOTICE.md
+
+Modifications made to vendored plugins are described in patches/README.md. For
+Apache-2.0 licensed plugins, a MODIFICATIONS.md in the plugin directory records
+the changed files, as required by Apache-2.0 section 4(b).

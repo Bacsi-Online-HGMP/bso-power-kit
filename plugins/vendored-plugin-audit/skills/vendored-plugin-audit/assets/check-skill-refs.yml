@@ -1,0 +1,55 @@
+# Template — copy to .github/workflows/check-skill-refs.yml in the repo being audited.
+#
+# Assumes check-skill-refs.sh sits at the repo root and the repair scripts live in
+# patches/. Adjust both paths if the repo puts them elsewhere.
+#
+# Plugins get added to a marketplace repo by hand, not only through the build
+# script, so the repair scripts do not always run. Without this job a hand-added
+# plugin reintroduces broken reference paths silently.
+
+name: check-skill-refs
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  refs:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Skill reference paths resolve
+        run: bash check-skill-refs.sh --strict
+
+      - name: Marketplace manifest is valid and complete
+        run: |
+          python3 - <<'PY'
+          import json, os, sys
+          d = json.load(open('.claude-plugin/marketplace.json'))
+          missing = []
+          for p in d['plugins']:
+              for s in [p.get('source')] + p.get('skills', []):
+                  if s and s.startswith('./plugins/') and not os.path.exists(s):
+                      missing.append(f"{p['name']} -> {s}")
+          if missing:
+              print("Registered plugin sources that do not exist:")
+              print("\n".join("  " + m for m in missing))
+              sys.exit(1)
+          print(f"{len(d['plugins'])} plugins registered, all sources present.")
+          PY
+
+      - name: Vendor patches are already applied
+        run: |
+          for p in patches/*.sh; do
+            [ -f "$p" ] && bash "$p"
+          done
+          if ! git diff --quiet; then
+            echo "::error::A script in patches/ changed tracked files."
+            echo "Run them locally and commit the result. Changed:"
+            git diff --name-only | sed 's/^/  /'
+            exit 1
+          fi
+          echo "No changes -- patches are committed."
