@@ -8,3 +8,7 @@ dotfiles/claude-code/projects/
 dotfiles/claude-code/cache/
 dotfiles/claude-code/backups/
 dotfiles/claude-code/*.log
+
+# python bytecode from patches/_apache_notice.py
+__pycache__/
+*.pyc
