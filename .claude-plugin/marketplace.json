@@ -75,7 +75,9 @@
       "name": "threads-carousel",
       "source": "./",
       "strict": false,
-      "skills": ["./plugins/threads-carousel-claude-skill"],
+      "skills": [
+        "./plugins/threads-carousel-claude-skill"
+      ],
       "description": "F · Visual — text into carousel PNG/PDF."
     },
     {
@@ -120,7 +122,9 @@
       "name": "youtube-shorts-pipeline",
       "source": "./",
       "strict": false,
-      "skills": ["./plugins/youtube-shorts-pipeline"],
+      "skills": [
+        "./plugins/youtube-shorts-pipeline"
+      ],
       "description": "V · Video — niche-driven shorts pipeline."
     },
     {
@@ -147,14 +151,18 @@
       "name": "create-viral-content",
       "source": "./",
       "strict": false,
-      "skills": ["./plugins/create-viral-content"],
+      "skills": [
+        "./plugins/create-viral-content"
+      ],
       "description": "H · Content — viral content patterns."
     },
     {
       "name": "viral-hooks",
       "source": "./",
       "strict": false,
-      "skills": ["./plugins/viral-hooks-skill"],
+      "skills": [
+        "./plugins/viral-hooks-skill"
+      ],
       "description": "H · Content — 100 hook formulas as a reference library."
     },
     {
@@ -181,6 +189,11 @@
       "name": "handoff",
       "source": "./plugins/handoff",
       "description": "U · Utilities — write a session handoff doc instead of /compact."
+    },
+    {
+      "name": "vendored-plugin-audit",
+      "source": "./plugins/vendored-plugin-audit",
+      "description": "U · Utilities — diagnose and repair broken skills in a marketplace repo, then keep them fixed with CI."
     },
     {
       "name": "worktrunk",
