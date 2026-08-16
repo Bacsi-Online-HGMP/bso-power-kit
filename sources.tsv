@@ -1,0 +1,44 @@
+# Upstream source of every vendored plugin. The map `build-standalone.sh` never had.
+#
+# Columns: <plugin-dir><TAB><owner/repo><TAB><ref><TAB><note>
+#   ref  = a tag, a branch, or `latest` (revendor.sh resolves `latest` to the newest
+#          release tag, falling back to the default branch HEAD).
+#   repo = `-` means no upstream to pull from: authored here, or the source is not
+#          yet confirmed. revendor.sh skips those rows and says so.
+#
+# Verified against the GitHub API on 2026-08-16. A row is only as good as that check:
+# nine of these were first guessed by scanning each plugin's own README, and three of
+# the guesses pointed at the wrong repository entirely. Confirm before you add a row.
+
+academic-research-skills-main	-	-	upstream unconfirmed; README cites stanford-oval/storm as a reference, not its origin
+andrej-karpathy-skills-main	multica-ai/andrej-karpathy-skills	latest	repo changed owner from forrestchang; no licence file upstream
+anti-slop	AgriciDaniel/anti-slop	latest
+brooks-lint-main	hyhmrright/brooks-lint	latest
+caveman-main	JuliusBrussee/caveman	latest	licence reads NOASSERTION over the API; text is MIT in-repo
+claude-ads	AgriciDaniel/claude-ads	latest
+claude-blog	AgriciDaniel/claude-blog	latest
+claude-repurpose	AgriciDaniel/claude-repurpose	latest
+claude-seo	AgriciDaniel/claude-seo	latest
+claude-shorts	AgriciDaniel/claude-shorts	latest
+claude-youtube	AgriciDaniel/claude-youtube	latest
+create-viral-content	-	-	upstream unconfirmed; the README's ice-ninja/skills returns 404
+cybersecurity-defense	-	-	upstream unconfirmed; no URL anywhere in the vendored copy
+handoff	-	-	authored here (see NOTICE)
+idea-validation-agents	MaxKmet/idea-validation-agents	latest
+impeccable-main	pbakaus/impeccable	latest
+last30days-skill-main	mvanhorn/last30days-skill	latest
+mattpocock-skills-main	mattpocock/skills	latest
+mcp-video-analyzer	guimatheus92/mcp-video-analyzer	latest
+modern-web-guidance-main	GoogleChrome/modern-web-guidance	latest	vendored dir name says -src; the live repo has no -src suffix
+ponytail-main	DietrichGebert/ponytail	latest
+taste-skill	Leonxlnx/taste-skill	latest
+threads-carousel-claude-skill	itchernetski/threads-carousel-claude-skill	latest
+ui-ux-pro-max-skill	nextlevelbuilder/ui-ux-pro-max-skill	latest
+vendored-plugin-audit	-	-	authored here (see NOTICE)
+verification-before-completion	obra/superpowers	latest	a subtree of superpowers, not a repo; re-vendor by hand until a path column exists
+video-editing	-	-	upstream unconfirmed; OpenMontage, owner not recorded anywhere here
+viral-hooks-skill	-	-	upstream unconfirmed; jakeolschewski/social-media-hooks-database is a 2-star near-match
+watch	bradautomates/claude-video	latest
+worktrunk-main	max-sixty/worktrunk	latest
+youtube-shorts-pipeline	rushindrasinha/youtube-shorts-pipeline	latest
+youtuber	AgriciDaniel/youtuber	latest
