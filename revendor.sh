@@ -33,16 +33,38 @@ if [ "$APPLY" -eq 1 ] && [ -d "$HERE/.git" ] && [ -n "$(git -C "$HERE" status --
   exit 1
 fi
 
-# Newest release tag, or the default branch when a repo cuts no releases.
-# gh prints its 404 body to stdout as well as failing, so an `||` chain concatenates
-# the error JSON onto the fallback. Capture, then reject anything that looks like a body.
+# Resolve `latest` to something reproducible, in order: newest release, newest tag,
+# default branch. RESOLVED_VIA records which, because a silent downgrade is the bug
+# this function already caused once.
+#
+# Two lessons are baked in here. First, gh prints its 404 body to stdout as well as
+# failing, so an `||` chain concatenates error JSON onto the fallback -- every call is
+# captured and screened. Second, a branch is NOT an acceptable stand-in for a release:
+# nextlevelbuilder/ui-ux-pro-max-skill ships v2.15.0 while its main branch still reads
+# 2.13.0, so falling through to `main` on a transient API blip pulls OLDER code than
+# the release it was asked for. Releases and tags are each tried twice before a branch.
+# Prints "<ref><TAB><how it was resolved>", empty on total failure. It returns the
+# source rather than setting a global because resolve_ref runs inside $( ), and a
+# global assigned in a subshell never reaches the caller -- which is how the first
+# version reported every resolution as "pinned".
+_gh_value() {
+  out="$(gh api "$1" --jq "$2" 2>/dev/null || true)"
+  case "$out" in ''|'{'*|'['*|*'Not Found'*) out="" ;; esac
+  printf '%s' "$out"
+}
+
 resolve_ref() {
-  out="$(gh api "repos/$1/releases/latest" --jq .tag_name 2>/dev/null || true)"
-  case "$out" in ''|'{'*|*'Not Found'*) out="" ;; esac
-  [ -n "$out" ] && { echo "$out"; return; }
-  out="$(gh api "repos/$1" --jq .default_branch 2>/dev/null || true)"
-  case "$out" in ''|'{'*|*'Not Found'*) out="" ;; esac
-  echo "$out"
+  for attempt in 1 2; do
+    got="$(_gh_value "repos/$1/releases/latest" .tag_name)"
+    [ -n "$got" ] && { printf '%s\trelease\n' "$got"; return; }
+  done
+  for attempt in 1 2; do
+    got="$(_gh_value "repos/$1/tags?per_page=1" '.[0].name')"
+    [ -n "$got" ] && { printf '%s\ttag\n' "$got"; return; }
+  done
+  got="$(_gh_value "repos/$1" .default_branch)"
+  [ -n "$got" ] && { printf '%s\tbranch - no release or tag found\n' "$got"; return; }
+  echo ""
 }
 
 # What the lock file recorded for this plugin last time, if anything.
@@ -68,7 +90,15 @@ while IFS=$'\t' read -r dir repo ref note || [ -n "$dir" ]; do
   fi
 
   want="$ref"
-  [ "$ref" = "latest" ] && want="$(resolve_ref "$repo")"
+  via=""
+  if [ "$ref" = "latest" ]; then
+    resolved="$(resolve_ref "$repo")"
+    want="$(printf '%s' "$resolved" | cut -f1)"
+    how="$(printf '%s' "$resolved" | cut -f2)"
+    # Anything but a release is worth saying out loud: a tag may be a pre-release,
+    # and a branch is a moving target that can be older than the newest release.
+    [ "$how" = "release" ] || via=" [via ${how:-unknown}]"
+  fi
   if [ -z "$want" ]; then
     printf '  FAIL  %-34s cannot reach %s\n' "$dir" "$repo"
     skipped=$((skipped + 1))
@@ -77,15 +107,17 @@ while IFS=$'\t' read -r dir repo ref note || [ -n "$dir" ]; do
 
   have="$(locked_ref "$dir")"
   if [ "$APPLY" -eq 0 ]; then
-    if [ "$have" = "$want" ]; then printf '  ok    %-34s %s\n' "$dir" "$want"
-    else printf '  DRIFT %-34s vendored=%s upstream=%s\n' "$dir" "${have:-unrecorded}" "$want"; fi
-    printf '%s\t%s\t%s\t%s\n' "$dir" "$repo" "${have:-$want}" "$TODAY" >> "$TMP/lock.new"
+    if [ "$have" = "$want" ]; then printf '  ok    %-34s %s%s\n' "$dir" "$want" "$via"
+    else printf '  DRIFT %-34s vendored=%s upstream=%s%s\n' "$dir" "${have:-unrecorded}" "$want" "$via"; fi
+    # Only --apply may write a row. Recording `$want` here would claim a version
+    # nobody pulled, and the next check would then report a stale plugin as `ok`.
+    [ -n "$have" ] && printf '%s\t%s\t%s\t%s\n' "$dir" "$repo" "$have" "$TODAY" >> "$TMP/lock.new"
     continue
   fi
 
   [ -d "$HERE/plugins/$dir" ] || { printf '  FAIL  %-34s not in plugins/\n' "$dir"; skipped=$((skipped + 1)); continue; }
 
-  printf '  pull  %-34s %s@%s\n' "$dir" "$repo" "$want"
+  printf '  pull  %-34s %s@%s%s\n' "$dir" "$repo" "$want" "$via"
   rm -rf "$TMP/$dir"
   if ! git clone --quiet --depth 1 --branch "$want" "https://github.com/$repo.git" "$TMP/$dir" 2>/dev/null; then
     printf '  FAIL  %-34s clone failed (ref %s)\n' "$dir" "$want"
