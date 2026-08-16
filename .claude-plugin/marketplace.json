@@ -90,7 +90,7 @@
       "name": "ui-ux-pro-max",
       "source": "./plugins/ui-ux-pro-max-skill",
       "defaultEnabled": false,
-      "description": "F · Visual — 84 styles, 161 palettes, 57 font pairs. Source for bso-design, off by default. Use nextlevelbuilder, not the same-named WAAMEngineer fork."
+      "description": "F · Visual — 79 searchable styles (9 more deprecated), 192 palettes, 74 font pairs. Source for bso-design, off by default. Use nextlevelbuilder, not the same-named WAAMEngineer fork."
     },
     {
       "name": "taste-skill",

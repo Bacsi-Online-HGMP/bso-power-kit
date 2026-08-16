@@ -33,7 +33,7 @@ modern-web-guidance-main	GoogleChrome/modern-web-guidance	latest	vendored dir na
 ponytail-main	DietrichGebert/ponytail	latest
 taste-skill	Leonxlnx/taste-skill	latest
 threads-carousel-claude-skill	itchernetski/threads-carousel-claude-skill	latest
-ui-ux-pro-max-skill	nextlevelbuilder/ui-ux-pro-max-skill	latest
+ui-ux-pro-max-skill	nextlevelbuilder/ui-ux-pro-max-skill	latest	manifests lag the tags: the v2.15.0 tree still reads 2.13.0 in skill.json and plugin.json because the bump workflow runs after release. Trust the tag, not the manifest
 vendored-plugin-audit	-	-	authored here (see NOTICE)
 verification-before-completion	obra/superpowers	latest	a subtree of superpowers, not a repo; re-vendor by hand until a path column exists
 video-editing	-	-	upstream unconfirmed; OpenMontage, owner not recorded anywhere here

@@ -139,6 +139,13 @@ export async function renderSkillFile(config: PlatformConfig, isGlobal = false):
     quickReferenceContent = await loadTemplate('base/quick-reference.md');
   }
 
+  // scriptPath is relative to the platform root. Generated commands run from
+  // the user's project root, so local installs need the platform root prefix;
+  // global installs need the same path anchored at the user's home directory.
+  const rootedScriptPath = `${config.folderStructure.root}/${config.scriptPath}`
+    .replace(/\/{2,}/g, '/');
+  const commandScriptPath = isGlobal ? `~/${rootedScriptPath}` : rootedScriptPath;
+
   // Build the final content
   const frontmatter = renderFrontmatter(config.frontmatter);
 
@@ -149,28 +156,9 @@ export async function renderSkillFile(config: PlatformConfig, isGlobal = false):
   content = content
     .replace(/\{\{TITLE\}\}/g, config.title)
     .replace(/\{\{DESCRIPTION\}\}/g, config.description)
-    .replace(/\{\{SCRIPT_PATH\}\}/g, config.scriptPath)
+    .replace(/\{\{SCRIPT_PATH\}\}/g, commandScriptPath)
     .replace(/\{\{SKILL_OR_WORKFLOW\}\}/g, config.skillOrWorkflow)
     .replace(/\{\{QUICK_REFERENCE\}\}/g, quickRefWithNewline);
-
-  // Rewrite the hardcoded default script path to the platform-specific path
-  const defaultScriptPath = 'skills/ui-ux-pro-max/scripts/search.py';
-  if (config.scriptPath !== defaultScriptPath) {
-    content = content.replace(
-      new RegExp(defaultScriptPath.replace(/\//g, '\\/'), 'g'),
-      config.scriptPath
-    );
-  }
-
-  // For global install, rewrite relative script paths to absolute ~/root/ paths
-  if (isGlobal) {
-    const globalPrefix = `~/${config.folderStructure.root}/`;
-    // Match any platform's script path pattern (skills/, prompts/, steering/, etc.)
-    content = content.replace(
-      new RegExp(`python3 ${config.scriptPath.replace(/\//g, '\\/')}`, 'g'),
-      `python3 ${globalPrefix}${config.scriptPath}`
-    );
-  }
 
   return frontmatter + content;
 }
