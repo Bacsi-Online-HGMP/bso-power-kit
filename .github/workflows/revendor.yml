@@ -1,0 +1,96 @@
+name: revendor
+
+# Weekly upstream drift check for the vendored plugins.
+#
+# Vendored plugins are snapshots: an upstream fix never arrives on its own, and
+# nobody notices a plugin is two releases behind until they read its code. This job
+# runs revendor.sh in check mode every Monday, and only when something has actually
+# drifted does it pull, apply the vendor patches, and open a pull request.
+#
+# A PR rather than a commit, on purpose. Re-vendoring replaces whole plugin
+# directories -- that diff gets reviewed, same rule as running the script by hand.
+#
+# Chosen over a macOS LaunchAgent: this runs without the laptop awake, and its
+# output is a reviewable PR instead of a log file nobody opens.
+
+on:
+  schedule:
+    - cron: '17 6 * * 1'  # Mondays, 06:17 UTC
+  workflow_dispatch:
+    inputs:
+      plugins:
+        description: 'Plugin dirs to re-vendor, space separated. Empty = every drifted plugin.'
+        required: false
+        default: ''
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: revendor
+  cancel-in-progress: false
+
+jobs:
+  revendor:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}   # revendor.sh resolves release tags with `gh api`
+      BRANCH: revendor/auto
+      PLUGINS: ${{ inputs.plugins }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Report upstream drift
+        id: check
+        run: |
+          set -o pipefail
+          bash revendor.sh | tee "$RUNNER_TEMP/drift.txt"
+          # Check mode stamps today's date into every sources.lock.tsv row it keeps, so
+          # the tree is now dirty -- and --apply refuses to run on a dirty tree. Put the
+          # lock file back; only the pull below is allowed to rewrite it.
+          git checkout -- sources.lock.tsv
+          if [ -n "$PLUGINS" ] || grep -q '^  DRIFT' "$RUNNER_TEMP/drift.txt"; then
+            echo 'run=true' >> "$GITHUB_OUTPUT"
+          fi
+
+      # No continue-on-error here: a failed pull, a failed vendor patch, or a broken
+      # skill reference must not become a pull request. Fix it, then re-run.
+      - name: Re-vendor
+        if: steps.check.outputs.run == 'true'
+        run: bash revendor.sh --apply $PLUGINS
+
+      - name: Open or update the pull request
+        if: steps.check.outputs.run == 'true'
+        run: |
+          if [ -z "$(git status --porcelain)" ]; then
+            echo "Upstream drifted but the pull changed nothing tracked. No PR."
+            exit 0
+          fi
+
+          git config user.name  'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -A
+          git commit -m 'chore: re-vendor plugins from upstream'
+          # Force push: a second week of drift updates the open PR instead of stacking
+          # a second one. The branch is disposable; main is the only history that matters.
+          git push --force origin "HEAD:refs/heads/$BRANCH"
+
+          {
+            echo 'Opened by the weekly `revendor` job. Review the plugin diffs before merging.'
+            echo
+            echo 'Drift reported before the pull:'
+            echo
+            echo '```'
+            cat "$RUNNER_TEMP/drift.txt"
+            echo '```'
+          } > "$RUNNER_TEMP/body.md"
+
+          if gh pr view "$BRANCH" --json state --jq '.state' 2>/dev/null | grep -q OPEN; then
+            gh pr edit "$BRANCH" --body-file "$RUNNER_TEMP/body.md"
+            echo "Updated the open PR."
+          else
+            gh pr create --base main --head "$BRANCH" \
+              --title 'chore: re-vendor plugins from upstream' \
+              --body-file "$RUNNER_TEMP/body.md"
+          fi
