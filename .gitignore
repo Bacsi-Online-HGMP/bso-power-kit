@@ -1,9 +1,25 @@
 # never commit credentials or machine-local state
+# NOTE: patterns must match secret FILENAMES, not the substring "token"/"session"
+# anywhere in a path - a blanket **/*token* silently drops design-token docs,
+# scripts and linter rules from the repo (broke CI 2026-08-16).
 .DS_Store
 **/.credentials.json
-**/credentials*
-**/*token*
-**/session*
+**/credentials.json
+**/client_secret*.json
+**/*service-account*.json
+**/token.json
+**/tokens.json
+**/*.token
+**/*_token
+**/access_token*
+**/refresh_token*
+**/KHOA_RIENG.txt
+**/gemini_profile*/
+**/.env
+**/.env.*
+!**/.env.example
+**/session.json
+**/*.session
 dotfiles/claude-code/projects/
 dotfiles/claude-code/cache/
 dotfiles/claude-code/backups/
