@@ -4,15 +4,8 @@ description: >
   Generates LinkedIn content from content atoms: text posts with hook-first formatting,
   PDF carousel slide scripts (10-12 slides), and strategic polls. Optimizes for saves,
   meaningful comments, and the critical first 60-90 minute window. Sub-skill of the
-  Content Repurposing Engine. Use when user says "linkedin", "linkedin post",
-  "linkedin carousel", "linkedin poll", or "repurpose for linkedin".
-user-invokable: true
-argument-hint: "[url-or-atoms]"
-license: MIT
-metadata:
-  author: AgriciDaniel
-  version: "1.0.0"
-  category: content
+  Content Repurposing Engine.
+user-invokable: false
 ---
 
 # LinkedIn Content Generator

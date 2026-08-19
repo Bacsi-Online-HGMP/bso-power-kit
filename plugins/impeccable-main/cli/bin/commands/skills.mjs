@@ -9,7 +9,7 @@
  */
 
 import { execSync } from 'node:child_process';
-import { existsSync, readFileSync, readdirSync, statSync, lstatSync, unlinkSync, mkdirSync, writeFileSync, rmSync, renameSync, createWriteStream, realpathSync, symlinkSync, readlinkSync, cpSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync, statSync, lstatSync, unlinkSync, mkdirSync, writeFileSync, rmSync, rmdirSync, renameSync, createWriteStream, realpathSync, symlinkSync, readlinkSync, cpSync } from 'node:fs';
 import { join, resolve, dirname, relative, isAbsolute, sep } from 'node:path';
 import { createInterface, emitKeypressEvents } from 'node:readline';
 import { fileURLToPath } from 'node:url';
@@ -23,9 +23,11 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const API_BASE = 'https://impeccable.style';
 
 // Provider folder names in project roots
-const PROVIDER_DIRS = ['.claude', '.cursor', '.gemini', '.agents', '.github', '.kiro', '.opencode', '.pi', '.qoder', '.trae', '.trae-cn', '.rovodev'];
+const PROVIDER_DIRS = ['.claude', '.cursor', '.gemini', '.agents', '.agent', '.github', '.grok', '.hermes', '.kiro', '.opencode', '.pi', '.qoder', '.trae', '.trae-cn', '.rovodev', '.vibe'];
 const PROVIDER_ALIASES = {
+  agent: '.agent',
   agents: '.agents',
+  antigravity: '.agent',
   claude: '.claude',
   'claude-code': '.claude',
   codex: '.agents',
@@ -33,6 +35,10 @@ const PROVIDER_ALIASES = {
   cursor: '.cursor',
   gemini: '.gemini',
   github: '.github',
+  grok: '.grok',
+  'grok-build': '.grok',
+  hermes: '.hermes',
+  xai: '.grok',
   kiro: '.kiro',
   opencode: '.opencode',
   pi: '.pi',
@@ -41,36 +47,122 @@ const PROVIDER_ALIASES = {
   rovodev: '.rovodev',
   trae: '.trae',
   'trae-cn': '.trae-cn',
+  vibe: '.vibe',
 };
 
 const PROVIDER_DISPLAY = {
+  '.agent': { name: 'Antigravity', input: 'antigravity' },
   '.agents': { name: 'Codex CLI', input: 'codex' },
   '.claude': { name: 'Claude Code', input: 'claude' },
   '.cursor': { name: 'Cursor', input: 'cursor' },
   '.gemini': { name: 'Gemini CLI', input: 'gemini' },
   '.github': { name: 'GitHub Copilot', input: 'github' },
+  '.grok': { name: 'Grok Build', input: 'grok' },
+  '.hermes': { name: 'Hermes Agent', input: 'hermes' },
   '.kiro': { name: 'Kiro', input: 'kiro' },
   '.opencode': { name: 'OpenCode', input: 'opencode' },
-  '.pi': { name: 'Project Indigo', input: 'pi' },
+  '.pi': { name: 'Pi Coding Agent', input: 'pi' },
   '.qoder': { name: 'Qoder', input: 'qoder' },
   '.rovodev': { name: 'Rovo Dev', input: 'rovo-dev' },
   '.trae': { name: 'Trae', input: 'trae' },
   '.trae-cn': { name: 'Trae CN', input: 'trae-cn' },
+  '.vibe': { name: 'Mistral Vibe', input: 'vibe' },
 };
-const PROVIDER_INPUT_ORDER = ['claude', 'codex', 'cursor', 'gemini', 'github', 'kiro', 'opencode', 'pi', 'qoder', 'trae', 'trae-cn', 'rovo-dev'];
+const PROVIDER_INPUT_ORDER = ['antigravity', 'claude', 'codex', 'cursor', 'gemini', 'github', 'grok', 'hermes', 'kiro', 'opencode', 'pi', 'qoder', 'trae', 'trae-cn', 'rovo-dev', 'vibe'];
+
+// OpenCode reads global skills from its config directory, not ~/.opencode:
+// $OPENCODE_CONFIG_DIR, else $XDG_CONFIG_HOME/opencode, else
+// ~/.config/opencode. Writing to ~/.opencode/skills produced an install
+// `opencode debug skill` never listed. See issue #406.
+function opencodeGlobalConfigDir(home) {
+  if (process.env.OPENCODE_CONFIG_DIR) return process.env.OPENCODE_CONFIG_DIR;
+  if (process.env.XDG_CONFIG_HOME) return join(process.env.XDG_CONFIG_HOME, 'opencode');
+  return join(home, '.config', 'opencode');
+}
+
+// Hermes reads skills from `$HERMES_HOME/skills/`, where $HERMES_HOME defaults
+// to `~/.hermes` but is also set to a profile path (e.g.
+// `~/.hermes/profiles/forge`) when a non-default profile is active. Reading
+// the env var matters here at install time: writing to `~/.hermes/skills/`
+// from a profile-scoped Hermes invocation would land in the wrong profile
+// (the same cross-profile data-corruption class that the active_profile
+// fallback warning in hermes_constants.py exists to detect). Used by
+// HOME_SKILLS_DIR_OVERRIDES['.hermes'] only; GLOBAL_HARNESS_HINTS reads the
+// fixed `~/.hermes` location so detection doesn't leak the developer's real
+// HERMES_HOME into test output (test isolation).
+//
+// Ignore $HERMES_HOME when it doesn't sit under `home` (the caller-supplied
+// home dir, which tests inject via HOME=/tmp/...). Without this guard, an
+// inherited $HERMES_HOME=/home/<dev>/.hermes from the developer's shell leaks
+// into test output even when the test sets HOME=/tmp/imp-home-xxx: tests
+// expect ~/.hermes to live under their tmp home, not under the dev's real
+// home. The check uses `resolve()` on both sides so a symlinked test home
+// (e.g. /tmp -> /private/tmp on macOS) still compares correctly.
+function hermesGlobalHome(home) {
+  const envHome = process.env.HERMES_HOME;
+  if (envHome) {
+    try {
+      const resolvedEnv = resolve(envHome);
+      const resolvedHome = resolve(home);
+      // Honor HERMES_HOME only when it lives under the active home (real
+      // ~/.hermes or ~/.hermes/profiles/<name>). Cross-home inheritance is
+      // treated as not-set, so a test running under HOME=/tmp/... doesn't
+      // pick up the developer's real ~/.hermes.
+      if (resolvedEnv === resolvedHome || resolvedEnv.startsWith(resolvedHome + sep)) {
+        return resolvedEnv;
+      }
+    } catch {
+      // fall through to default
+    }
+  }
+  return join(home, '.hermes');
+}
+
+// Providers whose GLOBAL (home) skills dir is not `<provider>/skills`,
+// as a function of the home dir. Pi discovers global skills from
+// ~/.pi/agent/skills/ (issue #327); OpenCode from its config dir (issue
+// #406); Hermes from $HERMES_HOME. Project scope stays `<provider>/skills`
+// for all three.
+const HOME_SKILLS_DIR_OVERRIDES = {
+  '.agent': (home) => join(home, '.gemini', 'config', 'skills'),
+  '.hermes': (home) => join(hermesGlobalHome(home), 'skills'),
+  '.pi': (home) => join(home, '.pi', 'agent', 'skills'),
+  '.opencode': (home) => join(opencodeGlobalConfigDir(home), 'skills'),
+};
 
 // When a project has no harness folder yet, infer the target from globally
 // installed harnesses (~/.claude, ~/.codex, ...). Codex reads skills from
 // .agents/skills, so ~/.codex maps to the .agents bundle variant.
+//
+// Hermes auto-detection uses the fixed `~/.hermes` location only. When a
+// non-default Hermes profile is active (HERMES_HOME points to a profile path),
+// the user is expected to be inside a Hermes invocation and can pass
+// --providers=hermes explicitly. Auto-detection from a non-default HERMES_HOME
+// would also defeat test isolation (tests inject HOME; HERMES_HOME leaks from
+// the parent process and would surface the developer's real ~/.hermes in
+// detection output). The install path honors $HERMES_HOME; detection does not.
 const GLOBAL_HARNESS_HINTS = [
+  { home: '.agent', provider: '.agent' },
+  // Antigravity nests under ~/.gemini/ too, so any of these also trips the
+  // .gemini hint above (harmless double-detection — both get pre-selected).
+  { home: '.gemini/antigravity', provider: '.agent' },
+  { home: '.gemini/antigravity-cli', provider: '.agent' },
+  { home: '.gemini/antigravity-ide', provider: '.agent' },
   { home: '.claude', provider: '.claude' },
   { home: '.codex', provider: '.agents' },
   { home: '.cursor', provider: '.cursor' },
   { home: '.gemini', provider: '.gemini' },
+  { home: '.grok', provider: '.grok' },
+  { home: '.hermes', provider: '.hermes' },
   { home: '.kiro', provider: '.kiro' },
   { home: '.opencode', provider: '.opencode' },
+  // OpenCode's real global config dir (issue #406); the ~/.opencode entry
+  // above keeps recognizing machines that only have the legacy dir.
+  { resolve: opencodeGlobalConfigDir, provider: '.opencode' },
+  { home: '.pi', provider: '.pi' },
   { home: '.qoder', provider: '.qoder' },
   { home: '.rovodev', provider: '.rovodev' },
+  { home: '.vibe', provider: '.vibe' },
 ];
 
 // Last-resort default when nothing is detected: Claude Code + the universal
@@ -109,7 +201,53 @@ const PROVIDER_HOOK_ARTIFACTS = {
   '.github': [
     { sourceProvider: '.github', rel: 'hooks/impeccable.json', destProvider: '.github' },
   ],
+  // Grok Build discovers project hooks from `.grok/hooks/*.json`. Team-shared
+  // by default (commit them if the whole team uses Grok); folder trust is still
+  // required via `/hooks-trust` or `--trust` before they run.
+  '.grok': [
+    { sourceProvider: '.grok', rel: 'hooks/impeccable.json', destProvider: '.grok' },
+  ],
 };
+
+function userProviderSkillsDir(home, provider) {
+  const override = HOME_SKILLS_DIR_OVERRIDES[provider];
+  if (override) return override(home);
+  return join(home, provider, 'skills');
+}
+
+// Compare via realpath: the project root comes from process.cwd() (symlinks
+// resolved) while homedir() reflects $HOME verbatim, so a home dir reached
+// through a symlink (e.g. /tmp -> /private/tmp) would fail a string compare.
+function isHomeDir(root) {
+  if (root === homedir()) return true;
+  try {
+    return realpathSync(root) === realpathSync(homedir());
+  } catch {
+    return false;
+  }
+}
+
+// Every layout a provider's installed skills can live in under `root`.
+// `scope` narrows the answer when the caller knows which install it is
+// acting on: 'user' means the provider's global layout, 'project' means
+// `<provider>/skills`. Without a scope (update/check, where installs of
+// either kind may live under `root`) both layouts are candidates when
+// `root` is the home dir, since an overridden provider (Pi) keeps its
+// global skills elsewhere while a repo rooted at ~ still uses the project
+// layout. Scoping matters for the same reason: a project-scope install in
+// a home-rooted repo must not be conflated with an existing global one.
+function providerSkillsDirCandidates(root, provider, scope) {
+  if (scope === 'user') return [userProviderSkillsDir(root, provider)];
+  const dirs = [join(root, provider, 'skills')];
+  if (scope !== 'project' && HOME_SKILLS_DIR_OVERRIDES[provider] && isHomeDir(root)) {
+    dirs.unshift(userProviderSkillsDir(root, provider));
+  }
+  return dirs;
+}
+
+function existingSkillsDirs(root, provider, scope) {
+  return providerSkillsDirCandidates(root, provider, scope).filter(existsSync);
+}
 
 let pipedAnswers = null;
 class PromptAbortError extends Error {
@@ -415,13 +553,15 @@ async function showHelp() {
 /**
  * Read the skills version from the impeccable SKILL.md frontmatter.
  */
-function getSkillsVersion(root) {
+function getSkillsVersion(root, scope) {
   for (const d of PROVIDER_DIRS) {
-    const skillMd = join(root, d, 'skills', 'impeccable', 'SKILL.md');
-    if (!existsSync(skillMd)) continue;
-    const content = readFileSync(skillMd, 'utf-8');
-    const match = content.match(/^version:\s*(.+)$/m);
-    if (match) return match[1].trim().replace(/^["']|["']$/g, '');
+    for (const skillsDir of providerSkillsDirCandidates(root, d, scope)) {
+      const skillMd = join(skillsDir, 'impeccable', 'SKILL.md');
+      if (!existsSync(skillMd)) continue;
+      const content = readFileSync(skillMd, 'utf-8');
+      const match = content.match(/^version:\s*(.+)$/m);
+      if (match) return match[1].trim().replace(/^["']|["']$/g, '');
+    }
   }
   return null;
 }
@@ -519,7 +659,7 @@ async function copyOrExtractLocalBundle(sourceValue) {
  */
 function normalizeForHash(content) {
   return content
-    .replace(/\.(claude|cursor|agents|github|gemini|codex|kiro|opencode|pi|qoder|trae|trae-cn|rovodev)\/skills\//g, '.PROVIDER/skills/');
+    .replace(/\.(claude|cursor|agents|agent|github|gemini|codex|grok|hermes|kiro|opencode|pi|qoder|trae|trae-cn|rovodev|vibe)\/skills\//g, '.PROVIDER/skills/');
 }
 
 function hashSkillFile(filePath) {
@@ -535,14 +675,17 @@ function hashSkillFile(filePath) {
  * per unique real path. The first provider that maps to a real path
  * wins (so the bundle uses that provider's build).
  */
-function deduplicateProviders(root, providers) {
+function deduplicateProviders(root, providers, scope) {
   const seen = new Map(); // realPath -> { provider, localSkillsDir }
   for (const provider of providers) {
-    const skillsDir = join(root, provider, 'skills');
-    if (!existsSync(skillsDir)) continue;
-    const real = realpathSync(skillsDir);
-    if (!seen.has(real)) {
-      seen.set(real, { provider, localSkillsDir: skillsDir });
+    // A provider can hold real installs in more than one layout (a home-rooted
+    // repo may carry both ~/.pi/agent/skills and ~/.pi/skills). Keep each as
+    // its own entry so update/check touch every tree, not just the first.
+    for (const skillsDir of existingSkillsDirs(root, provider, scope)) {
+      const real = realpathSync(skillsDir);
+      if (!seen.has(real)) {
+        seen.set(real, { provider, localSkillsDir: skillsDir });
+      }
     }
   }
   return [...seen.values()];
@@ -556,8 +699,8 @@ function deduplicateProviders(root, providers) {
  * SKILL.md, so script-only fixes and removed files are detected.
  * Returns true if every bundle skill matches the local copy.
  */
-function isUpToDate(root, providers, bundleDir) {
-  const unique = deduplicateProviders(root, providers);
+function isUpToDate(root, providers, bundleDir, scope) {
+  const unique = deduplicateProviders(root, providers, scope);
   if (unique.length === 0) return false;
 
   for (const { provider, localSkillsDir } of unique) {
@@ -621,20 +764,20 @@ async function check() {
 // ─── skills install ───────────────────────────────────────────────────────────
 
 // Check if impeccable skills are already present in any provider folder
-function isAlreadyInstalled(root) {
+function isAlreadyInstalled(root, scope) {
   for (const d of PROVIDER_DIRS) {
-    const skillsDir = join(root, d, 'skills');
-    if (!existsSync(skillsDir)) continue;
-    try {
-      const entries = readdirSync(skillsDir);
-      // Look for 'impeccable' skill (or prefixed variant, or legacy 'teach-impeccable')
-      if (entries.some(e =>
-        e === 'impeccable' || e.endsWith('-impeccable') ||
-        e === 'teach-impeccable' || e.endsWith('-teach-impeccable')
-      )) {
-        return d;
-      }
-    } catch {}
+    for (const skillsDir of existingSkillsDirs(root, d, scope)) {
+      try {
+        const entries = readdirSync(skillsDir);
+        // Look for 'impeccable' skill (or prefixed variant, or legacy 'teach-impeccable')
+        if (entries.some(e =>
+          e === 'impeccable' || e.endsWith('-impeccable') ||
+          e === 'teach-impeccable' || e.endsWith('-teach-impeccable')
+        )) {
+          return d;
+        }
+      } catch {}
+    }
   }
   return null;
 }
@@ -678,26 +821,26 @@ function isRealSkillDir(skillsDir, name) {
  * by name -- never touches third-party skills that happen to start with `i-`.
  * Returns the number of skills migrated.
  */
-function migrateUnprefixImpeccable(root) {
+function migrateUnprefixImpeccable(root, scope) {
   let migrated = 0;
   for (const d of PROVIDER_DIRS) {
-    const skillsDir = join(root, d, 'skills');
-    if (!existsSync(skillsDir)) continue;
-    let entries;
-    try { entries = readdirSync(skillsDir); } catch { continue; }
-    for (const name of entries) {
-      // A prefixed impeccable skill is `<prefix>impeccable`, not the canonical
-      // `impeccable` and not an unrelated legacy skill name.
-      if (name === 'impeccable' || name === 'teach-impeccable') continue;
-      if (!name.endsWith('-impeccable')) continue;
-      if (!isRealSkillDir(skillsDir, name)) continue;
+    for (const skillsDir of existingSkillsDirs(root, d, scope)) {
+      let entries;
+      try { entries = readdirSync(skillsDir); } catch { continue; }
+      for (const name of entries) {
+        // A prefixed impeccable skill is `<prefix>impeccable`, not the canonical
+        // `impeccable` and not an unrelated legacy skill name.
+        if (name === 'impeccable' || name === 'teach-impeccable') continue;
+        if (!name.endsWith('-impeccable')) continue;
+        if (!isRealSkillDir(skillsDir, name)) continue;
 
-      const dest = join(skillsDir, 'impeccable');
-      try {
-        rmSync(dest, { recursive: true, force: true });
-        renameSync(join(skillsDir, name), dest);
-        migrated++;
-      } catch {}
+        const dest = join(skillsDir, 'impeccable');
+        try {
+          rmSync(dest, { recursive: true, force: true });
+          renameSync(join(skillsDir, name), dest);
+          migrated++;
+        } catch {}
+      }
     }
   }
   return migrated;
@@ -774,7 +917,7 @@ function uniquePaths(paths) {
 
 function userSkillProbePaths(home, harnessDir, provider) {
   return uniquePaths([
-    join(home, provider, 'skills'),
+    userProviderSkillsDir(home, provider),
     join(home, harnessDir, 'skills'),
   ]);
 }
@@ -795,16 +938,21 @@ function collectInstallDetections(root, home = homedir()) {
     });
   }
 
-  for (const { home: h, provider } of GLOBAL_HARNESS_HINTS) {
-    const foundPath = join(home, h);
+  for (const hint of GLOBAL_HARNESS_HINTS) {
+    const { provider } = hint;
+    // A hint is either a fixed dir under home or a resolver for harnesses
+    // whose location depends on the environment (OpenCode's config dir).
+    const foundPath = hint.resolve ? hint.resolve(home) : join(home, hint.home);
     if (!existsSync(foundPath)) continue;
-    const skillProbePaths = userSkillProbePaths(home, h, provider);
+    const skillProbePaths = hint.resolve
+      ? uniquePaths([userProviderSkillsDir(home, provider), join(foundPath, 'skills')])
+      : userSkillProbePaths(home, hint.home, provider);
     detections.push({
       provider,
       scope: 'user',
       foundPath,
       installRoot: home,
-      installPath: join(home, provider, 'skills'),
+      installPath: userProviderSkillsDir(home, provider),
       skillProbePaths,
       hasRealSkills: skillProbePaths.some(hasRealSkillEntries),
       reason: 'user harness folder',
@@ -1001,13 +1149,13 @@ async function chooseInstallScope(projectRoot, targets, detections, { yes, scope
 async function chooseInstallPlan(projectRoot, flags, { yes } = {}) {
   const providersValue = getFlagValue(flags, '--providers');
   const scopeValue = getInstallScopeValue(flags);
-  const { targets, detections } = await chooseInstallProviders(projectRoot, providersValue, { yes });
+  const { targets, detections, explicit } = await chooseInstallProviders(projectRoot, providersValue, { yes });
   if (targets.length === 0) {
     throw new Error('Could not determine a target harness folder.');
   }
   const scope = await chooseInstallScope(projectRoot, targets, detections, { yes, scopeValue });
   const installRoot = installRootForScope(scope, projectRoot);
-  return { targets, scope, installRoot, hookRoot: projectRoot, detections };
+  return { targets, scope, installRoot, hookRoot: projectRoot, detections, explicit };
 }
 
 /**
@@ -1044,13 +1192,17 @@ function isInProjectProviderLink(localSkillsDir, root, provider) {
  * Copy each target provider's compiled skill variant from an extracted bundle
  * into the project. Writes real directories (copy, never symlink) so every
  * harness keeps the build that was compiled for it. Returns skills written.
+ * `scope: 'user'` writes to the provider's global skills layout (see
+ * HOME_SKILLS_DIR_OVERRIDES); anything else writes `<provider>/skills`.
  */
-function copyProviderSkills(bundleDir, root, targets) {
+function copyProviderSkills(bundleDir, root, targets, { scope } = {}) {
   let written = 0;
   for (const provider of targets) {
     const srcDir = join(bundleDir, provider, 'skills');
     if (existsSync(srcDir)) {
-      const localSkillsDir = join(root, provider, 'skills');
+      const localSkillsDir = scope === 'user'
+        ? userProviderSkillsDir(root, provider)
+        : join(root, provider, 'skills');
       // A previous `npx skills` install may have left this provider's skills dir
       // as a symlink to ANOTHER in-project provider's canonical copy. Drop only
       // that link so we write a real, provider-specific directory. A user's
@@ -1067,13 +1219,104 @@ function copyProviderSkills(bundleDir, root, targets) {
         copyDirSync(src, dest);
         written++;
       }
+      // A pre-#406 global OpenCode install lived at ~/.opencode/skills, a
+      // location OpenCode never reads. Now that the real copy sits in the
+      // config dir, drop exactly the skills just written from the stranded
+      // location; sibling skills and everything else in ~/.opencode stay.
+      // Guards (both flagged in review): a symlinked skills dir is shared
+      // storage whose target must not be emptied through the link, the
+      // just-written dir must be compared by realpath rather than string,
+      // and a home-rooted repo makes `.opencode/skills` a live
+      // project-scope install rather than a stranded global one.
+      if (scope === 'user' && provider === '.opencode') {
+        const legacyDir = join(root, '.opencode', 'skills');
+        let migratable = false;
+        try {
+          migratable = existsSync(legacyDir)
+            && !lstatSync(legacyDir).isSymbolicLink()
+            && realpathSync(legacyDir) !== realpathSync(localSkillsDir)
+            && !existsSync(join(root, '.git'));
+        } catch { migratable = false; }
+        if (migratable) {
+          for (const skill of readdirSync(srcDir, { withFileTypes: true })) {
+            if (!skill.isDirectory()) continue;
+            rmSync(join(legacyDir, skill.name), { recursive: true, force: true });
+          }
+          try { rmdirSync(legacyDir); } catch { /* not empty: siblings stay */ }
+        }
+      }
     }
   }
   return written;
 }
 
-function refreshProviderSkills(bundleDir, root, providers) {
-  const unique = deduplicateProviders(root, providers);
+// Native subagent definitions that ship in the bundle next to a provider's
+// skills. GitHub Copilot's live at `.github/agents/impeccable-*.agent.md`:
+// project installs commit them at `<repo>/.github/agents/`, user-level
+// installs go to `~/.copilot/agents/` (Copilot's user-scope dir, NOT
+// `~/.github/`). On a name conflict Copilot lets the user-level file shadow
+// the project one, so both paths overwrite existing impeccable-* copies and a
+// project install reports any same-named user-level agents that would shadow
+// it. Cursor's live at `.cursor/agents/impeccable-*.md`, user scope
+// `~/.cursor/agents/`; project agents take precedence there, so no shadow
+// warning is needed.
+const PROVIDER_AGENT_ARTIFACTS = {
+  '.github': {
+    ext: '.agent.md',
+    userDir: home => join(home, '.copilot', 'agents'),
+    userShadowsProject: true,
+  },
+  '.cursor': {
+    ext: '.md',
+    userDir: home => join(home, '.cursor', 'agents'),
+    userShadowsProject: false,
+  },
+};
+
+function copyProviderAgents(bundleDir, root, providers, { scope, home = homedir() } = {}) {
+  const targets = Array.isArray(providers) ? providers : [providers];
+  const results = [];
+  for (const provider of targets) {
+    const artifact = PROVIDER_AGENT_ARTIFACTS[provider];
+    if (!artifact) continue;
+    const srcDir = join(bundleDir, provider, 'agents');
+    if (!existsSync(srcDir)) continue;
+    const agentFiles = readdirSync(srcDir).filter(name => name.endsWith(artifact.ext));
+    if (agentFiles.length === 0) continue;
+
+    const destDir = scope === 'user'
+      ? artifact.userDir(root)
+      : join(root, provider, 'agents');
+    mkdirSync(destDir, { recursive: true });
+    for (const name of agentFiles) {
+      writeFileSync(join(destDir, name), readFileSync(join(srcDir, name)));
+    }
+
+    // A project install can be shadowed by same-named agents in the user-level
+    // dir; surface them so the freshly installed project agents actually apply.
+    const userDir = artifact.userDir(home);
+    const shadowed = artifact.userShadowsProject && scope !== 'user'
+      ? agentFiles.filter(name => existsSync(join(userDir, name)))
+      : [];
+
+    results.push({ provider, written: agentFiles.length, destDir, userDir, shadowed });
+  }
+  return results;
+}
+
+function reportProviderAgents(results) {
+  for (const result of results || []) {
+    if (result.written === 0) continue;
+    console.log(`Installed ${providerDisplayName(result.provider)} agents into: ${formatPathForDisplay(result.destDir)}`);
+    if (result.shadowed.length > 0) {
+      console.warn(`Warning: user-level agents in ${formatPathForDisplay(result.userDir)} shadow the project copies just installed: ${result.shadowed.join(', ')}.`);
+      console.warn('Run `npx impeccable update --user` to refresh them, or remove them so the project agents apply.');
+    }
+  }
+}
+
+function refreshProviderSkills(bundleDir, root, providers, scope) {
+  const unique = deduplicateProviders(root, providers, scope);
   let updated = 0;
   for (const { provider, localSkillsDir } of unique) {
     const srcDir = join(bundleDir, provider, 'skills');
@@ -1109,6 +1352,19 @@ function hookArtifactsForProvider(bundleDir, root, provider) {
   });
 }
 
+// The project-relative hook command path for a provider, used for project-scope
+// installs (skillRoot === root). Derived rather than copied from the bundle: the
+// Codex bundle ships a `.codex/skills/...` command (correct for a `.codex`-
+// directory install), but the CLI lays Codex's skill down at `.agents/skills/`,
+// so preserving the bundle token would point the hook at a nonexistent file and
+// silently no-op it. Claude keeps its ${CLAUDE_PROJECT_DIR} token so a manifest
+// read from a nested cwd (or copied into settings.local.json) still resolves.
+function hookScriptRelPathForProvider(provider) {
+  const script = provider === '.cursor' ? 'hook-before-edit.mjs' : 'hook.mjs';
+  const rel = `${provider}/skills/impeccable/scripts/${script}`;
+  return provider === '.claude' ? '${CLAUDE_PROJECT_DIR}/' + rel : rel;
+}
+
 function hookScriptPathForProvider(skillRoot, provider) {
   // `.github` is intentionally absent: its hook manifest (`.github/hooks/
   // impeccable.json`) is a committed, team-shared file that the Copilot cloud
@@ -1125,21 +1381,106 @@ function hookScriptPathForProvider(skillRoot, provider) {
   return null;
 }
 
-function rewriteHookCommandsForSkillRoot(value, provider, skillRoot) {
+// Wrap a `node "PATH"` hook command so a missing skill file is a silent no-op
+// (exit 0) instead of a Node module-resolution crash. hook.mjs promises to
+// "never break a turn. Always exit 0.", but that only holds once Node can load
+// the file; a stale/missing path crashes before any of that logic runs. The
+// `[ ! -f X ] || node X` form (NOT `... || true`) preserves Node's own exit
+// code when the file exists, so Claude's exit-2 blocking signal still reaches
+// the agent. POSIX-shell form, consistent with the project's other hook
+// commands (e.g. the GitHub manifest's `$(git rev-parse ...)`).
+//
+// On Windows that guard is a hard failure, not a degraded one (issue #452).
+// Codex runs hook commands through COMSPEC (`cmd.exe /C`), where `[` is not a
+// command: the guard errors noisily and `||` then runs node even when the file
+// is missing, trading the silent no-op for a MODULE_NOT_FOUND crash. Two
+// remedies, by provider:
+//
+//   * Codex manifests support a `commandWindows` sibling that Codex 0.146.0+
+//     selects on Windows (`command_windows.unwrap_or(command)` in its hook
+//     discovery). rewriteHookCommandsForSkillRoot adds it with a cmd.exe
+//     `if exist` guard (form contributed and Windows-tested by @PatrickSys in
+//     issue #452; `exit /b` forwards node's errorlevel), so the same
+//     .codex/hooks.json is correct on every OS no matter where it was
+//     written, and `command` stays the plain POSIX guard.
+//   * Claude and Cursor manifests have no per-platform field, so a Windows
+//     install moves the existence check into node itself: a `node -e` wrapper
+//     that exits 0 when the target is missing and otherwise re-spawns node on
+//     it with inherited stdio, forwarding the hook's exit code. Cursor's
+//     hooks.json is committable and can be consumed on a teammate's POSIX
+//     machine, so the wrapper has to hold there too: it uses only characters
+//     that survive PowerShell, cmd.exe (issue #445: shims re-parse through
+//     `cmd /C`, which claims < > | & ^ % !), and sh double-quoting alike,
+//     with single quotes for the inner string literals.
+const WIN32_HOOK_GUARD_SCRIPT = "const p=process.argv[1];const f=require('fs');if(f.existsSync(p)){const r=require('child_process').spawnSync(process.execPath,[p],{stdio:'inherit'});process.exit(r.status===null?1:r.status);}";
+
+// POSIX single-quote escaping. JSON.stringify is not shell quoting: inside
+// double quotes /bin/sh still expands $(...), backticks, and ${}, and this
+// string is baked into a hook manifest the harness re-executes on every edit,
+// so an install path embedding $(...) would run it repeatedly (issue #476).
+// Windows command forms keep double quotes: cmd.exe treats ' as a literal
+// character and performs no command substitution.
+function shSingleQuote(value) {
+  return `'${String(value).replace(/'/g, `'\\''`)}'`;
+}
+
+function windowsHookCommand(quotedPath) {
+  return `if exist ${quotedPath} (node ${quotedPath} & exit /b)`;
+}
+
+// `quotedPath` carries one pre-quoted form per target shell: { posix, win32 }.
+function guardHookCommand(quotedPath, provider) {
+  // `.agents` (Codex) keeps the POSIX form unconditionally: its Windows
+  // consumers read the commandWindows sibling instead.
+  if (provider !== '.agents' && process.platform === 'win32') {
+    return `node -e "${WIN32_HOOK_GUARD_SCRIPT}" ${quotedPath.win32}`;
+  }
+  return `[ ! -f ${quotedPath.posix} ] || node ${quotedPath.posix}`;
+}
+
+// Transform bundled hook commands for the actual install target:
+//   * absolute — rewrite the (marker) command to the resolved absolute skill
+//     path. Required when the manifest is a user/global file (~/.claude/
+//     settings.local.json) that fires in EVERY project, so ${CLAUDE_PROJECT_DIR}
+//     would resolve per-project to dirs without a skill copy (issue #399); also
+//     when a project hook points at a skill installed elsewhere (--scope=global).
+//   * otherwise — keep the bundle's own ${CLAUDE_PROJECT_DIR}-relative path,
+//     which correctly resolves for a project-scoped install.
+// Either way the command goes through guardHookCommand (POSIX shell guard, or
+// the shell-agnostic node -e guard when installing on Windows), and Codex hook
+// entries additionally get a `commandWindows` sibling for cmd.exe.
+function rewriteHookCommandsForSkillRoot(value, provider, { skillRoot, absolute }) {
   const hookScript = hookScriptPathForProvider(skillRoot, provider);
+  // Providers we don't own a `node "PATH"` command hook for (.github, .grok)
+  // carry their own portable command forms; leave them untouched.
   if (!hookScript) return value;
 
+  // Project-scope installs derive the provider's own project-relative path
+  // rather than trusting the bundle token, which for Codex points at
+  // `.codex/skills/...` while the CLI installs the skill at `.agents/skills/`.
+  // The absolute path comes from the install root (project dir or $HOME), so
+  // its POSIX form gets real single-quote escaping (issue #476). The relative
+  // form is a per-provider constant and stays double-quoted, because Claude's
+  // ${CLAUDE_PROJECT_DIR} token must keep expanding at hook time.
+  const relPath = hookScriptRelPathForProvider(provider);
+  const quotedPath = absolute
+    ? { posix: shSingleQuote(hookScript), win32: JSON.stringify(hookScript) }
+    : { posix: JSON.stringify(relPath), win32: JSON.stringify(relPath) };
+
   if (typeof value === 'string') {
-    if (valueHasImpeccableHookMarker(value)) return `node ${JSON.stringify(hookScript)}`;
-    return value;
+    if (!valueHasImpeccableHookMarker(value)) return value;
+    return guardHookCommand(quotedPath, provider);
   }
   if (Array.isArray(value)) {
-    return value.map(item => rewriteHookCommandsForSkillRoot(item, provider, skillRoot));
+    return value.map(item => rewriteHookCommandsForSkillRoot(item, provider, { skillRoot, absolute }));
   }
   if (value && typeof value === 'object') {
     const next = {};
     for (const [key, child] of Object.entries(value)) {
-      next[key] = rewriteHookCommandsForSkillRoot(child, provider, skillRoot);
+      next[key] = rewriteHookCommandsForSkillRoot(child, provider, { skillRoot, absolute });
+    }
+    if (provider === '.agents' && typeof value.command === 'string' && valueHasImpeccableHookMarker(value.command)) {
+      next.commandWindows = windowsHookCommand(quotedPath.win32);
     }
     return next;
   }
@@ -1321,9 +1662,14 @@ function copyProviderHooks(bundleDir, root, providers, { force = false, skillRoo
       }
 
       const freshManifest = readJsonFile(src, 'Bundled hook manifest');
-      const fresh = skillRoot === root
-        ? freshManifest
-        : rewriteHookCommandsForSkillRoot(freshManifest, provider, skillRoot);
+      // Rewrite to an absolute skill path when the skill lives elsewhere than
+      // this manifest's root (--scope=global project hook) OR when the manifest
+      // itself is a user/global file. A global settings file fires in every
+      // project, so ${CLAUDE_PROJECT_DIR} there crashes Node wherever no local
+      // skill copy exists (issue #399); the resolved absolute path is correct
+      // for the one global skill it targets.
+      const absolute = skillRoot !== root || isHomeDir(root);
+      const fresh = rewriteHookCommandsForSkillRoot(freshManifest, provider, { skillRoot, absolute });
       let next = fresh;
 
       if (existsSync(dest)) {
@@ -1531,16 +1877,23 @@ async function install(flags) {
     process.exit(1);
   }
 
-  const { targets, installRoot, hookRoot, scope } = plan;
-  const existing = isAlreadyInstalled(installRoot);
+  const { targets, installRoot, hookRoot, scope, explicit } = plan;
+  const existing = isAlreadyInstalled(installRoot, scope);
+  const installedTargets = existing ? findInstalledProviders(installRoot, scope) : [];
+  // An explicit --providers list is a per-target request: a selected provider
+  // with no install yet gets a fresh install instead of tripping the global
+  // "already installed" early exit (issue #500). When every selected provider
+  // is missing, skip the update branch entirely and take the fresh-install path.
+  const missingSelectedTargets = (existing && !force && explicit)
+    ? targets.filter(provider => !installedTargets.includes(provider))
+    : [];
 
-  if (existing && !force) {
+  if (existing && !force && missingSelectedTargets.length < targets.length) {
     console.log(`Impeccable skills are already installed (found in ${existing}/).`);
-    const installedTargets = findInstalledProviders(installRoot);
     const selectedInstalledTargets = targets.filter(provider => installedTargets.includes(provider));
-    const linkedTargets = findLinkedProviders(installRoot, selectedInstalledTargets);
+    const linkedTargets = findLinkedProviders(installRoot, selectedInstalledTargets, scope);
     const copyTargets = selectedInstalledTargets.filter(provider => !linkedTargets.includes(provider));
-    const hookTargets = selectedInstalledTargets;
+    const hookTargets = [...selectedInstalledTargets, ...missingSelectedTargets];
     const wantHooks = installHooks && await decideHookInstall(hookRoot, hookTargets, { yes });
     let bundleDir;
     try {
@@ -1555,21 +1908,33 @@ async function install(flags) {
         ? hookTargets.filter(provider => !hookInstalledForProvider(hookRoot, provider))
         : [];
       let updateCheckSkipped = false;
-      if (copyTargets.length > 0 || missingHookTargets.length > 0) {
+      if (copyTargets.length > 0 || missingHookTargets.length > 0 || missingSelectedTargets.length > 0) {
         try {
           bundleDir = await downloadAndExtractBundle();
         } catch (e) {
-          if (missingHookTargets.length > 0) throw e;
+          if (missingHookTargets.length > 0 || missingSelectedTargets.length > 0) throw e;
           updateCheckSkipped = true;
           console.log(`Could not check for skill updates: ${e.message}`);
         }
       }
 
-      if (!updateCheckSkipped && copyTargets.length > 0 && !isUpToDate(installRoot, copyTargets, bundleDir)) {
-        migrateUnprefixImpeccable(installRoot);
-        updated = refreshProviderSkills(bundleDir, installRoot, copyTargets);
-        const v = getSkillsVersion(installRoot);
+      if (!updateCheckSkipped && copyTargets.length > 0 && !isUpToDate(installRoot, copyTargets, bundleDir, scope)) {
+        migrateUnprefixImpeccable(installRoot, scope);
+        updated = refreshProviderSkills(bundleDir, installRoot, copyTargets, scope);
+        reportProviderAgents(copyProviderAgents(bundleDir, installRoot, copyTargets, { scope }));
+        const v = getSkillsVersion(installRoot, scope);
         console.log(`Updated ${updated} skill(s)${v ? ` to v${v}` : ''}.`);
+      }
+
+      let freshWritten = 0;
+      if (!updateCheckSkipped && missingSelectedTargets.length > 0) {
+        freshWritten = copyProviderSkills(bundleDir, installRoot, missingSelectedTargets, { scope });
+        if (freshWritten === 0) {
+          console.error(`Nothing was installed: the bundle had no variants for ${missingSelectedTargets.join(', ')}.`);
+          process.exit(1);
+        }
+        console.log(`Installed impeccable into: ${missingSelectedTargets.join(', ')} (${scope === 'user' ? 'global' : 'project'})`);
+        reportProviderAgents(copyProviderAgents(bundleDir, installRoot, missingSelectedTargets, { scope }));
       }
 
       const writtenHookTargets = missingHookTargets.length > 0
@@ -1580,8 +1945,8 @@ async function install(flags) {
       if (updateCheckSkipped) {
         console.log('Existing skills were left unchanged.');
         console.log('Run with --force to reinstall.\n');
-      } else if (updated === 0 && writtenHookTargets.length === 0) {
-        const v = getSkillsVersion(installRoot);
+      } else if (updated === 0 && writtenHookTargets.length === 0 && freshWritten === 0) {
+        const v = getSkillsVersion(installRoot, scope);
         console.log(`Skills are up to date${v ? ` (v${v})` : ''}.`);
         console.log('Run with --force to reinstall.\n');
       } else {
@@ -1620,12 +1985,14 @@ async function install(flags) {
 
   // Retire any old `i-`-prefixed install so the fresh copy lands on the
   // canonical `impeccable` dir instead of orphaning the prefixed one.
-  migrateUnprefixImpeccable(installRoot);
+  migrateUnprefixImpeccable(installRoot, scope);
 
   let written = 0;
   let hookTargets = [];
+  let agentResults = [];
   try {
-    written = copyProviderSkills(bundleDir, installRoot, targets);
+    written = copyProviderSkills(bundleDir, installRoot, targets, { scope });
+    agentResults = copyProviderAgents(bundleDir, installRoot, targets, { scope });
     hookTargets = wantHooks ? copyProviderHooks(bundleDir, hookRoot, targets, { force, skillRoot: installRoot }) : [];
   } catch (e) {
     rmSync(bundleDir, { recursive: true, force: true });
@@ -1639,9 +2006,10 @@ async function install(flags) {
     process.exit(1);
   }
   console.log(`Installed impeccable into: ${targets.join(', ')} (${scope === 'user' ? 'global' : 'project'})`);
+  reportProviderAgents(agentResults);
   if (hookTargets.length > 0) console.log(`Installed hooks into: ${hookTargets.join(', ')}`);
 
-  console.log('\nDone! Run /impeccable init in your AI harness to set up design context.\n');
+  console.log('\nDone! Now type /impeccable init in your AI coding agent\'s chat (not in this terminal) to set up design context.\n');
 }
 
 // ─── skills update ────────────────────────────────────────────────────────────
@@ -1655,27 +2023,92 @@ function findProjectRoot() {
   return process.cwd();
 }
 
-function findInstalledProviders(root) {
+function findInstalledProviders(root, scope) {
   const found = [];
   for (const d of PROVIDER_DIRS) {
-    const skillsDir = join(root, d, 'skills');
-    if (!existsSync(skillsDir)) continue;
-    try {
-      const entries = readdirSync(skillsDir);
-      if (entries.some(name => isSkillDir(skillsDir, name))) found.push(d);
-    } catch {}
+    for (const skillsDir of existingSkillsDirs(root, d, scope)) {
+      try {
+        const entries = readdirSync(skillsDir);
+        if (entries.some(name => isSkillDir(skillsDir, name))) {
+          found.push(d);
+          break;
+        }
+      } catch {}
+    }
   }
   return found;
 }
 
-function findLinkedProviders(root, providers) {
-  return providers.filter(provider => {
-    const skillDir = join(root, provider, 'skills', 'impeccable');
-    try {
-      return lstatSync(skillDir).isSymbolicLink();
-    } catch {
-      return false;
+// Like findInstalledProviders, but only counts a provider whose skills dir
+// actually holds the IMPECCABLE skill (canonical, prefixed, or legacy teach-).
+// `update` uses this so it never mistakes a repo that vendors OTHER first-party
+// skills under .claude/skills for an impeccable install and drops a copy in
+// (issue #399, part 2).
+function findImpeccableProviders(root, scope) {
+  const found = [];
+  for (const d of PROVIDER_DIRS) {
+    for (const skillsDir of existingSkillsDirs(root, d, scope)) {
+      let entries;
+      try { entries = readdirSync(skillsDir); } catch { continue; }
+      if (entries.some(e =>
+        e === 'impeccable' || e.endsWith('-impeccable') ||
+        e === 'teach-impeccable' || e.endsWith('-teach-impeccable')
+      )) {
+        found.push(d);
+        break;
+      }
     }
+  }
+  return found;
+}
+
+// Resolve which install `skills update` should refresh: project-level (the CWD's
+// git root) or user-level (~/.claude etc.). Returns a plain descriptor; the
+// caller handles the interactive both-exist prompt via `ambiguous`.
+function resolveUpdateTarget({ projectRoot, home, explicitScope }) {
+  // A home-rooted repo (a dotfiles checkout at $HOME) overlaps project and user
+  // installs under one root; keep the historical unscoped scan so overlapping
+  // layouts (e.g. Pi's ~/.pi/skills and ~/.pi/agent/skills) both refresh.
+  const homeRooted = isHomeDir(projectRoot);
+  if (homeRooted && !explicitScope) {
+    const providers = findInstalledProviders(home);
+    return providers.length ? { root: home, scope: undefined, providers, scopeLabel: 'user level' } : null;
+  }
+
+  const projectProviders = homeRooted ? [] : findImpeccableProviders(projectRoot, 'project');
+  const userProviders = findImpeccableProviders(home, 'user');
+
+  if (explicitScope === 'user') {
+    return userProviders.length
+      ? { root: home, scope: 'user', providers: userProviders, scopeLabel: 'user level' }
+      : null;
+  }
+  if (explicitScope === 'project') {
+    return projectProviders.length
+      ? { root: projectRoot, scope: 'project', providers: projectProviders, scopeLabel: 'this project' }
+      : null;
+  }
+  if (projectProviders.length && userProviders.length) {
+    return { ambiguous: true, projectRoot, home, projectProviders, userProviders };
+  }
+  if (projectProviders.length) {
+    return { root: projectRoot, scope: 'project', providers: projectProviders, scopeLabel: 'this project' };
+  }
+  if (userProviders.length) {
+    return { root: home, scope: 'user', providers: userProviders, scopeLabel: 'user level' };
+  }
+  return null;
+}
+
+function findLinkedProviders(root, providers, scope) {
+  return providers.filter(provider => {
+    for (const skillsDir of providerSkillsDirCandidates(root, provider, scope)) {
+      const skillDir = join(skillsDir, 'impeccable');
+      try {
+        if (lstatSync(skillDir).isSymbolicLink()) return true;
+      } catch {}
+    }
+    return false;
   });
 }
 
@@ -1726,20 +2159,55 @@ async function update(flags = []) {
   const yes = flags.includes('-y') || flags.includes('--yes');
   const force = flags.includes('--force');
   const installHooks = !flags.includes('--no-hooks');
+  const scopeValue = getInstallScopeValue(flags);
+  const explicitScope = normalizeInstallScope(scopeValue);
+  if (scopeValue && !explicitScope) {
+    console.error(`Unknown update scope: ${scopeValue}. Use --project or --user.`);
+    process.exit(1);
+  }
 
   // Download the latest skills directly from impeccable.style.
   // We skip `npx skills update` because it has a known upstream bug
   // (vercel-labs/skills#775) where it can't find the lock file.
-  const root = findProjectRoot();
-  const providers = findInstalledProviders(root);
-  const linkedProviders = findLinkedProviders(root, providers);
-  const copyProviders = providers.filter(provider => !linkedProviders.includes(provider));
+  const projectRoot = findProjectRoot();
+  const home = homedir();
 
-  if (providers.length === 0) {
-    console.log('No impeccable skill folders found in this project.');
+  let target = resolveUpdateTarget({ projectRoot, home, explicitScope });
+  if (!target) {
+    if (explicitScope) {
+      const where = explicitScope === 'user' ? `user level (${formatPathForDisplay(home)})` : `this project (${projectRoot})`;
+      console.log(`No impeccable skill folders found at the ${where}.`);
+    } else {
+      console.log('No impeccable skill folders found in this project or at the user level.');
+    }
     console.log('Run `npx impeccable install` to install first.');
     process.exit(1);
   }
+
+  // Both a project and a user-level install exist and no scope was given. Never
+  // silently pick (issue #399, part 2): prompt when interactive, else default to
+  // the project and say how to target the other.
+  if (target.ambiguous) {
+    console.log('Impeccable is installed both here and at the user level:');
+    console.log(`  project    ${projectRoot}  (${target.projectProviders.join(', ')})`);
+    console.log(`  user level ${formatPathForDisplay(home)}  (${target.userProviders.join(', ')})`);
+    let pickUser = false;
+    if (!yes && process.stdin.isTTY) {
+      const ans = await ask('Update which? [project]/user: ');
+      pickUser = ['user', 'u', 'global', 'home'].includes(ans);
+    } else {
+      console.log('Defaulting to the project. Re-run with --user to update the user-level install instead.');
+    }
+    target = pickUser
+      ? { root: home, scope: 'user', providers: target.userProviders, scopeLabel: 'user level' }
+      : { root: projectRoot, scope: 'project', providers: target.projectProviders, scopeLabel: 'this project' };
+  }
+
+  const { root, scope } = target;
+  console.log(`Updating the ${target.scopeLabel} install: ${formatPathForDisplay(root)} (${target.providers.join(', ')})`);
+  const providers = target.providers;
+  const linkedProviders = findLinkedProviders(root, providers, scope);
+  const copyProviders = providers.filter(provider => !linkedProviders.includes(provider));
 
   if (linkedProviders.length > 0) {
     console.log(`Linked skills found in: ${linkedProviders.join(', ')}`);
@@ -1759,12 +2227,12 @@ async function update(flags = []) {
   }
 
   // Compare local vs remote -- skip if already up to date
-  if (isUpToDate(root, copyProviders, tmpDir)) {
+  if (isUpToDate(root, copyProviders, tmpDir, scope)) {
     try {
       const wantHooks = installHooks && await decideHookInstall(root, copyProviders, { yes });
       const hookTargets = wantHooks ? copyProviderHooks(tmpDir, root, copyProviders, { force }) : [];
       rmSync(tmpDir, { recursive: true, force: true });
-      const v = getSkillsVersion(root);
+      const v = getSkillsVersion(root, scope);
       console.log(`Skills are up to date${v ? ` (v${v})` : ''}.`);
       if (hookTargets.length > 0) console.log(`Installed hooks into: ${hookTargets.join(', ')}`);
       console.log('Nothing else to do.');
@@ -1791,16 +2259,17 @@ async function update(flags = []) {
 
     // Retire any old `i-`-prefixed install up front so the refresh lands on the
     // canonical `impeccable` dir rather than orphaning the prefixed copy.
-    const migrated = migrateUnprefixImpeccable(root);
+    const migrated = migrateUnprefixImpeccable(root, scope);
     if (migrated > 0) console.log('Migrated a prefixed install back to /impeccable (the i- prefix is no longer used).');
 
-    const updated = refreshProviderSkills(tmpDir, root, copyProviders);
+    const updated = refreshProviderSkills(tmpDir, root, copyProviders, scope);
+    reportProviderAgents(copyProviderAgents(tmpDir, root, copyProviders, { scope }));
     const wantHooks = installHooks && await decideHookInstall(root, providers, { yes });
     const hookTargets = wantHooks ? copyProviderHooks(tmpDir, root, providers, { force }) : [];
 
     rmSync(tmpDir, { recursive: true, force: true });
 
-    const v = getSkillsVersion(root);
+    const v = getSkillsVersion(root, scope);
     console.log(`Updated ${updated} skill(s)${v ? ` to v${v}` : ''}.`);
     if (hookTargets.length > 0) console.log(`Installed hooks into: ${hookTargets.join(', ')}`);
     console.log('Done!\n');
@@ -1829,12 +2298,15 @@ function copyDirSync(src, dest) {
 // reimplementation in a helper script (which is how bugs slip through).
 export {
   collectInstallDetections,
+  copyProviderAgents,
   copyProviderHooks,
   copyProviderSkills,
   decideHookInstall,
   expectedHookDests,
   extractZip,
   formatInstallDetectionLines,
+  hermesGlobalHome,
+  HOME_SKILLS_DIR_OVERRIDES,
   linkProviderSkills,
   mergeHookManifests,
   migrateUnprefixImpeccable,

@@ -2,14 +2,14 @@
  * Color palettes and style constants for each caption preset.
  */
 
-export const BOLD_THEME = {
+export const HORMOZI_THEME = {
   textColor: "#FFFFFF",
   activeColor: "#FFD700", // Yellow highlight on active word
   shadowColor: "#000000",
   backgroundColor: "transparent",
 };
 
-export const BOUNCE_THEME = {
+export const MRBEAST_THEME = {
   textColor: "#FFFFFF",
   shadowColor: "#000000",
   backgroundColor: "transparent",

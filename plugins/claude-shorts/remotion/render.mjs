@@ -10,7 +10,7 @@
  *     --segments /tmp/claude-shorts/approved_segments.json \
  *     --reframe /tmp/claude-shorts/reframe.json \
  *     --captions /tmp/claude-shorts/transcript.json \
- *     --style bold \
+ *     --style hormozi \
  *     --clips-dir /tmp/claude-shorts/clips/ \
  *     --output-dir /tmp/claude-shorts/render/
  *
@@ -42,14 +42,14 @@ async function main() {
   const segmentsPath = args.segments;
   const reframePath = args.reframe;
   const captionsPath = args.captions;
-  const style = args.style || "bold";
+  const style = args.style || "hormozi";
   const clipsDir = args["clips-dir"];
   const outputDir = args["output-dir"] || "/tmp/claude-shorts/render/";
 
   if (!segmentsPath || !reframePath || !captionsPath || !clipsDir) {
     console.error(JSON.stringify({
       error: "Missing required arguments",
-      usage: "node render.mjs --segments FILE --reframe FILE --captions FILE --clips-dir DIR [--style bold|bounce|clean] [--output-dir DIR]",
+      usage: "node render.mjs --segments FILE --reframe FILE --captions FILE --clips-dir DIR [--style hormozi|mrbeast|clean] [--output-dir DIR]",
     }));
     process.exit(1);
   }
@@ -102,10 +102,9 @@ async function main() {
   try {
     for (let i = 0; i < segments.length; i++) {
       const seg = segments[i];
-      const segId = seg.id ?? (i + 1);
-      const clipName = `clip_${String(segId).padStart(2, "0")}.mp4`;
+      const clipName = `clip_${String(i + 1).padStart(2, "0")}.mp4`;
       const clipPath = path.resolve(clipsDir, clipName);
-      const outputPath = path.resolve(outputDir, `short_${String(segId).padStart(2, "0")}.mp4`);
+      const outputPath = path.resolve(outputDir, `short_${String(i + 1).padStart(2, "0")}.mp4`);
 
       if (!fs.existsSync(clipPath)) {
         console.error(JSON.stringify({ error: `Clip not found: ${clipPath}` }));
@@ -162,76 +161,41 @@ async function main() {
         status: "starting",
       }));
 
-      // Retry once on failure before skipping this segment
-      let rendered = false;
-      const maxAttempts = 2;
-      for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-        try {
-          const startRender = Date.now();
+      const startRender = Date.now();
 
-          // selectComposition resolves calculateMetadata for dynamic duration
-          const composition = await selectComposition({
-            serveUrl,
-            id: "ShortVideo",
-            inputProps,
-            puppeteerInstance: browser,
-          });
+      // selectComposition resolves calculateMetadata for dynamic duration
+      const composition = await selectComposition({
+        serveUrl,
+        id: "ShortVideo",
+        inputProps,
+        puppeteerInstance: browser,
+      });
 
-          await renderMedia({
-            composition,
-            serveUrl,
-            codec: "h264",
-            crf: 18,
-            outputLocation: outputPath,
-            inputProps,
-            puppeteerInstance: browser,
-          });
+      await renderMedia({
+        composition,
+        serveUrl,
+        codec: "h264",
+        crf: 18,
+        outputLocation: outputPath,
+        inputProps,
+        puppeteerInstance: browser,
+      });
 
-          const renderTime = ((Date.now() - startRender) / 1000).toFixed(1);
-          const fileSizeMB = (fs.statSync(outputPath).size / 1024 / 1024).toFixed(1);
+      const renderTime = ((Date.now() - startRender) / 1000).toFixed(1);
+      const fileSizeMB = (fs.statSync(outputPath).size / 1024 / 1024).toFixed(1);
 
-          const result = {
-            action: "render",
-            segment: i + 1,
-            output: outputPath,
-            duration: `${durationInSeconds.toFixed(1)}s`,
-            render_time_sec: renderTime,
-            file_size_mb: fileSizeMB,
-            status: "complete",
-          };
+      const result = {
+        action: "render",
+        segment: i + 1,
+        output: outputPath,
+        duration: `${durationInSeconds.toFixed(1)}s`,
+        render_time_sec: renderTime,
+        file_size_mb: fileSizeMB,
+        status: "complete",
+      };
 
-          results.push(result);
-          console.log(JSON.stringify(result));
-          rendered = true;
-          break;
-        } catch (renderErr) {
-          if (attempt < maxAttempts) {
-            console.log(JSON.stringify({
-              action: "render",
-              segment: i + 1,
-              status: "retrying",
-              attempt,
-              error: renderErr.message,
-            }));
-          } else {
-            console.error(JSON.stringify({
-              action: "render",
-              segment: i + 1,
-              status: "failed",
-              error: renderErr.message,
-            }));
-          }
-        }
-      }
-
-      if (!rendered) {
-        results.push({
-          action: "render",
-          segment: i + 1,
-          output: outputPath,
-          status: "failed",
-        });
-      }
+      results.push(result);
+      console.log(JSON.stringify(result));
     }
   } finally {
     await browser.close({ silent: true });

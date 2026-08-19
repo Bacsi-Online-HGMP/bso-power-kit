@@ -4,15 +4,7 @@ description: >
   Generates YouTube Community tab content from content atoms: text posts, image concepts,
   and polls with up to 5 options. Optimizes for between-upload engagement, subscriber
   retention, and poll-driven interaction. Sub-skill of the Content Repurposing Engine.
-  Use when user says "youtube community", "community post", "youtube poll",
-  "youtube tab", or "repurpose for youtube".
-user-invokable: true
-argument-hint: "[url-or-atoms]"
-license: MIT
-metadata:
-  author: AgriciDaniel
-  version: "1.0.0"
-  category: content
+user-invokable: false
 ---
 
 # YouTube Community Post Generator

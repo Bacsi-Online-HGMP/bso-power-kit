@@ -19,7 +19,24 @@ README = product front door. Non-technical people read it to decide if caveman w
 
 ## Project overview
 
-Caveman makes AI coding agents respond in compressed caveman-style prose — cuts 65% output tokens (measured), full technical accuracy. Ships as Claude Code plugin, Codex plugin, Gemini CLI extension, agent rule files for Cursor, Windsurf, Cline, Copilot, 40+ others via `npx skills`.
+Caveman makes AI coding agents respond in compressed caveman-style prose while preserving technical substance, code, commands, and exact errors. Publish no reduction or quality-equivalence percentage without a committed reviewed benchmark. Ships as Claude Code plugin, Codex plugin, Gemini CLI extension, and agent rule files for Cursor, Windsurf, Cline, Copilot, and other profiles via `npx skills`.
+
+## Repository routing
+
+This repo is source of truth for Caveman skills, Engine, and MV3 directive
+extension. Agent SDK + initializer work belongs in
+`/Users/julb/Desktop/GitHub/caveman-agent-sdk`
+(`JuliusBrussee/caveman-agent-sdk`). Browse driver/MCP/benchmark/plugin work
+belongs in `/Users/julb/Desktop/GitHub/caveman-browse`
+(`JuliusBrussee/caveman-browse`). Matching `packages/agent/`,
+`packages/create-caveman-agent/`, and `browse/` directories here are
+historical/consumer copies; edit only for pinned integration, migration/removal,
+or an explicitly requested cross-repo sync.
+
+Visibility is separate from ownership: this repo and `caveman-browse` are
+public now; `caveman-agent-sdk` is private during development and planned for
+public release after its release gates; Caveman-Cloud remains private
+commercial source.
 
 ---
 
@@ -58,6 +75,21 @@ caveman/
 │   ├── rules/                   # Auto-activation rule body (single source)
 │   ├── tools/                   # caveman-init.js (per-repo rule writer)
 │   └── mcp-servers/             # caveman-shrink npm-published MCP middleware
+│
+├── packages/                    # Current public packages
+│   ├── agent/                   # historical copy; source = caveman-agent-sdk
+│   ├── create-caveman-agent/    # historical copy; source = caveman-agent-sdk
+│   ├── cli/                     # @caveman-ai/cli
+│   ├── sdk/                     # TypeScript + Python gateway clients
+│   ├── kit/ · graders/          # Honesty UI surfaces + fail-closed eval graders
+│   ├── mastra/ · subagent-tax/  # Mastra adapter + local harness-prefix benchmark
+│   └── shared/                  # Contracts + binary installer
+├── engine/ · proxy/             # BSL local compression runtime + provider proxy
+├── cacheengine/ · rewriter/     # Standalone cache planner + prompt rewriter
+├── mcp/ · mem/ · shrink/        # Recovery tools, memory, output compression
+├── browse/                      # consumer copy; source = caveman-browse
+├── extension/                   # MV3 extension source
+├── shared/                       # Provider catalog + BSL platform libraries
 │
 ├── .claude-plugin/              # Claude Code plugin manifest (REQUIRED at root)
 ├── plugins/caveman/             # Claude Code plugin distribution (CI-mirrored)

@@ -2,14 +2,10 @@
 name: repurpose-quotes
 description: >
   Extracts the 5 most quotable moments from content atoms and generates
-  /banana image prompts for each using the 6-Component Brief. Produces
+  /banana image prompts for each using the 5-Component Formula. Produces
   quote cards ready for social sharing with platform-specific aspect ratios,
-  color palettes, and text overlays. Sub-skill of the Content Repurposing Engine.
-  Use when user says "quote cards", "quote graphics", "quotable moments",
-  "image prompts", or "repurpose quotes".
-user-invokable: true
-argument-hint: "[url-or-atoms]"
-license: MIT
+  color palettes, and text overlays.
+user-invokable: false
 metadata:
   author: AgriciDaniel
   version: "1.0.0"
@@ -39,7 +35,7 @@ Received from the parent agent (`repurpose-visual`):
 
 Load these before generating output:
 
-- `../repurpose/references/image-sourcing.md` -- 3-tier image pipeline, prompt templates, platform dimensions
+- `../repurpose/references/image-prompts.md` -- prompt engineering patterns for /banana
 - `../repurpose/references/platform-specs.md` -- image dimensions per platform
 
 ## Output 1: Quotable Moments
@@ -86,11 +82,11 @@ For each quote:
 **File:** `quotes/banana-prompts.md`
 
 For each of the 5 quotes, generate a /banana-compatible image prompt using the
-6-Component Brief (matching `../repurpose/references/image-sourcing.md`).
+5-Component Formula.
 
-### The 6-Component Brief
+### The 5-Component Formula
 
-Every prompt must specify these 6 components in order:
+Every prompt must specify these 5 components in order:
 
 | Component | Description | Example |
 |-----------|-------------|---------|
@@ -98,7 +94,6 @@ Every prompt must specify these 6 components in order:
 | **Action** | Movement or state of the subject | "bathed in soft morning light" |
 | **Context** | Environment or background setting | "against a clean gradient background" |
 | **Composition** | Layout, framing, text placement zone | "left-aligned with 40% right margin for text overlay" |
-| **Lighting** | Light source, direction, temperature, quality | "soft ambient glow, warm temperature, subtle vignette" |
 | **Style** | Visual aesthetic and rendering approach | "editorial photography, muted tones, shallow depth of field" |
 
 ### Prompt Template
@@ -110,7 +105,6 @@ Every prompt must specify these 6 components in order:
 **Action:** [action or state]
 **Context:** [background/environment]
 **Composition:** [layout and text zone]
-**Lighting:** [light source, direction, temperature]
 **Style:** [aesthetic direction]
 **Dimensions:** [WxH based on target platform]
 **Text Overlay:** "[exact quote text]"
@@ -145,22 +139,25 @@ for manual adaptation.
 Analyze the `primary_topic`, `voice_profile`, and strongest atom types to select the
 appropriate mood and palette.
 
-## Image Generation — AI ONLY
+## Image Generation Logic
 
-Quote cards ALWAYS require AI generation because they need custom text overlays. Stock photos cannot be used for quotes.
+### If `--images` flag AND /banana is available:
 
-### When /banana IS available:
-1. Generate 5 quote card images using the 6-Component Brief
-2. Each quote card: topic-relevant background + quote text + attribution
-3. Save to `images/quote-card-1.png` through `images/quote-card-5.png`
-4. Also save prompts to `banana-prompts.md` for reference
+1. Generate all 5 quote card images at 1:1 (1080x1080)
+2. Save to `images/quote-card-1.png` through `images/quote-card-5.png`
+3. Also save the prompts to `quotes/banana-prompts.md` for reference
+4. Note in output: "5 quote card images generated via /banana"
 
-### When /banana is NOT available:
-1. Save all 5 prompts to `banana-prompts.md` with full detail
-2. Suggest stock photo backgrounds from Pixabay as alternatives:
-   - Search: `site:pixabay.com [topic] abstract background dark`
-   - User can overlay text manually in Canva or similar
-3. Note in output: "Quote card images pending — run `/banana generate <prompt>` or use saved backgrounds"
+### If /banana is NOT available:
+
+1. Save all prompts to `quotes/banana-prompts.md`
+2. Include full prompt text for each quote in all 3 aspect ratios
+3. Note in output: "Image prompts saved. Run /banana with these prompts to generate visuals."
+
+### If `--images` flag is NOT set:
+
+1. Save prompts only to `quotes/banana-prompts.md`
+2. Note: "Use --images flag to auto-generate quote cards"
 
 ## Font Style Suggestions
 

@@ -2,9 +2,15 @@
 
 Computes a quality score based on 5 core sources and builds
 a nudge message describing what the user missed and how to fix it.
+
+Fix text comes from ``lib.prescriptions`` (the single remediation
+vocabulary shared with the doctor command, KTD 7); only the trigger
+logic and the message framing live here.
 """
 
 from typing import List
+
+from . import prescriptions
 
 
 # The 5 core sources
@@ -291,27 +297,42 @@ def _build_nudge_text(
 
     if "x" in core_missing:
         if "x" in core_errored:
-            free_suggestions.append(
-                "X/Twitter errored - log into x.com in your browser, then re-run."
-            )
+            x_fix = prescriptions.get("x", "cookies_expired")
+            free_suggestions.append(f"X/Twitter errored - {x_fix.fix_nl}.")
         else:
+            x_fix = prescriptions.get("x", "cookies_missing")
+            # Pick by state: telling a user who already installed grok to
+            # install it again is the stale-shim reading the health layer
+            # exists to avoid. Mirrors _probe_grok's three-way split.
+            from . import grok_x as _grok_x
+            grok_key = (
+                "grok_not_authenticated"
+                if _grok_x.binary_path() and not _grok_x.has_stored_auth()
+                else "grok_cli_missing"
+            )
+            grok_fix = prescriptions.get("x", grok_key)
+            # Deliberately not described as free: grok needs no X credential,
+            # but it does need an installed, signed-in grok CLI drawing on a
+            # Grok plan. This block is headed "Free suggestions", so the
+            # precondition has to be stated inline rather than inherited.
             free_suggestions.append(
                 "X/Twitter: real-time posts with likes and reposts - the fastest "
-                "signal for breaking topics. Three options: log into x.com in your "
-                "browser and re-run (cookies detected automatically), or add "
-                "XAI_API_KEY to your .env (get key at api.x.ai), or add "
-                "XQUIK_API_KEY to your .env (get key at xquik.com)."
+                "signal for breaking topics. Easiest path if you have a Grok "
+                f"account: {grok_fix.fix_nl} (no X credential at all). "
+                f"Otherwise: {x_fix.fix_nl}."
             )
 
     if "youtube" in core_missing:
         if "youtube" in core_errored:
+            yt_fix = prescriptions.get("youtube", "ytdlp_stale")
             free_suggestions.append(
-                "YouTube errored - update yt-dlp: brew upgrade yt-dlp"
+                f"YouTube errored - update yt-dlp: {yt_fix.fix_cli}"
             )
         else:
+            yt_fix = prescriptions.get("youtube", "ytdlp_missing")
             free_suggestions.append(
                 "YouTube: video transcripts with key moments - often the deepest "
-                "explanations on any topic. Install yt-dlp: brew install yt-dlp (free)"
+                f"explanations on any topic. Install yt-dlp: {yt_fix.fix_cli} (free)"
             )
 
     if "youtube" in core_degraded:
@@ -319,12 +340,18 @@ def _build_nudge_text(
         transcripts = int(research_results.get("youtube_transcripts_count") or 0)
         captions_disabled = int(research_results.get("youtube_captions_disabled_count") or 0)
         if not has_ytdlp and _youtube_returned_data(research_results):
+            install = prescriptions.get("youtube", "ytdlp_missing")
+            # Tolerant lookup: alt_cli makes no arity promise, so an entry
+            # gaining/losing a platform alternate must degrade the wording,
+            # never crash the nudge path.
+            scoop_install = install.alt_cli[0] if len(install.alt_cli) > 0 else install.fix_cli
+            pip_install = install.alt_cli[1] if len(install.alt_cli) > 1 else scoop_install
             free_suggestions.append(
                 f"YouTube returned {videos} videos and {transcripts} transcripts "
                 "through a fallback/provider path, but local yt-dlp is not "
                 "installed. Install yt-dlp to enable the free local YouTube lane "
-                "and reduce reliance on fallback providers: brew install yt-dlp "
-                "(macOS), scoop install yt-dlp (Windows), or pip install -U yt-dlp."
+                f"and reduce reliance on fallback providers: {install.fix_cli} "
+                f"(macOS), {scoop_install} (Windows), or {pip_install}."
             )
         else:
             captions_note = ""
@@ -333,13 +360,17 @@ def _build_nudge_text(
                     f" ({captions_disabled} of those had captions disabled by the "
                     "uploader, which is a separate cause and not fixable on your end)"
                 )
+            update = prescriptions.get("youtube", "ytdlp_stale")
+            # Same tolerant lookup as the install branch above.
+            scoop_update = update.alt_cli[0] if len(update.alt_cli) > 0 else update.fix_cli
+            pip_update = update.alt_cli[1] if len(update.alt_cli) > 1 else scoop_update
             free_suggestions.append(
                 f"YouTube returned {videos} videos but only {transcripts} transcripts "
                 f"captured{captions_note}. The most common remaining cause is a stale "
                 "yt-dlp binary - YouTube's caption format changes frequently and old "
                 "binaries silently fail every transcript. Update via your package "
-                "manager: scoop update yt-dlp (Windows), brew upgrade yt-dlp (macOS), "
-                "or pip install -U yt-dlp."
+                f"manager: {scoop_update} (Windows), {update.fix_cli} (macOS), "
+                f"or {pip_update}."
             )
 
     if "instagram" in bonus_errored:

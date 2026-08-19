@@ -24,7 +24,10 @@ const crypto = require('crypto');
 
 const SETTINGS = require('./lib/settings');
 const OPENCLAW = require('./lib/openclaw');
-const { stripOpencodeAgentTools } = require('./lib/opencode-agent');
+const OWNED = require('./lib/owned-install');
+const { transformOpencodeAgentFrontmatter } = require('./lib/opencode-agent');
+const PORTABLE = require('./lib/portable-process');
+const PLATFORM_PATHS = require('./lib/platform-paths');
 
 const REPO = 'JuliusBrussee/caveman';
 // Pin remote fetches to an immutable release tag, not the moving `main`
@@ -33,7 +36,10 @@ const REPO = 'JuliusBrussee/caveman';
 // the new tag on every release (CI release step) AFTER regenerating
 // src/hooks/checksums.sha256 so the integrity manifest matches the ref.
 // Overridable via CAVEMAN_REF for testing against a branch.
-const PINNED_REF = process.env.CAVEMAN_REF || 'v1.9.1';
+const PINNED_REF = process.env.CAVEMAN_REF || 'v2.1.0';
+const OPENCLAW_SKILL_VERSION = /^v?\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/.test(PINNED_REF)
+  ? PINNED_REF.replace(/^v/, '')
+  : undefined;
 const RAW_BASE = `https://raw.githubusercontent.com/${REPO}/${PINNED_REF}`;
 const HOOKS_REMOTE = `${RAW_BASE}/src/hooks`;
 const INIT_SCRIPT_URL = `${RAW_BASE}/src/tools/caveman-init.js`;
@@ -44,6 +50,7 @@ const MCP_SHRINK_PKG = 'caveman-shrink';
 const HOOK_FILES = [
   'package.json',
   'caveman-config.js',
+  'caveman-parse.js',
   'caveman-activate.js',
   'caveman-mode-tracker.js',
   'caveman-stats.js',
@@ -213,7 +220,7 @@ const PROVIDERS = [
   // IDE / VS Code-family — extension probes are precise. Cursor/Windsurf also
   // ship CLI binaries; we drop the dir fallback because the dir lingers after
   // uninstall and false-positives heavily.
-  { id: 'cursor',     label: 'Cursor',              mech: 'npx skills add (cursor)',       detect: 'command:cursor||macapp:Cursor', profile: 'cursor' },
+  { id: 'cursor',     label: 'Cursor',              mech: 'npx skills add (cursor)',       detect: 'command:cursor||macapp:Cursor', profile: 'cursor', globalSkillsDir: ['.cursor', 'skills'] },
   { id: 'windsurf',   label: 'Windsurf',            mech: 'npx skills add (windsurf)',     detect: 'command:windsurf||macapp:Windsurf', profile: 'windsurf' },
   { id: 'cline',      label: 'Cline',               mech: 'npx skills add (cline)',        detect: 'vscode-ext:cline',        profile: 'cline' },
   { id: 'continue',   label: 'Continue',            mech: 'npx skills add (continue)',     detect: 'vscode-ext:continue.continue||vscode-ext:continue', profile: 'continue' },
@@ -264,8 +271,7 @@ const PROVIDERS = [
 function hasCmd(cmd) {
   try {
     if (process.platform === 'win32') {
-      const r = child_process.spawnSync('where', [cmd], { stdio: 'ignore' });
-      return r.status === 0;
+      return PORTABLE.resolveWindowsCommand(cmd, process.env) !== null;
     }
     const r = child_process.spawnSync('sh', ['-c', `command -v ${shellEscape(cmd)}`], { stdio: 'ignore' });
     return r.status === 0;
@@ -303,16 +309,12 @@ function cursorExtPresent(needle) {
 
 function jetbrainsPresent() {
   const home = os.homedir();
-  return fs.existsSync(path.join(home, 'Library/Application Support/JetBrains'))
-      || fs.existsSync(path.join(home, '.config/JetBrains'));
+  return PLATFORM_PATHS.jetbrainsRoots(home).some(root => fs.existsSync(root));
 }
 
 function jetbrainsPluginPresent(needle) {
   const home = os.homedir();
-  const roots = [
-    path.join(home, 'Library/Application Support/JetBrains'),
-    path.join(home, '.config/JetBrains'),
-  ];
+  const roots = PLATFORM_PATHS.jetbrainsRoots(home);
   const re = new RegExp(needle, 'i');
   for (const r of roots) {
     if (!fs.existsSync(r)) continue;
@@ -384,27 +386,21 @@ function detectRepoRoot() {
 }
 
 // ── Run helpers ────────────────────────────────────────────────────────────
-// On Windows, npm/npx/claude/gemini/codex etc. ship as `.cmd` batch shims.
-// Node's spawnSync('claude', ...) returns ENOENT for these unless we either
-// (a) set shell:true (cmd.exe respects PATHEXT) or
-// (b) resolve the actual `.cmd` path before spawning.
-// We pick (a) — simpler, fewer cross-version corner cases. The cost is that
-// args with spaces need quoting; we quote them defensively below.
+// On Windows, npm/npx/claude/gemini/codex ship as `.cmd` Node shims. Resolve
+// through PATH/PATHEXT and launch their Node entrypoint directly. This keeps
+// argument bytes intact without putting user-controlled paths into cmd.exe.
 const IS_WIN = process.platform === 'win32';
-
-function quoteWinArg(a) {
-  if (!IS_WIN) return a;
-  if (a === '' || /[\s"]/.test(a)) {
-    // Standard CommandLineToArgvW escaping
-    return '"' + String(a).replace(/\\(?=\\*"|$)/g, '\\\\').replace(/"/g, '\\"') + '"';
-  }
-  return a;
-}
 
 function spawnXplat(cmd, args, opts) {
   if (IS_WIN) {
-    const quoted = args.map(quoteWinArg).join(' ');
-    return child_process.spawnSync(`${cmd} ${quoted}`, [], Object.assign({ shell: true }, opts || {}));
+    try {
+      const invocation = PORTABLE.portableInvocation(cmd, args, {
+        env: (opts && opts.env) || process.env,
+      });
+      return child_process.spawnSync(invocation.command, invocation.args, opts || {});
+    } catch (error) {
+      return { status: null, signal: null, stdout: '', stderr: '', error };
+    }
   }
   return child_process.spawnSync(cmd, args, opts || {});
 }
@@ -572,7 +568,7 @@ function installGemini(ctx) {
 }
 
 function installViaSkills(ctx, prov) {
-  const { say, opts, results } = ctx;
+  const { say, note, warn, opts, results } = ctx;
   results.detected++;
   say(`→ ${prov.label} detected`);
   // --skill '*' --yes: skip the upstream skill-selection TUI and confirmation
@@ -586,6 +582,28 @@ function installViaSkills(ctx, prov) {
   // every agent adapter (see issue #389). `--skill '*' -a <agent>` is the
   // documented form for "install every skill into a specific agent".
   const args = ['-y', 'skills', 'add', REPO, '--skill', '*', '-a', prov.profile, '--yes'];
+  // Without -g the upstream CLI writes to a PROJECT-local ./.agents/skills
+  // under whatever directory the installer happened to run from. For an agent
+  // whose skills UI reads a fixed home directory, that means the install
+  // reports success and the skills never appear (#836) — a `curl | bash` run
+  // from ~/.local/bin put them in ~/.local/bin/.agents/skills. Set
+  // globalSkillsDir on a provider whose skills live at a known home path.
+  if (prov.globalSkillsDir) {
+    const globalSkillsDir = path.join(os.homedir(), ...prov.globalSkillsDir);
+    if (opts.dryRun) {
+      note(`  would mkdir -p ${globalSkillsDir}`);
+    } else {
+      // Belt and braces: -g should create the target itself. A failure here is
+      // not fatal — let the CLI run and report the real error rather than
+      // aborting on a directory we may not have needed.
+      try {
+        fs.mkdirSync(globalSkillsDir, { recursive: true });
+      } catch (error) {
+        warn(`  could not pre-create ${globalSkillsDir}: ${error.message}`);
+      }
+    }
+    args.push('-g');
+  }
   const r = runSpawn('npx', args, null, opts.dryRun);
   if (spawnOk(r)) results.installed.push(prov.id);
   else results.failed.push([prov.id, `npx skills add (${prov.profile}) failed`]);
@@ -626,20 +644,25 @@ function installHermes(ctx) {
   }
 
   try {
-    fs.mkdirSync(skillsRoot, { recursive: true });
-
+    const operations = [];
     for (const skillDir of HERMES_SKILL_DIRS) {
       const srcDir = path.join(repoRoot, 'skills', skillDir);
-      const destDir = path.join(skillsRoot, skillDir);
-      if (fs.existsSync(srcDir)) {
-        // Remove existing to ensure clean copy
-        if (fs.existsSync(destDir)) fs.rmSync(destDir, { recursive: true, force: true });
-        copyDirRecursive(srcDir, destDir);
-        note(`  copied ${skillDir} → ${destDir}`);
-      } else {
+      if (!fs.existsSync(srcDir)) {
         warn(`  skill dir not found: ${srcDir}`);
+        continue;
       }
+      operations.push({
+        relativePath: skillDir,
+        write: (stage) => OWNED.copyPath(srcDir, stage),
+      });
     }
+    OWNED.installOwned({
+      root: skillsRoot,
+      integration: 'hermes',
+      operations,
+      force: opts.force,
+      note,
+    });
 
     results.installed.push('hermes');
   } catch (err) {
@@ -673,14 +696,12 @@ function opencodeConfigDir() {
   return path.join(os.homedir(), '.config', 'opencode');
 }
 
-function copyDirRecursive(src, dest) {
-  fs.mkdirSync(dest, { recursive: true });
-  for (const entry of fs.readdirSync(src, { withFileTypes: true })) {
-    const s = path.join(src, entry.name);
-    const d = path.join(dest, entry.name);
-    if (entry.isDirectory()) copyDirRecursive(s, d);
-    else if (entry.isFile()) fs.copyFileSync(s, d);
-  }
+function opencodeConfigPath(dir) {
+  const jsonc = path.join(dir, 'opencode.jsonc');
+  const json  = path.join(dir, 'opencode.json');
+  if (fs.existsSync(jsonc)) return jsonc;
+  if (fs.existsSync(json))  return json;
+  return jsonc;
 }
 
 function installOpencode(ctx) {
@@ -701,12 +722,12 @@ function installOpencode(ctx) {
   const commandsDir = path.join(dir, 'commands');
   const agentsDir   = path.join(dir, 'agents');
   const skillsDir   = path.join(dir, 'skills');
-  const opencodeJson = path.join(dir, 'opencode.json');
+  const opencodeJson = opencodeConfigPath(dir);
   const agentsMd     = path.join(dir, 'AGENTS.md');
 
   if (opts.dryRun) {
     note(`  would mkdir ${pluginDir}/, ${commandsDir}/, ${agentsDir}/, ${skillsDir}/`);
-    note(`  would copy plugin.js + package.json + caveman-config.cjs into ${pluginDir}/`);
+    note(`  would copy plugin.js + package.json + caveman-config.cjs + caveman-parse.cjs into ${pluginDir}/`);
     note(`  would copy ${OPENCODE_COMMAND_FILES.length} command files into ${commandsDir}/`);
     note(`  would copy ${OPENCODE_AGENT_FILES.length} cavecrew agents into ${agentsDir}/`);
     note(`  would copy ${OPENCODE_SKILL_DIRS.length} skill dirs into ${skillsDir}/`);
@@ -718,67 +739,69 @@ function installOpencode(ctx) {
   }
 
   try {
-    // 1. Plugin dir — copy plugin.js, package.json, caveman-config.js (sibling).
-    //    Same `--force` semantic as commands/agents/skills below: re-runs leave
-    //    user edits to plugin.js alone unless --force is passed.
-    fs.mkdirSync(pluginDir, { recursive: true });
     const pluginSrc = path.join(repoRoot, 'src', 'plugins', 'opencode');
-    const pluginPayload = [
-      [path.join(pluginSrc, 'plugin.js'),    path.join(pluginDir, 'plugin.js')],
-      [path.join(pluginSrc, 'package.json'), path.join(pluginDir, 'package.json')],
-      // Renamed to .cjs because the plugin dir is "type": "module" — a bare .js
-      // sibling would be loaded as ESM and break the plugin's require() bridge.
-      [path.join(repoRoot, 'src', 'hooks', 'caveman-config.js'),
-       path.join(pluginDir, 'caveman-config.cjs')],
-    ];
-    for (const [src, dest] of pluginPayload) {
-      if (fs.existsSync(dest) && !opts.force) {
-        note(`  skipped ${dest} (exists; --force to overwrite)`);
-        continue;
-      }
-      fs.copyFileSync(src, dest);
-    }
-    process.stdout.write(`  installed: ${pluginDir}\n`);
+    // Preflight every same-named path before writing anything. The ownership
+    // journal records installed digests and force backups, so uninstall can
+    // remove only bytes this installer still owns.
+    const operations = [{
+      relativePath: 'plugins/caveman',
+      write: (stage) => {
+        fs.mkdirSync(stage, { recursive: true });
+        fs.copyFileSync(path.join(pluginSrc, 'plugin.js'), path.join(stage, 'plugin.js'));
+        fs.copyFileSync(path.join(pluginSrc, 'package.json'), path.join(stage, 'package.json'));
+        // Plugin dir is ESM; the CommonJS config bridge needs .cjs.
+        fs.copyFileSync(path.join(repoRoot, 'src', 'hooks', 'caveman-config.js'), path.join(stage, 'caveman-config.cjs'));
+        // Shared mode parser keeps opencode and Claude hook behavior identical.
+        fs.copyFileSync(path.join(repoRoot, 'src', 'hooks', 'caveman-parse.js'), path.join(stage, 'caveman-parse.cjs'));
+      },
+    }];
 
-    // 2. Commands.
-    fs.mkdirSync(commandsDir, { recursive: true });
     const cmdSrcDir = path.join(pluginSrc, 'commands');
     for (const f of OPENCODE_COMMAND_FILES) {
       const src = path.join(cmdSrcDir, f);
-      const dest = path.join(commandsDir, f);
       if (!fs.existsSync(src)) continue; // defense-in-depth: skip a missing command file rather than crash (#434)
-      if (fs.existsSync(dest) && !opts.force) { note(`  skipped ${dest} (exists; --force to overwrite)`); continue; }
-      fs.copyFileSync(src, dest);
-      process.stdout.write(`  installed: ${dest}\n`);
+      operations.push({
+        relativePath: `commands/${f}`,
+        write: (stage) => fs.copyFileSync(src, stage),
+      });
     }
 
-    // 3. Subagents. Source files target Claude Code's schema (`tools: [...]`
+    // Subagents target Claude Code's `tools: [...]` schema; strip that line for
+    // opencode and materialize transformed bytes directly into the owned path.
     //    YAML array); opencode rejects that form and refuses to boot until the
     //    file is removed. Strip the `tools:` line on copy — opencode falls back
     //    to its default tool set, and subagent prompts already self-restrict in
     //    the body. Issue #386.
-    fs.mkdirSync(agentsDir, { recursive: true });
     const agentSrcDir = path.join(repoRoot, 'agents');
     for (const f of OPENCODE_AGENT_FILES) {
       const src = path.join(agentSrcDir, f);
-      const dest = path.join(agentsDir, f);
       if (!fs.existsSync(src)) continue;
-      if (fs.existsSync(dest) && !opts.force) { note(`  skipped ${dest} (exists; --force to overwrite)`); continue; }
-      fs.writeFileSync(dest, stripOpencodeAgentTools(fs.readFileSync(src, 'utf8')));
-      process.stdout.write(`  installed: ${dest}\n`);
+      const body = transformOpencodeAgentFrontmatter(fs.readFileSync(src, 'utf8'));
+      operations.push({
+        relativePath: `agents/${f}`,
+        write: (stage) => fs.writeFileSync(stage, body, { mode: 0o600, flag: 'wx' }),
+      });
     }
 
-    // 4. Skills — opencode auto-discovers SKILL.md from ~/.config/opencode/skills/.
-    fs.mkdirSync(skillsDir, { recursive: true });
+    // Skills are journaled as whole directories. Any unjournaled same-named
+    // directory is user content and blocks install unless --force backs it up.
     const skillSrcDir = path.join(repoRoot, 'skills');
     for (const name of OPENCODE_SKILL_DIRS) {
       const src = path.join(skillSrcDir, name);
-      const dest = path.join(skillsDir, name);
       if (!fs.existsSync(src)) continue;
-      if (fs.existsSync(dest) && !opts.force) { note(`  skipped ${dest}/ (exists; --force to overwrite)`); continue; }
-      copyDirRecursive(src, dest);
-      process.stdout.write(`  installed: ${dest}/\n`);
+      operations.push({
+        relativePath: `skills/${name}`,
+        write: (stage) => OWNED.copyPath(src, stage),
+      });
     }
+    OWNED.installOwned({
+      root: dir,
+      integration: 'opencode',
+      operations,
+      force: opts.force,
+      note,
+    });
+    process.stdout.write(`  installed owned opencode payload under: ${dir}\n`);
 
     // 5. AGENTS.md — Tier-3 always-on ruleset. Wrapped in begin/end markers so
     //    a later --uninstall can strip our block cleanly even if the user has
@@ -900,6 +923,7 @@ function installOpenclaw(ctx) {
     repoRoot,
     dryRun: opts.dryRun,
     force: opts.force,
+    version: OPENCLAW_SKILL_VERSION,
     log,
   });
 
@@ -983,14 +1007,14 @@ async function installHooks(ctx) {
   SETTINGS.rewriteLegacyManagedHookCommands(settings, node);
 
   SETTINGS.addCommandHook(settings, 'SessionStart', {
-    command: `"${node}" "${activate}"`,
+    command: PLATFORM_PATHS.hookCommand(node, [activate]),
     marker: 'caveman-activate',
     timeout: 5,
     statusMessage: 'Loading caveman mode...',
   });
 
   SETTINGS.addCommandHook(settings, 'UserPromptSubmit', {
-    command: `"${node}" "${tracker}"`,
+    command: PLATFORM_PATHS.hookCommand(node, [tracker]),
     marker: 'caveman-mode-tracker',
     timeout: 5,
     statusMessage: 'Tracking caveman mode...',
@@ -1002,7 +1026,7 @@ async function installHooks(ctx) {
   // Use -ExecutionPolicy Bypass so users without RemoteSigned policy can run.
   const psHost = IS_WIN && hasCmd('pwsh') ? 'pwsh' : (IS_WIN ? 'powershell' : null);
   const slCmd = IS_WIN
-    ? `${psHost} -NoProfile -ExecutionPolicy Bypass -File "${path.join(hooksDir, 'caveman-statusline.ps1')}"`
+    ? PLATFORM_PATHS.hookCommand(psHost, ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', path.join(hooksDir, 'caveman-statusline.ps1')])
     : `bash "${statusline}"`;
   if (!settings.statusLine) {
     settings.statusLine = { type: 'command', command: slCmd };
@@ -1150,6 +1174,7 @@ async function loadRemoteHookChecksums() {
 // ── Uninstall ─────────────────────────────────────────────────────────────
 function uninstall(ctx) {
   const { say, note, warn, ok, opts, configDir } = ctx;
+  let cleanupFailed = false;
   say('🪨 caveman uninstall');
 
   if (opts.dryRun) note('  (dry run — nothing will be removed)');
@@ -1167,8 +1192,12 @@ function uninstall(ctx) {
         if (cmd.includes('caveman-statusline')) delete settings.statusLine;
       }
       SETTINGS.validateHookFields(settings);
-      if (!opts.dryRun) SETTINGS.writeSettings(settingsPath, settings);
-      ok(`  removed ${removed} caveman hook entr${removed === 1 ? 'y' : 'ies'} from settings.json`);
+      try {
+        if (!opts.dryRun) SETTINGS.writeSettings(settingsPath, settings);
+        ok(`  removed ${removed} caveman hook entr${removed === 1 ? 'y' : 'ies'} from settings.json`);
+      } catch (e) {
+        warn(`  could not update ${settingsPath}; continuing other cleanup: ${e && e.message || e}`);
+      }
     }
   }
 
@@ -1176,8 +1205,12 @@ function uninstall(ctx) {
     for (const f of HOOK_FILES) {
       const p = path.join(hooksDir, f);
       if (!fs.existsSync(p)) continue;
-      if (!opts.dryRun) { try { fs.unlinkSync(p); } catch (_) {} }
-      note(`  removed ${p}`);
+      if (opts.dryRun) {
+        note(`  would remove ${p}`);
+      } else {
+        try { fs.unlinkSync(p); } catch (_) {}
+        note(`  removed ${p}`);
+      }
     }
     // Don't rmdir hooksDir — other plugins may use it.
   }
@@ -1212,12 +1245,23 @@ function uninstall(ctx) {
     }
   }
 
-  // opencode native install — strip plugin entry, MCP entry, and our files.
-  // Probed by the existence of the plugin dir we own; if absent, skip silently.
+  // opencode native install — ownership journal is authority. Never infer
+  // ownership from a matching path name; pre-existing user files may use it.
   const ocDir = opencodeConfigDir();
-  const ocPluginDir = path.join(ocDir, 'plugins', 'caveman');
-  if (fs.existsSync(ocPluginDir)) {
-    const ocJson = path.join(ocDir, 'opencode.json');
+  let ocOwnership = { hadJournal: false };
+  try {
+    ocOwnership = OWNED.uninstallOwned({
+      root: ocDir,
+      integration: 'opencode',
+      dryRun: opts.dryRun,
+      note,
+      warn,
+    });
+  } catch (error) {
+    warn(`  opencode ownership journal invalid; left integration untouched: ${error.message}`);
+  }
+  if (ocOwnership.hadJournal) {
+    const ocJson = opencodeConfigPath(ocDir);
     if (fs.existsSync(ocJson)) {
       const cfg = SETTINGS.readSettings(ocJson);
       if (cfg) {
@@ -1232,22 +1276,6 @@ function uninstall(ctx) {
         if (!opts.dryRun) SETTINGS.writeSettings(ocJson, cfg);
         ok(`  pruned caveman entries from ${ocJson}`);
       }
-    }
-    if (!opts.dryRun) { try { fs.rmSync(ocPluginDir, { recursive: true, force: true }); } catch (_) {} }
-    note(`  removed ${ocPluginDir}`);
-    // Commands, agents, skills — only files matching our manifest (don't
-    // sweep the parent dirs; user may have other entries there).
-    for (const f of OPENCODE_COMMAND_FILES) {
-      const p = path.join(ocDir, 'commands', f);
-      if (fs.existsSync(p) && !opts.dryRun) { try { fs.unlinkSync(p); } catch (_) {} }
-    }
-    for (const f of OPENCODE_AGENT_FILES) {
-      const p = path.join(ocDir, 'agents', f);
-      if (fs.existsSync(p) && !opts.dryRun) { try { fs.unlinkSync(p); } catch (_) {} }
-    }
-    for (const name of OPENCODE_SKILL_DIRS) {
-      const p = path.join(ocDir, 'skills', name);
-      if (fs.existsSync(p) && !opts.dryRun) { try { fs.rmSync(p, { recursive: true, force: true }); } catch (_) {} }
     }
     // AGENTS.md — strip the fenced caveman block (preserves user content
     // above and below). If the file is empty after the strip, remove it.
@@ -1295,34 +1323,62 @@ function uninstall(ctx) {
       note: (s) => note(s),
       warn: (s) => warn(s),
     };
-    const r = OPENCLAW.uninstallOpenclaw({ workspace: ocwWs, dryRun: opts.dryRun, log });
-    if (r.touched) ok('  pruned caveman entries from OpenClaw workspace');
-  }
-
-  // Hermes native install — remove the skill folders installHermes copied.
-  // Honors HERMES_HOME via hermesConfigDir(); probed by the dirs we own.
-  const hermesRoot = path.join(hermesConfigDir(), 'productivity');
-  if (fs.existsSync(hermesRoot)) {
-    let prunedHermes = false;
-    for (const name of HERMES_SKILL_DIRS) {
-      const p = path.join(hermesRoot, name);
-      if (fs.existsSync(p)) {
-        if (!opts.dryRun) { try { fs.rmSync(p, { recursive: true, force: true }); } catch (_) {} }
-        note(`  removed ${p}`);
-        prunedHermes = true;
-      }
+    try {
+      const r = OPENCLAW.uninstallOpenclaw({ workspace: ocwWs, dryRun: opts.dryRun, log });
+      if (r.touched) ok('  pruned caveman entries from OpenClaw workspace');
+    } catch (error) {
+      cleanupFailed = true;
+      warn(`  OpenClaw cleanup failed; continuing other cleanup: ${error.message}`);
     }
-    if (prunedHermes) ok('  pruned caveman skills from Hermes');
   }
 
-  // Flag file
-  const flag = path.join(configDir, '.caveman-active');
-  if (fs.existsSync(flag) && !opts.dryRun) { try { fs.unlinkSync(flag); } catch (_) {} }
+  // Hermes native install — same journal/digest contract as opencode.
+  const hermesRoot = path.join(hermesConfigDir(), 'productivity');
+  try {
+    const hermesOwnership = OWNED.uninstallOwned({
+      root: hermesRoot,
+      integration: 'hermes',
+      dryRun: opts.dryRun,
+      note,
+      warn,
+    });
+    if (hermesOwnership.hadJournal) ok('  pruned owned caveman skills from Hermes');
+  } catch (error) {
+    warn(`  Hermes ownership journal invalid; left integration untouched: ${error.message}`);
+  }
+
+  // Per-session state. Keep lifetime savings history unless user removes it.
+  const stateFiles = [
+    '.caveman-active',
+    '.caveman-active.prev',
+    '.caveman-mode-log.jsonl',
+    '.caveman-statusline-suffix',
+    '.caveman-nudge-shown',
+  ];
+  for (const file of stateFiles) {
+    const statePath = path.join(configDir, file);
+    if (!fs.existsSync(statePath)) continue;
+    if (opts.dryRun) {
+      note(`  would remove ${statePath}`);
+    } else {
+      try { fs.unlinkSync(statePath); } catch (_) {}
+      note(`  removed ${statePath}`);
+    }
+  }
+  const historyPath = path.join(configDir, '.caveman-history.jsonl');
+  if (fs.existsSync(historyPath)) {
+    note(`  kept ${historyPath} (lifetime history — delete manually if unwanted)`);
+  }
 
   process.stdout.write('\n');
-  ok('uninstall done.');
+  if (cleanupFailed) {
+    warn('uninstall incomplete. Review cleanup warnings above.');
+  } else {
+    ok('uninstall done.');
+  }
   ok('npx-skills installs (Cursor/Windsurf/etc.) — remove via your IDE\'s skill manager');
   ok('per-repo init files (.cursor/, .windsurf/, AGENTS.md) — remove with your editor');
+  return cleanupFailed ? 1 : 0;
 }
 
 // ── Interactive prompt (TTY-only) ─────────────────────────────────────────
@@ -1434,7 +1490,7 @@ async function main() {
     results: { installed: [], skipped: [], failed: [], detected: 0 },
   };
 
-  if (opts.uninstall) { uninstall(ctx); return 0; }
+  if (opts.uninstall) return uninstall(ctx);
 
   ctx.say('🪨 caveman installer');
   ctx.note(`  ${REPO}`);

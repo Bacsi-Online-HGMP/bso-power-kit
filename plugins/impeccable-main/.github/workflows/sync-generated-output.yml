@@ -26,6 +26,8 @@ env:
     .cursor
     .gemini
     .github/skills
+    .grok
+    .hermes
     .kiro
     .opencode
     .pi
@@ -33,6 +35,7 @@ env:
     .rovodev
     .trae
     .trae-cn
+    .vibe
     plugin
 
 jobs:
@@ -48,7 +51,7 @@ jobs:
           token: ${{ secrets.SYNC_GENERATED_OUTPUT_TOKEN || github.token }}
 
       - name: Setup Node
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@v7
         with:
           node-version: 24
 
@@ -76,22 +79,58 @@ jobs:
           fi
 
       - name: Commit generated output
+        id: commit
         if: steps.drift.outputs.changed == 'true'
         run: |
+          set -euo pipefail
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add $GENERATED_PATHS
-          git commit -m "Sync generated provider output"
 
-          git fetch origin main
-          if ! git merge-base --is-ancestor origin/main HEAD; then
-            echo "::error::main advanced while generated output was building; rerun this workflow on the latest main."
-            exit 1
-          fi
+          # A push can lose the race against a human commit landing on main
+          # during the ~30s build window (issue #388: ~10% of runs). Instead
+          # of aborting and waiting for an unrelated push to re-trigger the
+          # sync, re-sync to the latest main, rebuild against the current
+          # source, and push again, with backoff. Every attempt builds from
+          # a fresh origin/main, so pushed output always matches the source
+          # state it lands on.
+          for attempt in 1 2 3 4 5; do
+            git add $GENERATED_PATHS
+            if git diff --cached --quiet; then
+              # The race that beat us was another sync (or the rebuilt output
+              # matches the new main); nothing left to push.
+              echo "No generated output drift after rebuild (attempt $attempt); nothing to push."
+              echo "pushed=false" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+            git commit -m "Sync generated provider output"
 
-          git push origin HEAD:main
+            git fetch origin main
+            if git merge-base --is-ancestor origin/main HEAD && git push origin HEAD:main; then
+              echo "Pushed generated output on attempt $attempt."
+              echo "pushed=true" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+
+            # The recovery work is pointless on the final attempt: nothing
+            # would consume the rebuild, and the backoff would only delay
+            # the failure.
+            if [ "$attempt" = 5 ]; then break; fi
+
+            echo "Push did not land on attempt $attempt (main advanced, or the push itself failed); re-syncing and rebuilding."
+            git reset --hard origin/main
+            bun install --frozen-lockfile
+            bun run build:release
+            sleep $((attempt * 5))
+          done
+
+          echo "::error::Could not push generated output after 5 attempts (main kept advancing, or pushes kept failing); rerun this workflow on the latest main."
+          exit 1
 
       - name: Summarize generated output commit
         if: steps.drift.outputs.changed == 'true'
         run: |
-          echo "Committed generated provider output directly to main." >> "$GITHUB_STEP_SUMMARY"
+          if [ "${{ steps.commit.outputs.pushed }}" = "true" ]; then
+            echo "Committed generated provider output directly to main." >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "Generated output drift resolved itself after a mid-run rebuild; nothing was pushed." >> "$GITHUB_STEP_SUMMARY"
+          fi

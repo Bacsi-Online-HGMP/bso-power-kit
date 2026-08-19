@@ -12,7 +12,7 @@ import sys
 import time
 from pathlib import Path
 
-from . import http, log, subproc
+from . import env, health, http, log, subproc
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -70,7 +70,7 @@ def _has_injected_credentials() -> bool:
 
 def _has_process_credentials() -> bool:
     """Return True when AUTH_TOKEN/CT0 are present in process env."""
-    return bool(os.environ.get("AUTH_TOKEN") and os.environ.get("CT0"))
+    return bool(env.read_secret_env("AUTH_TOKEN") and env.read_secret_env("CT0"))
 
 
 def _subprocess_env() -> Dict[str, str]:
@@ -87,6 +87,19 @@ def _log(msg: str):
     log.source_log("Bird", msg, tty_only=False)
 
 
+def classify_run_failure(detail: str) -> str:
+    """Map Bird's subprocess-only failure shapes to run outcome states."""
+    text = detail.lower()
+    if any(marker in text for marker in ("interstitial", "non-json", "invalid json")):
+        return health.SCHEMA_DRIFT
+    if any(
+        marker in text
+        for marker in ("cookie expired", "expired cookie", "unauthorized", "forbidden", "login required")
+    ):
+        return health.AUTH_FAILED
+    return http.classify_failure(message=detail)
+
+
 def _extract_core_subject(topic: str) -> str:
     """Extract core subject from verbose query for X search.
 
@@ -96,6 +109,53 @@ def _extract_core_subject(topic: str) -> str:
     """
     from .query import extract_core_subject
     return extract_core_subject(topic, max_words=5, strip_suffixes=True)
+
+
+def _plain_query_tokens(text: str) -> list[str]:
+    """Return lexical tokens without Bird query grouping syntax.
+
+    Strips phrase quotes as well as grouping characters. Used where a flat
+    token list is wanted; use ``build_topic_query`` for the provider query,
+    which preserves quoted phrases.
+    """
+    separators = str.maketrans({char: " " for char in '\"“”()[]{}'})
+    return [
+        clean
+        for token in text.translate(separators).split()
+        if (clean := token.strip("'‘’"))
+    ]
+
+
+# Bird/X grouping syntax that carries no lexical meaning. Double quotes are
+# deliberately absent: X advanced search treats "..." as a phrase match, which
+# is exactly what the planner intended when it quoted a proper noun.
+_GROUPING_CHARS = "“”()[]{}"
+
+
+def build_topic_query(topic: str, from_date: str) -> str:
+    """Build the X topic query, preserving quoted proper-noun phrases.
+
+    Previously the topic went through ``_plain_query_tokens``, which stripped
+    the quotes the planner had added, so an intended phrase match for
+    '"Peter Steinberger"' degraded into `peter AND steinberger` -- narrower and
+    noisier at once. X supports phrase queries natively, so the quotes are
+    passed through.
+    """
+    separators = str.maketrans({char: " " for char in _GROUPING_CHARS})
+    cleaned = topic.translate(separators)
+    # An unbalanced quote is worse than no quote: X reads the orphan as an
+    # unterminated phrase and matches nothing. Upstream trimming (core-subject
+    # extraction, retry shortening) can cut a topic mid-phrase, so verify the
+    # quotes pair up and fall back to bare tokens when they do not.
+    if cleaned.count('"') % 2:
+        cleaned = cleaned.replace('"', " ")
+    tokens = [
+        clean
+        for token in cleaned.split()
+        if (clean := token.strip("'‘’"))
+    ]
+    core = " ".join(tokens).strip()
+    return f"{core} since:{from_date}" if core else f"since:{from_date}"
 
 
 def is_bird_installed() -> bool:
@@ -270,11 +330,18 @@ def _run_bird_search(query: str, count: int, timeout: int) -> Dict[str, Any]:
         if terminal_error is not None:
             return terminal_error
 
-        if result.returncode != 0:
-            error = result.stderr.strip() or "Bird search failed"
-            return {"error": error, "items": []}
-
         output = result.stdout.strip()
+        if result.returncode != 0:
+            if not output:
+                error = result.stderr.strip() or "Bird search failed"
+                return {"error": error, "items": []}
+            # Windows/Node 24: the vendored Bird CLI uses native fetch (undici),
+            # and calling process.exit() while keep-alive sockets are still
+            # closing trips a libuv assertion -> non-zero exit code AFTER it has
+            # already written a complete, valid JSON result to stdout. Trust
+            # stdout when it has content; only treat a non-zero exit as a real
+            # failure when stdout is empty.
+
         if not output:
             return {"items": []}
 
@@ -341,17 +408,19 @@ def search_x(
     timeout = 30 if depth == "quick" else 45 if depth == "default" else 60
 
     # Extract core subject - X search is literal, not semantic
-    core_topic = _extract_core_subject(topic)
-    query = f"{core_topic} since:{from_date}"
+    core_subject = _extract_core_subject(topic)
+    core_words = _plain_query_tokens(core_subject)
+    core_topic = " ".join(core_words)
+    query = build_topic_query(core_subject, from_date)
 
     _log(f"Searching: {query}")
     response = _run_bird_search(query, count, timeout)
+    last_clean_response = response if not response.get("error") else None
 
     # Check if we got results
     items = parse_bird_response(response, query=core_topic)
 
     # Retry with OR groups for multi-word queries (X supports OR operator)
-    core_words = core_topic.split()
     if not items and len(core_words) >= 2:
         from .query import extract_compound_terms
         compounds = extract_compound_terms(topic)
@@ -361,6 +430,8 @@ def search_x(
             _log(f"0 results for '{core_topic}', retrying with OR groups: {or_parts}")
             query = f"({or_parts}) since:{from_date}"
             response = _run_bird_search(query, count, timeout)
+            if not response.get("error"):
+                last_clean_response = response
             items = parse_bird_response(response, query=core_topic)
 
     # Retry with fewer keywords if still 0 results and query has 3+ words
@@ -369,6 +440,8 @@ def search_x(
         _log(f"0 results for '{core_topic}', retrying with '{shorter}'")
         query = f"{shorter} since:{from_date}"
         response = _run_bird_search(query, count, timeout)
+        if not response.get("error"):
+            last_clean_response = response
         items = parse_bird_response(response, query=core_topic)
 
     # Last-chance retry: use strongest remaining token (often the product name)
@@ -392,7 +465,12 @@ def search_x(
             _log(f"0 results for '{core_topic}', retrying anchored on '{retry_terms}'")
             query = f"{retry_terms} since:{from_date}"
             response = _run_bird_search(query, count, timeout)
+            if not response.get("error"):
+                last_clean_response = response
 
+    if response.get("error") and last_clean_response is not None:
+        _log("Optional retry failed after a clean empty response; preserving no-results outcome")
+        return last_clean_response
     return response
 
 
@@ -442,11 +520,14 @@ def search_handles(
             _log(f"Handle search error for @{handle}: {e}")
             return []
 
-        if result.returncode != 0:
-            _log(f"Handle search failed for @{handle}: {result.stderr.strip()}")
-            return []
-
         output = result.stdout.strip()
+        if result.returncode != 0:
+            if not output:
+                _log(f"Handle search failed for @{handle}: {result.stderr.strip()}")
+                return []
+            # Windows/Node 24: benign libuv assertion can cause non-zero exit
+            # AFTER valid JSON is written to stdout. Trust stdout content.
+
         if not output:
             return []
 

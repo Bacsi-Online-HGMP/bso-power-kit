@@ -4,15 +4,8 @@ description: >
   Generates Facebook content from content atoms: community-focused text posts, polls
   with up to 10 options, and story scripts. Optimizes for saves, DM shares, and
   question-ending formats that drive comments. Sub-skill of the Content Repurposing
-  Engine. Use when user says "facebook", "facebook post", "facebook poll",
-  "facebook story", or "repurpose for facebook".
-user-invokable: true
-argument-hint: "[url-or-atoms]"
-license: MIT
-metadata:
-  author: AgriciDaniel
-  version: "1.0.0"
-  category: content
+  Engine.
+user-invokable: false
 ---
 
 # Facebook Content Generator

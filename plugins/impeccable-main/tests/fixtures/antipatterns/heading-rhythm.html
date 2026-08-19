@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Heading rhythm fixture</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: Georgia, serif; font-size: 16px; line-height: 1.5; width: 720px; }
+  h2 { font-size: 28px; line-height: 1.2; }
+  h3 { font-size: 20px; line-height: 1.2; }
+  p { max-width: 60ch; }
+
+  /* FLAG: zero space above the heading, clear space below it */
+  .flag-crowded { margin: 0 0 40px; }
+  .flag-crowded + p { margin: 0 0 24px; }
+
+  /* PASS: generous space above, tight below */
+  .pass-generous { margin: 64px 0 16px; }
+
+  /* PASS: near-equal spacing is ambiguous, not inverted */
+  .pass-near-equal { margin: 20px 0 24px; }
+
+  /* PASS: eyebrow label bound to the heading; real space sits above the cluster */
+  .pass-eyebrow-label { font-size: 12px; letter-spacing: 0.1em; text-transform: uppercase; margin: 72px 0 8px; }
+  .pass-eyebrow-heading { margin: 0 0 24px; }
+
+  /* PASS: small card, its boundary provides the separation */
+  .pass-card { box-shadow: 0 1px 4px rgba(0,0,0,0.2); background: #f4f4f4; padding: 16px; margin: 48px 0; width: 320px; }
+  .pass-card h3 { margin: 0 0 20px; }
+
+  /* PASS: heading first inside a banded section; the band edge separates */
+  .pass-band { background: #ececec; padding: 8px 0 32px; margin-top: 8px; }
+  .pass-band h2 { margin: 0 0 24px; }
+</style>
+</head>
+<body>
+
+  <h2 class="pass-first">Pass First Heading</h2>
+  <p>Opening paragraph after the first heading on the page. The first heading has
+  nothing above it, so it is exempt from the rhythm comparison entirely.</p>
+
+  <p style="margin-top: 24px;">A closing paragraph of the previous block of content,
+  sitting directly above the crowded heading with no gap at all between them.</p>
+  <h2 class="flag-crowded">Flag Crowded One</h2>
+  <p>The content this heading introduces sits forty pixels away while the previous
+  block touches the heading, so the heading reads as a caption for the text above.</p>
+
+  <p>Another closing paragraph of a previous content block, again flush against
+  the heading that follows it in the document flow.</p>
+  <h2 class="flag-crowded">Flag Crowded Two</h2>
+  <p>Second crowded case. Two or more headings must violate the principle before
+  the rule fires, because a single occurrence is treated as noise.</p>
+
+  <p>A third closing paragraph that the next heading will visually attach to,
+  which is exactly the inversion this rule measures.</p>
+  <h3 class="flag-crowded">Flag Crowded Three</h3>
+  <p>Third crowded case, this time an h3, to confirm the rule reads h2 through h4.</p>
+
+  <h2 class="pass-generous">Pass Generous Above</h2>
+  <p>Sixty-four pixels above and sixteen below. The heading clearly binds to this
+  paragraph, which is the healthy shape.</p>
+
+  <h2 class="pass-near-equal">Pass Near Equal</h2>
+  <p>Twenty pixels above and twenty-four below. Ambiguous rather than inverted,
+  so the rule leaves it alone.</p>
+
+  <p class="pass-eyebrow-label">Chapter Four</p>
+  <h2 class="pass-eyebrow-heading">Pass Eyebrow Cluster</h2>
+  <p>The tiny label above belongs to the heading cluster. Space is measured from
+  the top of the cluster, where seventy-two pixels separate it from this text.</p>
+
+  <div class="pass-card">
+    <h3>Pass Card Heading</h3>
+    <p>A heading inside a small card. The card boundary provides the separation,
+    so the rule exempts headings inside panels shorter than two hundred pixels.</p>
+  </div>
+
+  <div class="pass-band">
+    <h2>Pass Band Heading</h2>
+    <p>This heading is the first content inside a section that draws its own
+    background, so the band edge is the separator above it.</p>
+  </div>
+
+</body>
+</html>
