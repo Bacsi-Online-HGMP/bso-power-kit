@@ -29,6 +29,8 @@ The guide files define how Claude analyzes each scenario:
 | `skills/brooks-debt/debt-guide.md` | How tech debt is classified and scored |
 | `skills/brooks-test/test-guide.md` | How test quality reviews run |
 | `skills/brooks-health/health-guide.md` | How the health dashboard aggregates scores across all four dimensions |
+| `skills/brooks-sweep/sweep-guide.md` | How the full sweep classifies, applies, and reverts fixes |
+| `skills/brooks-audit/onboarding-guide.md` | How the codebase tour (onboarding mode) is produced |
 | `skills/_shared/test-decay-risks.md` | Six test-space decay risks with book citations |
 
 Better heuristics here mean better reviews for every user. If you find the skill
@@ -38,9 +40,10 @@ which captures book-level scope, exceptions, and tradeoffs.
 
 ### 3. Add an eval test case (most impactful)
 
-The benchmark (94% pass rate) was produced by running the skill against test cases
-in `evals/evals.json`. Adding a new test case that catches a real problem the
-current skill misses is the highest-value contribution.
+`evals/evals.json` holds the scenarios the skill is graded against. Adding a new
+test case that catches a real problem the current skill misses is the highest-value
+contribution. (The 94% figure in the README is a separate, three-scenario
+head-to-head against an unaided review — not this suite's pass rate.)
 
 **Format:**
 
@@ -67,64 +70,53 @@ and what it produces after. Even a screenshot or paste of the output is enough.
 
 ### 4. Adding a new decay risk (advanced)
 
-Adding an entirely new risk category (e.g., R7 or T7) requires touching five places.
-Run `npm run validate` after each step to confirm no drift:
+Adding an entirely new risk category (e.g., R7 or T7) requires touching six places.
+Run `npm run validate` and `npm run evals` after each step to confirm no drift:
 
 1. **`skills/_shared/decay-risks.md`** or **`test-decay-risks.md`** — add the full risk definition (Diagnostic Question, Symptoms, Sources table, Severity Guide, What Not to Flag)
 2. **`skills/_shared/source-coverage.md`** — add the new risk to the relevant book sections under "Encoded today"
-3. **`validate-repo.mjs`** — increment `PRODUCTION_RISK_COUNT` or `TEST_RISK_COUNT`
-4. **Mode guide(s)** (`pr-review-guide.md`, `architecture-guide.md`, `debt-guide.md`, `test-guide.md`) — add diagnostic questions for the new risk where relevant
-5. **`evals/evals.json`** — add a scenario (see §3 for format)
+3. **`scripts/frontmatter.mjs`** — increment `PRODUCTION_RISK_COUNT` or `TEST_RISK_COUNT`
+4. **`scripts/report-parse.mjs`** — add the code → display-name entry to `RISK_CATALOG`
+5. **Mode guide(s)** (`pr-review-guide.md`, `architecture-guide.md`, `debt-guide.md`, `test-guide.md`) — add diagnostic questions for the new risk where relevant
+6. **`evals/evals.json`** — add a scenario (see §3 for format). `npm run evals` fails until the new code has at least one positive scenario.
+
+Nothing else needs widening: the risk-code regexes in `eval-utils.mjs`,
+`report-parse.mjs`, and `benchmark.mjs` are all derived from steps 3 and 4, not
+spelled out — a hardcoded `[RT][1-6]` range used to drop new codes silently.
 
 ## Local Testing
 
-Run the repository consistency checks first:
+```bash
+npm run validate     # version sync across manifests/docs, hook JSON, risk-code consistency
+npm test             # unit tests for the validator helpers
+npm run evals        # eval structural validation
+npm run benchmark    # parser fidelity against the frozen corpus
+
+bash hooks/session-start                        # local branch
+CLAUDE_PLUGIN_ROOT=1 bash hooks/session-start   # Claude Code platform install path
+```
+
+The hook should print a JSON object with an `additionalContext` or `hookSpecificOutput` key.
+
+To test the skill itself, copy the *contents* of `skills/` — `cp -r skills/ <dest>` would nest a
+second `skills/` inside an existing destination and `../_shared/` would stop resolving:
 
 ```bash
-node scripts/validate-repo.mjs
+mkdir -p ~/.claude/skills/brooks-lint
+cp -r skills/* ~/.claude/skills/brooks-lint/
 ```
 
-This verifies version sync across manifests/docs, hook JSON output, and risk-code consistency in config examples.
-
-Verify the session-start hook produces valid JSON:
-
-```bash
-# Local branch
-bash hooks/session-start
-
-# Claude Code platform install path
-CLAUDE_PLUGIN_ROOT=1 bash hooks/session-start
-```
-
-Expected output: a JSON object with an `additionalContext` or `hookSpecificOutput` key.
-
-To test the skill itself, install it into your Claude Code session:
-
-```bash
-cp -r skills/ ~/.claude/skills/brooks-lint
-```
-
-Then open Claude Code and run one of the slash commands:
-
-```
-/brooks-review                  # or /brooks-lint:brooks-review
-/brooks-audit                   # or /brooks-lint:brooks-audit
-/brooks-debt                    # or /brooks-lint:brooks-debt
-/brooks-test                    # or /brooks-lint:brooks-test
-/brooks-health                  # or /brooks-lint:brooks-health
-```
+Then run any of `/brooks-review`, `/brooks-audit`, `/brooks-debt`, `/brooks-test`,
+`/brooks-health`, `/brooks-sweep` (or their `/brooks-lint:`-prefixed full forms).
 
 ## PR Conventions
 
-- Run `/brooks-review` (or `/brooks-lint:brooks-review`) on your own diff before opening a PR.
-  Paste the Health Score and any Critical findings into your PR description.
-  (Yes, we review our own contributions with the tool we're building.)
-
-- Keep PRs focused. One decay risk improvement or one eval addition per PR
-  is easier to review than a batch of unrelated changes.
-
-- If you're making a judgment call (e.g., changing a severity threshold from
-  🟡 to 🔴), explain the reasoning in the PR description.
+- Run `/brooks-review` on your own diff before opening a PR, and paste the Health Score and any
+  Critical findings into the description. (Yes, we review our own contributions with the tool
+  we're building.)
+- Keep PRs focused — one decay-risk improvement or one eval addition per PR.
+- If you're making a judgment call (e.g. moving a severity threshold from 🟡 to 🔴), explain the
+  reasoning in the PR description.
 
 ## Code of Conduct
 

@@ -4,15 +4,8 @@ description: >
   Generates Skool community content from content atoms: discussion posts framed as
   open debates, multi-day challenge prompts with action steps, and community polls.
   Enforces content rotation and teacher/leader tone. Sub-skill of the Content
-  Repurposing Engine. Use when user says "skool", "skool post", "skool challenge",
-  "community post", or "repurpose for skool".
-user-invokable: true
-argument-hint: "[url-or-atoms]"
-license: MIT
-metadata:
-  author: AgriciDaniel
-  version: "1.0.0"
-  category: content
+  Repurposing Engine.
+user-invokable: false
 ---
 
 # Skool Community Post Generator

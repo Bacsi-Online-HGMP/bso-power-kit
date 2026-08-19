@@ -5,21 +5,39 @@ import { DEFAULT_SUITES, matchesSuiteTriggers } from './test-suites.mjs';
 
 const eventName = process.env.GITHUB_EVENT_NAME || '';
 const localNoChanges = !eventName && !process.env.CI_CHANGED_FILES;
-const changedFiles = localNoChanges ? [] : getChangedFiles();
+// The nightly schedule exists for exactly one thing: the full live-e2e
+// matrix. A schedule event has no diff base, so the change-detection path
+// degenerates to "everything changed"; without this guard that would flip on
+// every file-triggered opt-in suite, including the ones that bill LLM APIs
+// (skill-behavior, accept-cleanup, deepseek), every single night.
+const isSchedule = eventName === 'schedule';
+const changedFiles = localNoChanges || isSchedule ? [] : getChangedFiles();
 const forceDeterministic = localNoChanges || eventName === 'push' || eventName === 'workflow_dispatch';
 const forceOptIn = eventName === 'workflow_dispatch';
 
-const plan = {
-  core: true,
-  detector: forceDeterministic || matchesSuiteTriggers('detector', changedFiles),
-  live: forceDeterministic || matchesSuiteTriggers('live', changedFiles),
-  framework: forceDeterministic || matchesSuiteTriggers('framework', changedFiles),
-  cli_remote_e2e: forceOptIn,
-  live_e2e: forceOptIn || matchesSuiteTriggers('live-e2e', changedFiles),
-  live_e2e_accept_cleanup: forceOptIn || matchesSuiteTriggers('live-e2e-accept-cleanup', changedFiles),
-  skill_behavior: forceOptIn || matchesSuiteTriggers('skill-behavior', changedFiles),
-  live_svelte_adapter_deepseek: forceOptIn || matchesSuiteTriggers('live-svelte-adapter-deepseek', changedFiles),
-};
+const plan = isSchedule
+  ? {
+    core: true,
+    detector: true,
+    live: true,
+    framework: true,
+    cli_remote_e2e: false,
+    live_e2e: true,
+    live_e2e_accept_cleanup: false,
+    skill_behavior: false,
+    live_svelte_adapter_deepseek: false,
+  }
+  : {
+    core: true,
+    detector: forceDeterministic || matchesSuiteTriggers('detector', changedFiles),
+    live: forceDeterministic || matchesSuiteTriggers('live', changedFiles),
+    framework: forceDeterministic || matchesSuiteTriggers('framework', changedFiles),
+    cli_remote_e2e: forceOptIn,
+    live_e2e: forceOptIn || matchesSuiteTriggers('live-e2e', changedFiles),
+    live_e2e_accept_cleanup: forceOptIn || matchesSuiteTriggers('live-e2e-accept-cleanup', changedFiles),
+    skill_behavior: forceOptIn || matchesSuiteTriggers('skill-behavior', changedFiles),
+    live_svelte_adapter_deepseek: forceOptIn || matchesSuiteTriggers('live-svelte-adapter-deepseek', changedFiles),
+  };
 
 writeGithubOutputs(plan);
 printSummary(plan, changedFiles);

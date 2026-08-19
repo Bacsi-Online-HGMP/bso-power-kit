@@ -1,11 +1,23 @@
 /**
  * Shared eval classification utilities.
- * Used by run-evals-live.mjs (runtime) and validate-repo.test.mjs (tests).
+ * Used by run-evals.mjs and run-evals-live.mjs (runtime) and validate-repo.test.mjs.
  */
 
-// Only R1–R6 / T1–T6 are valid codes; \d+ would also match typos like R10 or
+import { PRODUCTION_RISK_COUNT, TEST_RISK_COUNT } from "./frontmatter.mjs";
+
+/**
+ * Canonical risk codes, derived from the counts rather than spelled out, so a
+ * seventh risk becomes valid everywhere at once instead of in whichever regexes
+ * someone remembered to widen.
+ */
+export const RISK_CODES = [
+  ...Array.from({ length: PRODUCTION_RISK_COUNT }, (_, i) => `R${i + 1}`),
+  ...Array.from({ length: TEST_RISK_COUNT }, (_, i) => `T${i + 1}`),
+];
+
+// Word-bounded and enumerated: a bare `\d+` would also match typos like `R10` or
 // stray text like "R20", polluting true/false-positive classification.
-const RISK_CODE_RE = /\b([RT][1-6])\b/g;
+const RISK_CODE_RE = new RegExp(`\\b(${RISK_CODES.join("|")})\\b`, "g");
 
 export function extractRiskCodes(text) {
   return new Set(text.match(RISK_CODE_RE) ?? []);
@@ -23,9 +35,11 @@ export function classify(scenario, aiText) {
   const foundCodes    = extractRiskCodes(aiText);
 
   // no_risk_codes exits after extraction (needs codes, not Iron Law / Health Score).
+  // In this branch expected_output describes what must NOT be flagged, so
+  // expectedCodes is a *forbidden* set — hence the inverted-looking filter.
   if (scenario.no_risk_codes) {
-    const unexpected = [...foundCodes].filter((c) => expectedCodes.has(c));
-    return unexpected.length === 0 ? "false-positive-pass" : "fail";
+    const forbiddenHits = [...foundCodes].filter((c) => expectedCodes.has(c));
+    return forbiddenHits.length === 0 ? "false-positive-pass" : "fail";
   }
 
   const hasIronLaw =

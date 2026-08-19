@@ -16,6 +16,10 @@ export const PROVIDERS = {
     configDir: '.cursor',
     displayName: 'Cursor',
     frontmatterFields: ['license', 'compatibility', 'metadata'],
+    // Cursor subagents: `.cursor/agents/<name>.md` at repo level,
+    // `~/.cursor/agents/` at user level. Project agents take precedence over
+    // user ones, so installs simply overwrite on update.
+    agentFormat: 'cursor-md',
     emitHooks: 'cursor',
     // Cursor reads `.cursor/hooks.json`, not `.cursor/hooks/hooks.json`.
     hooksManifestRel: 'hooks.json',
@@ -68,6 +72,11 @@ export const PROVIDERS = {
     displayName: 'GitHub Copilot',
     placeholderProvider: 'agents',
     frontmatterFields: ['user-invocable', 'argument-hint', 'license', 'compatibility', 'metadata'],
+    // Copilot custom agents: `.github/agents/<name>.agent.md` at repo level,
+    // `~/.copilot/agents/` at user level (the CLI installer handles placement).
+    // The degraded/ fallbacks still ship for Copilot surfaces where the model
+    // fails to delegate; the .agent.md files are the real subagent path.
+    agentFormat: 'copilot-agent-md',
     emitHooks: 'github',
     // GitHub Copilot discovers repo-level hooks under `.github/hooks/*.json`.
     hooksManifestRel: 'hooks/impeccable.json',
@@ -121,5 +130,50 @@ export const PROVIDERS = {
     configDir: '.rovodev',
     displayName: 'Rovo Dev',
     frontmatterFields: ['user-invocable', 'argument-hint', 'license', 'compatibility', 'metadata', 'allowed-tools'],
+  },
+  vibe: {
+    provider: 'vibe',
+    providerTags: ['vibe'],
+    configDir: '.vibe',
+    displayName: 'Mistral Vibe',
+    frontmatterFields: ['user-invocable', 'license', 'compatibility', 'metadata', 'allowed-tools'],
+  },
+  grok: {
+    provider: 'grok',
+    providerTags: ['grok'],
+    configDir: '.grok',
+    displayName: 'Grok Build',
+    // Grok's skill frontmatter matches the Agent Skills spec plus Claude-style
+    // extensions (user-invocable, argument-hint, allowed-tools, model, effort).
+    // See https://docs.x.ai/build/features/skills-plugins-marketplaces and
+    // ~/.grok/docs/user-guide/08-skills.md.
+    frontmatterFields: ['user-invocable', 'argument-hint', 'license', 'compatibility', 'metadata', 'allowed-tools'],
+    // Project/user agents are markdown with YAML frontmatter (Claude-compatible).
+    agentFormat: 'claude-md',
+    emitHooks: 'grok',
+    // Grok discovers project hooks from `.grok/hooks/*.json` (not a single
+    // settings.json). Claude tool-name matchers alias to Grok tools.
+    hooksManifestRel: 'hooks/impeccable.json',
+  },
+  antigravity: {
+    provider: 'antigravity',
+    providerTags: ['antigravity'],
+    configDir: '.agent',
+    displayName: 'Antigravity',
+    frontmatterFields: ['license', 'compatibility', 'metadata', 'allowed-tools'],
+  },
+  hermes: {
+    provider: 'hermes',
+    providerTags: ['hermes'],
+    configDir: '.hermes',
+    displayName: 'Hermes Agent',
+    // Hermes ships the Agent Skills spec as-is. The optional fields below
+    // (license, compatibility, metadata) are spec-defined; harness-specific
+    // extensions (user-invocable, argument-hint, allowed-tools) are NOT
+    // recognized by the Hermes skill loader and would be silently ignored.
+    // Hermes also has no hook surface, no equivalent of Claude's slash
+    // commands, and no per-skill tool ACL -- so no emitHooks, no agentFormat,
+    // no writeOpenAIMetadata. See hermes-agent/SKILL.md "Skills" section.
+    frontmatterFields: ['license', 'compatibility', 'metadata'],
   },
 };

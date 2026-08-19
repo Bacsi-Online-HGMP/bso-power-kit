@@ -24,6 +24,7 @@ from typing import Any, Dict, List, Optional
 
 from collections import Counter
 
+from . import http
 from . import reddit_rss, reddit_shreddit, reddit_listing, reddit_arctic
 # Scores are backfilled from popular derived subreddits, so an engagement-first
 # final sort buries on-topic RSS hits under viral off-topic posts. A relevance
@@ -71,6 +72,51 @@ def _apply_scores(post: Dict[str, Any], scored: Dict[str, int]) -> None:
     post["engagement"]["num_comments"] = scored["num_comments"]
 
 
+def _scored_listings(
+    subreddits: List[str],
+    depth: str = "default",
+    query: str = "",
+    sorts: Optional[List[str]] = None,
+) -> List[Dict[str, Any]]:
+    """Scored subreddit listings: shreddit partials, arctic-shift supplement.
+
+    The shreddit ``community-more-posts`` partials 403 from datacenter IPs
+    (and any host Reddit decides to block). Shreddit is tried first; arctic-
+    shift supplements with any posts shreddit missed. Individual sort lanes
+    can fail silently (shreddit's ``fetch_listings`` flattens results without
+    exposing per-sort status), so arctic is called for all requested subreddits
+    and merged via deduplication. This ensures fresh posts sought through
+    ``hot`` or ``new`` are recovered even when only ``top`` succeeded. Never
+    raises.
+    """
+    posts = reddit_listing.fetch_listings(subreddits, depth=depth, query=query, sorts=sorts)
+
+    # Supplement with arctic for all requested subreddits. Shreddit's per-sort
+    # success/failure is opaque, so arctic provides coverage for any failed
+    # sort lanes (e.g., hot/new failing while top succeeded). Deduplication
+    # ensures no redundant posts when shreddit fully succeeded.
+    if subreddits:
+        try:
+            arctic_posts = reddit_arctic.fetch_listings(
+                subreddits, depth=depth, query=query, sorts=sorts
+            )
+        except Exception as exc:  # the fallback must never break the pipeline
+            _log(f"arctic-shift listing supplement failed: {exc}")
+            arctic_posts = []
+        if arctic_posts:
+            # Merge and dedupe by URL — shreddit posts take priority.
+            seen = {p["url"] for p in posts}
+            added = 0
+            for p in arctic_posts:
+                if p["url"] not in seen:
+                    seen.add(p["url"])
+                    posts.append(p)
+                    added += 1
+            if added:
+                _log(f"arctic-shift supplement: {added} new posts from {len(arctic_posts)} arctic results")
+    return posts
+
+
 def _discover(
     topic: str,
     depth: str,
@@ -82,7 +128,7 @@ def _discover(
     # an on-topic post whose title lacks the entity name is never dropped.
     dedicated_posts: List[Dict[str, Any]] = []
     if dedicated_subreddits:
-        dedicated_posts = reddit_listing.fetch_listings(
+        dedicated_posts = _scored_listings(
             dedicated_subreddits, depth=depth, query=topic, sorts=DEDICATED_SORTS
         )
         for p in dedicated_posts:
@@ -97,7 +143,7 @@ def _discover(
     if subreddits:
         # Targeted run: the caller chose these subreddits, so their listing cards
         # are on-topic — include them as scored discovery AND as a score source.
-        listing_posts = reddit_listing.fetch_listings(subreddits, depth=depth, query=topic)
+        listing_posts = _scored_listings(subreddits, depth=depth, query=topic)
         score_source = listing_posts
     else:
         # Bare global run: subreddits derived from noisy RSS results are NOT
@@ -106,7 +152,7 @@ def _discover(
         # would flood results with high-upvote but irrelevant posts.
         listing_posts = []
         derived = _top_subreddits(rss_posts)
-        score_source = reddit_listing.fetch_listings(derived, depth=depth, query=topic)
+        score_source = _scored_listings(derived, depth=depth, query=topic)
     _log(
         f"Tier 1 (RSS) {len(rss_posts)} posts; "
         f"{'listing discovery ' + str(len(listing_posts)) if subreddits else 'score-only'}; "
@@ -189,7 +235,7 @@ def _enrich(posts: List[Dict[str, Any]], depth: str) -> List[Dict[str, Any]]:
     try:
         with ThreadPoolExecutor(max_workers=min(limit, MAX_ENRICH_WORKERS)) as executor:
             futures = {
-                executor.submit(_enrich_one, post): i
+                http.submit_with_context(executor, _enrich_one, post): i
                 for i, post in enumerate(to_enrich)
             }
             done, not_done = concurrent.futures.wait(futures, timeout=ENRICH_BUDGET)
