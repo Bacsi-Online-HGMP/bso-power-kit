@@ -1,5 +1,8 @@
 /**
- * Unit tests for parseFrontmatterBooks().
+ * Unit tests for the scripts/ helpers: frontmatter parsing, prompt assembly,
+ * history, eval classification, report parsing, SARIF export, CI gates, and the
+ * parser-fidelity summarizer — plus an integration check that validate-repo.mjs
+ * exits 0 against this repository.
  *
  * Run:  node scripts/validate-repo.test.mjs
  *
@@ -8,7 +11,7 @@
 
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { readFileSync, writeFileSync, mkdtempSync, rmSync } from "node:fs";
+import { readFileSync, writeFileSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 import os from "node:os";
@@ -23,10 +26,11 @@ import {
   extractGuideStepLabels,
 } from "./frontmatter.mjs";
 import { extractRiskCodes, classify } from "./eval-utils.mjs";
-import { parseFindings, countFindings, extractLocation } from "./report-parse.mjs";
+import { parseFindings, countFindings, extractLocation, SOURCE_EXTENSIONS } from "./report-parse.mjs";
 import { reportToSarif } from "./sarif.mjs";
 import { severityBreached, isRegression } from "./ci-gate.mjs";
 import { summarize } from "./benchmark.mjs";
+import { versionRefs } from "./version-refs.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -659,6 +663,45 @@ test("does not mistake prose for a file reference", () => {
   assert.deepEqual(extractLocation("see line 3 (i.e. nowhere)"), { file: null, line: null });
 });
 
+// Bare filenames (no `/`) exercise the extension allowlist; a path with a
+// slash would match the first branch's generic `.\w+` regardless of the list.
+test("captures newer-language extensions from bare filenames", () => {
+  assert.deepEqual(extractLocation("bug in user.ex:42"), { file: "user.ex", line: 42 });
+  assert.deepEqual(extractLocation("see main.dart"), { file: "main.dart", line: null });
+  assert.deepEqual(extractLocation("main.tf drifts"), { file: "main.tf", line: null });
+});
+
+test("prefers the longer of two prefix-sharing extensions", () => {
+  // Regression: the alternation is first-match, so a short extension listed
+  // before its longer sibling truncated the filename — `.tsx` parsed as `.ts`,
+  // which also swallowed the `:line` and pointed SARIF at a nonexistent file.
+  const pairs = [
+    ["runtime.exs boots the app", "runtime.exs"],
+    ["core.cljs mounts", "core.cljs"],
+    ["parser.mli exports", "parser.mli"],
+    ["App.tsx renders twice", "App.tsx"],
+    ["Button.jsx re-renders", "Button.jsx"],
+    ["Foo.hpp declares it", "Foo.hpp"],
+    ["build.gradle.kts configures it", "build.gradle.kts"],
+    ["Bridge.mm wraps the ObjC side", "Bridge.mm"],
+  ];
+  for (const [text, expected] of pairs) {
+    assert.equal(extractLocation(text).file, expected, text);
+  }
+});
+
+test("keeps the line number on a bare filename with a long extension", () => {
+  assert.deepEqual(extractLocation("App.tsx:12 mounts twice"), { file: "App.tsx", line: 12 });
+});
+
+test("no extension shadows a longer one that starts with it", () => {
+  // Mechanical guard over the real allowlist: every `name.<ext>` must round-trip.
+  // An extension added in the wrong position fails here, not in production SARIF.
+  for (const ext of SOURCE_EXTENSIONS) {
+    assert.equal(extractLocation(`sample.${ext}`).file, `sample.${ext}`, `.${ext} was truncated`);
+  }
+});
+
 // ── sarif: reportToSarif ───────────────────────────────────────────────────
 
 console.log("\nreportToSarif");
@@ -803,6 +846,65 @@ test("risk-code extraction has zero false positives / negatives on the corpus", 
   assert.equal(BENCH.recall, 1);
 });
 
+// ── versionRefs ────────────────────────────────────────────────────────────
+
+console.log("\nversionRefs");
+
+/** Build a fake repo root with the given `relative path -> contents` map. */
+function withFakeRepo(files, fn) {
+  withTempDir((dir) => {
+    mkdirSync(path.join(dir, "docs"));
+    for (const [rel, body] of Object.entries(files)) {
+      writeFileSync(path.join(dir, rel), body, "utf8");
+    }
+    fn(dir);
+  });
+}
+
+test("discovers every README translation, not a fixed list", () => {
+  withFakeRepo({ "README.md": "", "README.es.md": "", "README.zh-TW.md": "" }, (dir) => {
+    const found = versionRefs(dir, "9.9.9").map((r) => r.rel);
+    assert.deepEqual(found, ["README.es.md", "README.md", "README.zh-TW.md"]);
+  });
+});
+
+test("renders the badge and JSON-LD text expected at the given version", () => {
+  withFakeRepo({ "README.md": "", "docs/index.html": "" }, (dir) => {
+    const byRel = Object.fromEntries(versionRefs(dir, "9.9.9").map((r) => [r.rel, r]));
+    assert.equal(byRel["README.md"].expected, "version-9.9.9-blue.svg");
+    assert.equal(byRel[path.join("docs", "index.html")].expected, '"softwareVersion": "9.9.9"');
+  });
+});
+
+test("marks README badges required and docs pages optional", () => {
+  // Only the landing page carries JSON-LD; gallery.html and guide.html must not
+  // be reported as missing a version they were never meant to have.
+  withFakeRepo({ "README.md": "", "docs/gallery.html": "" }, (dir) => {
+    const byRel = Object.fromEntries(versionRefs(dir, "9.9.9").map((r) => [r.rel, r]));
+    assert.equal(byRel["README.md"].required, true);
+    assert.equal(byRel[path.join("docs", "gallery.html")].required, false);
+  });
+});
+
+test("ignores non-README markdown at the repo root", () => {
+  withFakeRepo({ "README.md": "", "CHANGELOG.md": "", "CONTRIBUTING.md": "" }, (dir) => {
+    assert.deepEqual(versionRefs(dir, "9.9.9").map((r) => r.rel), ["README.md"]);
+  });
+});
+
+test("patterns match the real badge and JSON-LD shapes", () => {
+  withFakeRepo({
+    "README.md": '<img src="https://img.shields.io/badge/version-1.0.0-blue.svg" alt="Version">',
+    "docs/index.html": '  "softwareVersion": "1.0.0",',
+  }, (dir) => {
+    for (const { rel, pattern, expected } of versionRefs(dir, "9.9.9")) {
+      const text = readFileSync(path.join(dir, rel), "utf8");
+      assert.equal(text.match(pattern).length, 1, `${rel} should contain exactly one version reference`);
+      assert.match(text.replace(pattern, expected), /9\.9\.9/);
+    }
+  });
+});
+
 // ── Integration: validate-repo.mjs passes against current repo ─────────────
 
 console.log("\nvalidate-repo integration");
@@ -810,6 +912,16 @@ console.log("\nvalidate-repo integration");
 test("validate-repo.mjs exits 0 against the current repository", () => {
   execFileSync("node", [path.join(__dirname, "validate-repo.mjs")], { encoding: "utf8" });
   // execFileSync throws on non-zero exit — reaching here means exit 0
+});
+
+test("validate-repo.mjs ignores an inherited CLAUDE_PLUGIN_ROOT", () => {
+  // Running `npm run validate` from inside Claude Code exports CLAUDE_PLUGIN_ROOT.
+  // The hook branches on that variable, so leaking it into the default-output
+  // check turned every such run into a spurious failure.
+  execFileSync("node", [path.join(__dirname, "validate-repo.mjs")], {
+    encoding: "utf8",
+    env: { ...process.env, CLAUDE_PLUGIN_ROOT: path.resolve(__dirname, "..") },
+  });
 });
 
 // ── Summary ────────────────────────────────────────────────────────────────

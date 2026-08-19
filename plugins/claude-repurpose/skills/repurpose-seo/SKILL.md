@@ -3,12 +3,8 @@ name: repurpose-seo
 description: >
   Generates cross-platform SEO metadata including optimized titles, descriptions,
   hashtag sets, keywords, alt text, and platform-specific search signals. Ensures
-  keyword consistency across all repurposed outputs. Sub-skill of the Content
-  Repurposing Engine. Use when user says "seo metadata", "hashtags", "keywords",
-  "alt text", "cross-platform seo", or "repurpose seo".
-user-invokable: true
-argument-hint: "[url-or-atoms]"
-license: MIT
+  keyword consistency across all repurposed outputs.
+user-invokable: false
 metadata:
   author: AgriciDaniel
   version: "1.0.0"

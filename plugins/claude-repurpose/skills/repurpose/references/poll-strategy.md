@@ -33,42 +33,6 @@ Rules and patterns for deriving polls from repurposed content.
 - Part of content rotation strategy (mix with posts, videos, lessons)
 - Community-driven; members can elaborate in comments
 
-### TikTok
-- Q&A sticker and poll sticker available in videos and stories
-- Poll sticker: 2 options (binary choice), overlaid on video
-- Q&A sticker: open-ended question overlay, responses become content for future videos
-- TikTok polls are video-embedded, not standalone posts
-- Use Q&A responses as engagement loop (answer viewers' questions in follow-up videos)
-
-### Quora
-- No native poll feature
-- Alternative: Ask a question on Quora and invite answers (serves similar engagement purpose)
-- Questions themselves can be derived from poll concepts
-
-### Threads
-- No native poll feature
-- Alternative: Post a question and invite replies ("Drop your answer below")
-- Use emoji reactions as lightweight polls ("❤️ for A, 🔥 for B")
-
-### Discord
-- Reaction-based polls: post options, assign emoji per option
-- Bot-based polls (if server has poll bot): unlimited options
-- Thread polls: start a thread with question, members reply
-- Native polls: up to 10 options, 24h-7d duration
-
-### WhatsApp
-- Single question, up to 12 options
-- Short option text (under 25 chars)
-- No quiz mode, no timer
-- Results visible to all channel followers
-
-### Telegram
-- Up to 10 options, 100 chars per option
-- Quiz mode: mark one correct answer with explanation
-- Anonymous or public voting
-- Multiple answers allowed (configurable)
-- Can be scheduled with posts
-
 ## How to Derive Polls from Source Content
 
 1. **Identify the key decision point or opinion** in the source content

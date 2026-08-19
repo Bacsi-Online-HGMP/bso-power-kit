@@ -1,26 +1,16 @@
-# Python
-__pycache__/
-*.py[cod]
-*.egg-info/
-.venv/
-venv/
-
-# Build output
-dist/
-
-# Working files / downloads (the skill writes these to a tmp dir, but just in case)
-watch-*/
-*.mp4
-*.mkv
-*.webm
-*.mov
-*.vtt
-*.info.json
-
-# OS
+# OS / editor / tooling
 .DS_Store
-Thumbs.db
-
-# Editor
-.vscode/
+.entire/
+__pycache__/
+*.pyc
+.venv/
+.coverage
+htmlcov/
 .idea/
+.vscode/
+
+# build artifact from scripts/build-skill.sh
+/dist/
+
+# local Claude Code settings
+.claude/settings.local.json

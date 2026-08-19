@@ -1,9 +1,20 @@
 {
-  "name": "verification-before-completion",
-  "description": "Evidence before assertions: run the check and read the output before claiming work is done.",
-  "version": "1.0.0",
-  "author": { "name": "Jesse Vincent" },
+  "name": "superpowers",
+  "description": "Core skills library for Claude Code: TDD, debugging, collaboration patterns, and proven techniques",
+  "version": "6.3.0",
+  "author": {
+    "name": "Jesse Vincent",
+    "email": "jesse@fsck.com"
+  },
   "homepage": "https://github.com/obra/superpowers",
+  "repository": "https://github.com/obra/superpowers",
   "license": "MIT",
-  "skills": ["./skills/verification-before-completion"]
+  "keywords": [
+    "skills",
+    "tdd",
+    "debugging",
+    "collaboration",
+    "best-practices",
+    "workflows"
+  ]
 }

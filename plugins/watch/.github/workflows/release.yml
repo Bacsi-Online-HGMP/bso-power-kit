@@ -19,7 +19,7 @@ jobs:
 
       - name: Build .skill artifact
         run: |
-          bash scripts/build-skill.sh
+          bash skills/watch/scripts/build-skill.sh
           test -f dist/watch.skill
 
       - name: Create GitHub release

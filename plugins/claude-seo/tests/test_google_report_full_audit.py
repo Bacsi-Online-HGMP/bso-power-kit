@@ -32,12 +32,9 @@ def test_module_import_is_safe_without_native_report_dependencies() -> None:
     assert namespace["HTML"] is None
 
 
-def test_html_report_without_chart_data_does_not_require_native_report_dependencies(
-    tmp_path: Path,
-) -> None:
+def test_html_report_without_chart_data_does_not_require_matplotlib(tmp_path: Path) -> None:
     with patch.object(google_report, "plt", None), \
          patch.object(google_report, "np", None), \
-         patch.object(google_report, "HTML", None), \
          patch.object(google_report, "_CHART_IMPORT_ERROR", ImportError("missing")):
         result = google_report.generate_report(
             "full",

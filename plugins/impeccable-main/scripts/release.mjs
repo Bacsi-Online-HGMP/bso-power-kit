@@ -150,7 +150,13 @@ if (remoteTags.split('\n').some((line) => line.endsWith(`refs/tags/${tag}`))) {
 ok('tag is free');
 
 step(`Extracting changelog entry for "${cfg.changelogLabel}${version}"`);
-const changelogSource = path.join(repoRoot, 'site/pages/changelog.astro');
+// The site (and its changelog) lives in the private impeccable-site repo;
+// fall back to a sibling checkout when releasing from the public repo.
+const changelogCandidates = [
+  path.join(repoRoot, 'site/pages/changelog.astro'),
+  path.join(repoRoot, '..', 'impeccable-site', 'site/pages/changelog.astro'),
+];
+const changelogSource = changelogCandidates.find(p => existsSync(p)) || changelogCandidates[0];
 const changelogHtml = readFileSync(changelogSource, 'utf8');
 const expectedHeader = `<span class="cf-version">${cfg.changelogLabel}${version}</span>`;
 const headerIdx = changelogHtml.indexOf(expectedHeader);
@@ -160,10 +166,30 @@ if (headerIdx === -1) {
 // Notes are the entry's bullet list. Scoping to <ul class="cf-items">
 // skips the optional lead paragraph, before/after figure, and stat row
 // that the headline release (v3.5.0) carries, so release notes stay clean.
-const listStart = changelogHtml.indexOf('<ul class="cf-items">', headerIdx);
-const listEnd = changelogHtml.indexOf('</ul>', listStart);
-if (listStart === -1 || listEnd === -1) fail('Changelog entry markup is malformed.');
-const entryHtml = changelogHtml.slice(listStart, listEnd + '</ul>'.length);
+//
+// The search is bounded to this entry's own </article>. Unbounded, a version
+// whose list carried any other class was silently skipped and the NEXT
+// entry's bullets shipped as its release notes: every v4.0.x skill release
+// went out carrying v4.0.0's notes that way, and nothing failed. A mismatch
+// now stops the release instead of publishing another version's words.
+const articleEnd = changelogHtml.indexOf('</article>', headerIdx);
+if (articleEnd === -1) fail('Changelog entry markup is malformed.');
+// EVERY list in the entry, not the first. A long release is grouped into
+// themed <ul>s behind cf-group labels, and taking only the first published one
+// theme and silently dropped the rest.
+const entryScope = changelogHtml.slice(headerIdx, articleEnd);
+const lists = entryScope.match(/<ul class="cf-items">[\s\S]*?<\/ul>/g);
+if (!lists || !lists.length) {
+  // An unclosed list and a missing one are different repairs, so they get
+  // different messages. Reporting "no list" for markup that plainly has one
+  // sends you looking for the wrong thing.
+  const opened = entryScope.includes('<ul class="cf-items">');
+  fail(opened
+    ? `The changelog entry for "${cfg.changelogLabel}${version}" opens a <ul class="cf-items"> that is never closed inside its <article>. Fix the markup.`
+    : `The changelog entry for "${cfg.changelogLabel}${version}" has no <ul class="cf-items"> of its own. `
+      + 'Its bullets are in a list this script cannot read, and no notes would ship.');
+}
+const entryHtml = lists.join('\n');
 
 const notes = htmlToMarkdown(entryHtml);
 ok('extracted');
@@ -205,6 +231,26 @@ try {
 }
 
 console.log(`\n✓ ${cfg.label} ${version} released as ${tag}`);
+
+// npx impeccable update serves from impeccable.style, not from this release:
+// the site must be redeployed (its deploy overlays public main first). Warn
+// loudly when the served version lags so a release never silently strands
+// update users on old content again (the 4.0.0 release did exactly that).
+if (component === 'skill' && !dryRun) {
+  try {
+    const res = await fetch('https://impeccable.style/api/version');
+    const served = (await res.json()).skills;
+    if (served === version) {
+      console.log(`✓ impeccable.style serves ${served}`);
+    } else {
+      console.log(`\n⚠ impeccable.style still serves ${served}, not ${version}.`);
+      console.log('  npx impeccable update users get the OLD version until the site redeploys:');
+      console.log('  cd ../impeccable-site && bun run deploy');
+    }
+  } catch {
+    console.log('⚠ could not reach impeccable.style/api/version to verify the served bundle');
+  }
+}
 if (cfg.postReleaseHint) {
   console.log(`\n→ Next step: ${cfg.postReleaseHint}`);
 }

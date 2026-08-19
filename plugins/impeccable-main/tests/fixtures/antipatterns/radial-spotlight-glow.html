@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>radial-spotlight-glow fixture</title>
+<style>
+  /* jsdom / static-html engine does no layout: every case declares explicit
+     pixel width + height so the size gate can read them. */
+  body { margin: 0; background: #0b0d13; }
+  .grid { display: flex; flex-wrap: wrap; gap: 24px; padding: 24px; }
+  .case { color: #e6e6e6; }
+
+  /* ───────── SHOULD FLAG: decorative low-opacity chromatic spotlights ───────── */
+
+  /* The exact declaration that evaded the detector: soft blue spotlight fading
+     to transparent, painted on a large mobile hero. */
+  .flag-hero-blue {
+    width: 360px; height: 560px;
+    background: radial-gradient(circle at 52% 38%, rgba(80,111,255,0.26), transparent 44%);
+  }
+  /* Violet accent wash on a full section. */
+  .flag-section-violet {
+    width: 900px; height: 600px;
+    background-image: radial-gradient(circle, rgba(139,92,246,0.30), transparent 60%);
+  }
+  /* Cyan overlay-style glow (the pseudo-element overlay div reflex). */
+  .flag-overlay-cyan {
+    width: 760px; height: 480px;
+    background: radial-gradient(ellipse at top, rgba(34,211,238,0.22), transparent 70%);
+  }
+  /* Single glow drawn with two low-alpha stops of one hue fading out. */
+  .flag-two-stop-rose {
+    width: 640px; height: 400px;
+    background: radial-gradient(circle, rgba(255,90,120,0.28) 0%, rgba(255,90,120,0.12) 45%, transparent 75%);
+  }
+  /* Same tell written as an 8-digit hex (#506fff at alpha 0x3d ≈ 0.24). */
+  .flag-hex-alpha {
+    width: 700px; height: 460px;
+    background: radial-gradient(circle, #506fff3d, transparent 50%);
+  }
+
+  /* ───────── SHOULD PASS: real backgrounds, small elements, neutrals, rich art ───────── */
+
+  /* Opaque radial background — a real surface, not a glow (no transparent end). */
+  .pass-opaque-bg {
+    width: 800px; height: 520px;
+    background: radial-gradient(circle, #1e3a8a, #0f172a);
+  }
+  /* Small badge: chromatic low-alpha radial glow, but tiny. */
+  .pass-badge {
+    width: 40px; height: 40px;
+    background: radial-gradient(circle, rgba(80,111,255,0.30), transparent);
+  }
+  /* Avatar-scale light: the subject IS a small light, exempt by size. */
+  .pass-avatar-light {
+    width: 72px; height: 72px;
+    background: radial-gradient(circle, rgba(255,196,64,0.35), transparent 70%);
+  }
+  /* Neutral near-black vignette — grayscale, not the accent-glow tell. */
+  .pass-neutral-vignette {
+    width: 800px; height: 520px;
+    background: radial-gradient(circle, rgba(0,0,0,0.40), transparent 80%);
+  }
+  /* Neutral near-white vignette — grayscale, exempt. */
+  .pass-white-vignette {
+    width: 820px; height: 540px;
+    background: radial-gradient(ellipse, rgba(255,255,255,0.35), transparent 70%);
+  }
+  /* Rich three-color radial composition — real color structure, opaque, no fade. */
+  .pass-rich-composition {
+    width: 800px; height: 520px;
+    background: radial-gradient(circle, #ff0080 0%, #7928ca 45%, #0070f3 100%);
+  }
+  /* Rich composition that does fade out, but its color stops are opaque. */
+  .pass-rich-transparent {
+    width: 780px; height: 500px;
+    background: radial-gradient(circle, rgba(255,0,128,0.90) 0%, rgba(121,40,202,0.85) 50%, transparent);
+  }
+  /* Opaque center glow (the radial-halo case, alpha ≥ 0.45) — not this rule. */
+  .pass-opaque-center {
+    width: 800px; height: 520px;
+    background: radial-gradient(circle, rgba(80,111,255,0.85), transparent);
+  }
+  /* Low-alpha chromatic wash, but LINEAR, not radial. */
+  .pass-linear-wash {
+    width: 800px; height: 520px;
+    background: linear-gradient(120deg, rgba(80,111,255,0.28), transparent 60%);
+  }
+</style>
+</head>
+<body>
+  <main class="grid">
+    <!-- should-flag column -->
+    <div class="case flag-hero-blue" data-name="Hero Spotlight Blue"></div>
+    <div class="case flag-section-violet" data-name="Section Glow Violet"></div>
+    <div class="case flag-overlay-cyan" data-name="Overlay Glow Cyan"></div>
+    <div class="case flag-two-stop-rose" data-name="Two Stop Soft Glow"></div>
+    <div class="case flag-hex-alpha" data-name="Hex Alpha Glow"></div>
+
+    <!-- should-pass column -->
+    <div class="case pass-opaque-bg" data-name="Opaque Radial Background"></div>
+    <div class="case pass-badge" data-name="Small Accent Badge"></div>
+    <div class="case pass-avatar-light" data-name="Avatar Glow Light"></div>
+    <div class="case pass-neutral-vignette" data-name="Neutral Vignette"></div>
+    <div class="case pass-white-vignette" data-name="White Vignette"></div>
+    <div class="case pass-rich-composition" data-name="Rich Radial Composition"></div>
+    <div class="case pass-rich-transparent" data-name="Rich Transparent Composition"></div>
+    <div class="case pass-opaque-center" data-name="Opaque Center Glow"></div>
+    <div class="case pass-linear-wash" data-name="Linear Gradient Wash"></div>
+  </main>
+</body>
+</html>

@@ -52,7 +52,6 @@ main() {
 
     echo "↓ Downloading Claude Repurpose (${REPO_TAG})..."
     git clone --depth 1 --branch "${REPO_TAG}" "${REPO_URL}" "${TEMP_DIR}/claude-repurpose" 2>/dev/null
-    [ -d "${TEMP_DIR}/claude-repurpose/skills" ] || { echo "✗ Clone failed. Check your network and try again."; exit 1; }
 
     # Copy all skills
     echo "→ Installing skill files..."
@@ -73,7 +72,6 @@ main() {
     if [ -d "${TEMP_DIR}/claude-repurpose/scripts" ]; then
         mkdir -p "${SKILL_DIR}/scripts"
         cp -r "${TEMP_DIR}/claude-repurpose/scripts/"* "${SKILL_DIR}/scripts/"
-        chmod +x "${SKILL_DIR}/scripts/"*.py 2>/dev/null || true
     fi
 
     # Copy hooks

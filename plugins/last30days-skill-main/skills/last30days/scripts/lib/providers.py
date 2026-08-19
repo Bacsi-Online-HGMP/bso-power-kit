@@ -182,7 +182,7 @@ class OpenRouterClient(ReasoningClient):
             "temperature": 0,
         }
         response = http.post(
-            OPENROUTER_URL,
+            os.environ.get("OPENROUTER_BASE_URL", OPENROUTER_URL),
             payload,
             headers={
                 "Authorization": f"Bearer {self.api_key}",
@@ -315,9 +315,12 @@ def resolve_runtime(config: dict[str, Any], depth: str) -> tuple[schema.Provider
 
 
 def _resolve_x_backend(config: dict[str, Any]) -> str | None:
-    preferred = (config.get("LAST30DAYS_X_BACKEND") or "").lower()
-    if preferred in {"xai", "bird"}:
-        return preferred
+    """Resolve the X backend for runtime fetch.
+
+    Delegates to env.get_x_source which handles:
+    - Any known pin (X_BACKEND_KNOWN) exclusively: returns pin if available, None otherwise
+    - Unpinned: walks auto-chain (X_BACKEND_ORDER) only, never auto-selects opt-in backends
+    """
     return env.get_x_source(config)
 
 

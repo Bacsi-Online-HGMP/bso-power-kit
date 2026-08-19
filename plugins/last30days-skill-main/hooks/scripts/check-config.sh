@@ -2,10 +2,12 @@
 set -euo pipefail
 
 # Check last30days configuration status and show appropriate welcome message.
-# Priority for this status hook:
-# .claude/last30days.env > ~/.config/last30days/.env > env vars > Keychain presence
+# Priority for this status hook (mirrors lib/env.py):
+# process env > trusted .claude/last30days.env > ~/.config/last30days/.env > Keychain presence
+# Project-scoped config is loaded only when LAST30DAYS_TRUST_PROJECT_CONFIG is
+# truthy in the process environment or the global config file — never from the
+# project file itself (it cannot self-grant trust).
 
-PROJECT_ENV=".claude/last30days.env"
 GLOBAL_ENV="$HOME/.config/last30days/.env"
 if [[ "${LAST30DAYS_CONFIG_DIR+x}" == "x" ]]; then
   if [[ -n "$LAST30DAYS_CONFIG_DIR" ]]; then
@@ -68,6 +70,13 @@ load_env_vars() {
       [[ "$key" =~ ^[[:space:]]*# ]] && continue
       [[ -z "$key" ]] && continue
       key="$(trim_ws "$key")"
+      # Only plain identifiers may reach `printf -v`. printf -v uses assignment
+      # semantics, so a key carrying an array subscript — e.g. `x[$(id)]` — has
+      # that subscript arithmetic-evaluated, which runs the command inside it.
+      # A project-scoped .claude/last30days.env is attacker-controlled as soon
+      # as an untrusted repo is opened, so an unvalidated key here is arbitrary
+      # code execution at session start.
+      [[ "$key" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || continue
       value="$(strip_outer_quotes "$(trim_ws "$value")")"
       # Strip inline comments (# preceded by whitespace) to prevent
       # command substitution in backtick-containing comments
@@ -81,19 +90,72 @@ load_env_vars() {
   fi
 }
 
-# Determine which config file is active
+# Match lib/env.py::_truthy — process/global trust signal only.
+is_truthy() {
+  local v
+  v="$(trim_ws "$1")"
+  case "$v" in
+    1|[Tt][Rr][Uu][Ee]|[Yy][Ee][Ss]|[Oo][Nn]) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+# Project config cannot self-grant trust. Process env (including empty/0 deny)
+# wins when set; otherwise the global config file's trust flag is consulted.
+project_config_trusted() {
+  if [[ "${LAST30DAYS_TRUST_PROJECT_CONFIG+x}" == "x" ]]; then
+    is_truthy "$LAST30DAYS_TRUST_PROJECT_CONFIG"
+    return $?
+  fi
+  is_truthy "${ENV_LAST30DAYS_TRUST_PROJECT_CONFIG:-}"
+}
+
+# Mirror lib/env.py::_find_project_env: walk up from $PWD for
+# .claude/last30days.env, stopping at the git root, $HOME, or filesystem root.
+# Prints the absolute path on stdout when found; returns 1 when none.
+find_project_env() {
+  local dir candidate parent
+  dir="$PWD"
+  while :; do
+    candidate="${dir}/.claude/last30days.env"
+    if [[ -f "$candidate" ]]; then
+      printf '%s' "$candidate"
+      return 0
+    fi
+    # Stop at git root even if no project env was found there (matches env.py).
+    if [[ -e "${dir}/.git" ]]; then
+      return 1
+    fi
+    if [[ "$dir" == "$HOME" ]]; then
+      return 1
+    fi
+    parent="$(dirname "$dir")"
+    if [[ "$parent" == "$dir" ]]; then
+      return 1
+    fi
+    dir="$parent"
+  done
+}
+
+# Determine which config file(s) are active. Always load global first (when
+# present) so a trust signal there can unlock the project file — matching
+# lib/env.py, where the project file is never parsed before the trust check.
 CONFIG_FILE=""
-if [[ -f "$PROJECT_ENV" ]]; then
-  CONFIG_FILE="$PROJECT_ENV"
-  check_perms "$PROJECT_ENV"
-elif [[ -f "$GLOBAL_ENV" ]]; then
+if [[ -n "$GLOBAL_ENV" && -f "$GLOBAL_ENV" ]]; then
   CONFIG_FILE="$GLOBAL_ENV"
   check_perms "$GLOBAL_ENV"
+  load_env_vars "$GLOBAL_ENV"
 fi
 
-# Load config if found
-if [[ -n "$CONFIG_FILE" ]]; then
-  load_env_vars "$CONFIG_FILE"
+PROJECT_ENV=""
+if project_config_trusted; then
+  # `|| true` keeps set -e from aborting when no project env is in the walk.
+  PROJECT_ENV="$(find_project_env)" || true
+fi
+if [[ -n "$PROJECT_ENV" && -f "$PROJECT_ENV" ]]; then
+  CONFIG_FILE="$PROJECT_ENV"
+  check_perms "$PROJECT_ENV"
+  load_env_vars "$PROJECT_ENV"
 fi
 
 # Load Keychain item presence for status checks without reading secret values.
@@ -143,8 +205,11 @@ else
   LAST_RUN_FILE="$HOME/.config/last30days/last-run.json"
 fi
 LAST_RUN_LINE=""
+# python3 -c, NOT a heredoc: bash 5.3 feeds heredocs to the child through a
+# pipe and can deadlock in heredoc_write inside command substitution, hanging
+# this hook forever at session start (observed on Homebrew bash 5.3.15).
 if [[ -n "$LAST_RUN_FILE" && -f "$LAST_RUN_FILE" ]] && command -v python3 &>/dev/null; then
-  LAST_RUN_LINE=$(LAST_RUN_FILE="$LAST_RUN_FILE" python3 - <<'PY' 2>/dev/null || true
+  LAST_RUN_LINE=$(LAST_RUN_FILE="$LAST_RUN_FILE" python3 -c '
 import datetime
 import json
 import os
@@ -165,8 +230,7 @@ try:
     print(f"  Last run: \"{topic}\" · {ago} · {total} results")
 except Exception:
     pass
-PY
-)
+' 2>/dev/null || true)
 fi
 
 # Detect capability that doesn't need a config file: yt-dlp on PATH.
@@ -179,25 +243,24 @@ fi
 
 # If setup has never been run, show welcome message for new users
 if [[ -z "$SETUP_COMPLETE" && -z "$CONFIG_FILE" && -z "${ENV_OPENAI_API_KEY:-${OPENAI_API_KEY:-}}" && -z "${ENV_SCRAPECREATORS_API_KEY:-${SCRAPECREATORS_API_KEY:-}}" && -z "${ENV_AUTH_TOKEN:-${AUTH_TOKEN:-}}" && -z "${ENV_XAI_API_KEY:-${XAI_API_KEY:-}}" ]]; then
+  # printf, NOT cat-with-heredoc: see the bash 5.3 heredoc deadlock note above.
   if [[ -n "$HAS_YTDLP" ]]; then
     # YouTube is already working via the on-system yt-dlp binary — don't list
     # it as something the wizard needs to unlock. See #394.
-    cat <<'EOF'
-/last30days: Ready to use. Run /last30days to get started — setup takes 30 seconds.
-  Research any topic across Reddit, HN, X, YouTube, Polymarket (last 30 days).
-
-Reddit, Hacker News, Polymarket, and YouTube (yt-dlp detected) work out of the box.
-The setup wizard can unlock X/Twitter and more.
-  Detected: yt-dlp is installed (YouTube transcripts ready, no setup needed).
-EOF
+    printf '%s\n' \
+      '/last30days: Ready to use. Run /last30days to get started — setup takes 30 seconds.' \
+      '  Research any topic across Reddit, HN, X, YouTube, Polymarket (last 30 days).' \
+      '' \
+      'Reddit, Hacker News, Polymarket, and YouTube (yt-dlp detected) work out of the box.' \
+      'The setup wizard can unlock X/Twitter and more.' \
+      '  Detected: yt-dlp is installed (YouTube transcripts ready, no setup needed).'
   else
-    cat <<'EOF'
-/last30days: Ready to use. Run /last30days to get started — setup takes 30 seconds.
-  Research any topic across Reddit, HN, X, YouTube, Polymarket (last 30 days).
-
-Reddit, Hacker News, and Polymarket work out of the box.
-The setup wizard can unlock X/Twitter, YouTube, and more.
-EOF
+    printf '%s\n' \
+      '/last30days: Ready to use. Run /last30days to get started — setup takes 30 seconds.' \
+      '  Research any topic across Reddit, HN, X, YouTube, Polymarket (last 30 days).' \
+      '' \
+      'Reddit, Hacker News, and Polymarket work out of the box.' \
+      'The setup wizard can unlock X/Twitter, YouTube, and more.'
   fi
   if [[ -n "$LAST_RUN_LINE" ]]; then
     echo "$LAST_RUN_LINE"

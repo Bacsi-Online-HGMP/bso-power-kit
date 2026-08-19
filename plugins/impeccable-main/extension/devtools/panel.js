@@ -228,7 +228,6 @@ const FIX_SKILLS = {
   'side-tab':                'distill, polish',
   'border-accent-on-rounded':'distill, polish',
   'overused-font':           'typeset',
-  'single-font':             'typeset',
   'flat-type-hierarchy':     'typeset',
   'gradient-text':           'typeset, distill',
   'ai-color-palette':        'colorize, distill',

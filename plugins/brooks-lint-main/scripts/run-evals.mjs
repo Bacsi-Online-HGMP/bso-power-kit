@@ -18,7 +18,7 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { VALID_MODES } from "./assemble-prompt.mjs";
-import { PRODUCTION_RISK_COUNT, TEST_RISK_COUNT } from "./frontmatter.mjs";
+import { RISK_CODES, extractRiskCodes } from "./eval-utils.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(__dirname, "..");
@@ -30,13 +30,14 @@ const evals = evalsData.evals;
 
 const REQUIRED_FIELDS = ["id", "name", "prompt", "expected_output", "mode"];
 
-const RISK_CODES = [
-  ...Array.from({ length: PRODUCTION_RISK_COUNT }, (_, i) => `R${i + 1}`),
-  ...Array.from({ length: TEST_RISK_COUNT }, (_, i) => `T${i + 1}`),
-];
-
+// Errors carry the summary bucket they belong to, so the report below never has
+// to re-derive it by substring-matching its own message text.
 const errors = [];
 const warnings = [];
+
+function fail(bucket, message) {
+  errors.push({ bucket, message });
+}
 
 // ── Sequential ID check ────────────────────────────────────────────────────
 
@@ -44,7 +45,7 @@ for (let i = 0; i < evals.length; i++) {
   const ev = evals[i];
   const expectedId = i + 1;
   if (ev.id !== expectedId) {
-    errors.push(`Eval at index ${i}: expected id ${expectedId}, got ${JSON.stringify(ev.id)}`);
+    fail("id", `Eval at index ${i}: expected id ${expectedId}, got ${JSON.stringify(ev.id)}`);
   }
 }
 
@@ -53,7 +54,7 @@ for (let i = 0; i < evals.length; i++) {
 const idCounts = new Map();
 for (const ev of evals) idCounts.set(ev.id, (idCounts.get(ev.id) ?? 0) + 1);
 for (const [id, count] of idCounts) {
-  if (count > 1) errors.push(`Duplicate eval id ${JSON.stringify(id)} appears ${count} times`);
+  if (count > 1) fail("id", `Duplicate eval id ${JSON.stringify(id)} appears ${count} times`);
 }
 
 // ── Per-eval field and content checks ─────────────────────────────────────
@@ -63,24 +64,24 @@ for (const ev of evals) {
 
   for (const field of REQUIRED_FIELDS) {
     if (!ev[field] && ev[field] !== 0) {
-      errors.push(`${label}: missing required field '${field}'`);
+      fail("fields", `${label}: missing required field '${field}'`);
     }
   }
 
   if (typeof ev.prompt === "string" && ev.prompt.trim().length === 0) {
-    errors.push(`${label}: 'prompt' is empty`);
+    fail("fields", `${label}: 'prompt' is empty`);
   }
 
   if (typeof ev.expected_output === "string" && ev.expected_output.trim().length === 0) {
-    errors.push(`${label}: 'expected_output' is empty`);
+    fail("fields", `${label}: 'expected_output' is empty`);
   }
 
   if (typeof ev.mode === "string" && !VALID_MODES.includes(ev.mode)) {
-    errors.push(`${label}: 'mode' must be one of ${VALID_MODES.join(", ")} (got '${ev.mode}')`);
+    fail("fields", `${label}: 'mode' must be one of ${VALID_MODES.join(", ")} (got '${ev.mode}')`);
   }
 
   if ("files" in ev && !Array.isArray(ev.files)) {
-    errors.push(`${label}: 'files' must be an array when present (got ${typeof ev.files})`);
+    fail("fields", `${label}: 'files' must be an array when present (got ${typeof ev.files})`);
   }
 
   // expected_output should reference at least one risk code so reviewers know
@@ -88,7 +89,9 @@ for (const ev of evals) {
   // health-score-suppression (no_health_score) scenarios are code-free by
   // design — warning on them is noise, so the check skips boundary scenarios.
   if (typeof ev.expected_output === "string") {
-    const referencedCodes = RISK_CODES.filter((code) => ev.expected_output.includes(code));
+    // Same word-bounded extraction the live runner classifies with — a substring
+    // scan here would let the two disagree about what a scenario expects.
+    const referencedCodes = [...extractRiskCodes(ev.expected_output)];
     const isBoundaryScenario = ev.no_risk_codes || ev.no_health_score;
     if (referencedCodes.length === 0 && !isBoundaryScenario) {
       warnings.push(`${label}: expected_output does not reference any risk code (${RISK_CODES.join(", ")})`);
@@ -102,10 +105,10 @@ for (const ev of evals) {
     const refsR = referencedCodes.filter((c) => c[0] === "R");
     const refsT = referencedCodes.filter((c) => c[0] === "T");
     if (ev.mode === "test" && refsR.length > 0) {
-      errors.push(`${label}: mode 'test' loads only T-codes but expected_output references ${refsR.join(", ")}`);
+      fail("coherence", `${label}: mode 'test' loads only T-codes but expected_output references ${refsR.join(", ")}`);
     }
     if (["review", "audit", "debt"].includes(ev.mode) && refsT.length > 0) {
-      errors.push(`${label}: mode '${ev.mode}' loads only R-codes but expected_output references ${refsT.join(", ")}`);
+      fail("coherence", `${label}: mode '${ev.mode}' loads only R-codes but expected_output references ${refsT.join(", ")}`);
     }
   }
 
@@ -114,13 +117,13 @@ for (const ev of evals) {
   // exclusive because allowing both would make the verdict indeterminate
   // (the no_health_score branch exits before risk-code analysis runs).
   if ("no_risk_codes" in ev && ev.no_risk_codes !== true) {
-    errors.push(`${label}: 'no_risk_codes' must be true when present (got ${JSON.stringify(ev.no_risk_codes)})`);
+    fail("fields", `${label}: 'no_risk_codes' must be true when present (got ${JSON.stringify(ev.no_risk_codes)})`);
   }
   if ("no_health_score" in ev && ev.no_health_score !== true) {
-    errors.push(`${label}: 'no_health_score' must be true when present (got ${JSON.stringify(ev.no_health_score)})`);
+    fail("fields", `${label}: 'no_health_score' must be true when present (got ${JSON.stringify(ev.no_health_score)})`);
   }
   if (ev.no_risk_codes && ev.no_health_score) {
-    errors.push(`${label}: 'no_risk_codes' and 'no_health_score' are mutually exclusive`);
+    fail("coherence", `${label}: 'no_risk_codes' and 'no_health_score' are mutually exclusive`);
   }
 }
 
@@ -135,33 +138,28 @@ const coveredCodes = new Set();
 for (const ev of evals) {
   if (ev.no_risk_codes || ev.no_health_score) continue;
   if (typeof ev.expected_output !== "string") continue;
-  for (const code of RISK_CODES) {
-    if (ev.expected_output.includes(code)) coveredCodes.add(code);
-  }
+  for (const code of extractRiskCodes(ev.expected_output)) coveredCodes.add(code);
 }
 const uncoveredCodes = RISK_CODES.filter((code) => !coveredCodes.has(code));
 if (uncoveredCodes.length > 0) {
-  errors.push(`Risk codes with no positive eval scenario: ${uncoveredCodes.join(", ")}`);
+  fail("coherence", `Risk codes with no positive eval scenario: ${uncoveredCodes.join(", ")}`);
 }
 
 // ── Report ─────────────────────────────────────────────────────────────────
 
-const idCheckPass = !errors.some((e) => e.includes("expected id") || e.includes("Duplicate eval id"));
-const fieldCheckPass = !errors.some((e) => e.includes("missing required field") || e.includes("is empty") || e.includes("'files' must"));
-const coherencePass = !errors.some((e) => e.includes("loads only") || e.includes("no positive eval scenario"));
-const riskCodePass = warnings.length === 0;
+const passed = (bucket) => !errors.some((e) => e.bucket === bucket);
 
 console.log("\nEval Suite Structural Validation");
 console.log("=================================");
 console.log(`Total scenarios   : ${evals.length}`);
-console.log(`Sequential IDs    : ${idCheckPass ? "PASS" : "FAIL"}`);
-console.log(`Required fields   : ${fieldCheckPass ? "PASS" : "FAIL"}`);
-console.log(`Mode/risk & cover : ${coherencePass ? "PASS" : "FAIL"}`);
-console.log(`Risk code refs    : ${riskCodePass ? "PASS" : `${warnings.length} warning(s)`}`);
+console.log(`Sequential IDs    : ${passed("id") ? "PASS" : "FAIL"}`);
+console.log(`Required fields   : ${passed("fields") ? "PASS" : "FAIL"}`);
+console.log(`Mode/risk & cover : ${passed("coherence") ? "PASS" : "FAIL"}`);
+console.log(`Risk code refs    : ${warnings.length === 0 ? "PASS" : `${warnings.length} warning(s)`}`);
 
 if (errors.length > 0) {
   console.error("\nErrors:");
-  for (const e of errors) console.error(`  ✗ ${e}`);
+  for (const e of errors) console.error(`  ✗ ${e.message}`);
 }
 
 if (warnings.length > 0) {

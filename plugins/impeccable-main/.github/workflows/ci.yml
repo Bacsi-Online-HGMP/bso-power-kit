@@ -6,9 +6,16 @@ on:
   pull_request:
     branches: [main]
   workflow_dispatch:
+  # Nightly full live-e2e matrix. The smoke groups already gate every PR; the
+  # full sweep is too slow for that, so it runs once a day against main.
+  schedule:
+    - cron: '0 7 * * *'
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  # Scheduled runs get their own group: the 07:00 UTC nightly and a push to
+  # main share github.ref, and cancel-in-progress would let them kill each
+  # other mid-run.
+  group: ${{ github.workflow }}-${{ github.event_name == 'schedule' && 'nightly' || github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -31,7 +38,7 @@ jobs:
           fetch-depth: 0
 
       - name: Setup Node
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@v7
         with:
           node-version: 24
 
@@ -41,17 +48,22 @@ jobs:
           GITHUB_EVENT_BEFORE: ${{ github.event.before }}
         run: node scripts/ci-test-plan.mjs
 
-  test:
+  test-matrix:
+    name: test (Node ${{ matrix.node-version }})
     runs-on: ubuntu-latest
     needs: changes
+    strategy:
+      fail-fast: false
+      matrix:
+        node-version: [22.18.0, 24]
     steps:
       - name: Checkout repository
         uses: actions/checkout@v7
 
       - name: Setup Node
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@v7
         with:
-          node-version: 24
+          node-version: ${{ matrix.node-version }}
 
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
@@ -96,7 +108,7 @@ jobs:
         # Pinned for reproducible CI. Fails on AMO errors; innerHTML style
         # warnings in the panel renderer are non-blocking and not promoted to
         # errors here.
-        run: npx --yes web-ext@8 lint --source-dir dist/extension-firefox
+        run: npx --yes web-ext@10 lint --source-dir dist/extension-firefox
 
       - name: Verify generated tracked outputs
         run: git diff --exit-code -- .agents .claude .cursor .gemini .github/skills plugin cli/engine/detect-antipatterns-browser.js extension/detector
@@ -104,12 +116,25 @@ jobs:
       - name: Upload build artifacts
         uses: actions/upload-artifact@v7
         with:
-          name: impeccable-dist
+          name: impeccable-dist-node-${{ matrix.node-version }}
           # Ship the packaged zips, not the unpacked Firefox staging tree.
           path: |
             dist/
             !dist/extension-firefox/
           retention-days: 7
+
+  test:
+    runs-on: ubuntu-latest
+    needs: test-matrix
+    if: always()
+    steps:
+      - name: Verify Node test matrix
+        run: |
+          if [ "${{ needs.test-matrix.result }}" != "success" ]; then
+            echo "test-matrix result: ${{ needs.test-matrix.result }}"
+            exit 1
+          fi
+          echo "test matrix passed"
 
   cli-remote-e2e:
     runs-on: ubuntu-latest
@@ -120,7 +145,7 @@ jobs:
         uses: actions/checkout@v7
 
       - name: Setup Node
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@v7
         with:
           node-version: 24
 
@@ -139,14 +164,16 @@ jobs:
     name: live-e2e smoke (${{ matrix.group }})
     runs-on: ubuntu-latest
     needs: changes
-    if: needs.changes.outputs.live_e2e == 'true' && github.event_name != 'workflow_dispatch'
+    if: needs.changes.outputs.live_e2e == 'true' && github.event_name != 'workflow_dispatch' && github.event_name != 'schedule'
     timeout-minutes: 15
     strategy:
       fail-fast: true
       matrix:
         include:
           - group: platform
-            fixtures: astro-vite7,nextjs-app-router,vite8-sveltekit
+            fixtures: astro-vite7,monorepo-nested-vite,nextjs-app-router,vite8-sveltekit
+          - group: svelte
+            fixtures: vite8-sveltekit-stateful
           - group: react
             fixtures: vite8-react-css-modules,vite8-react-insert,vite8-react-plain
     steps:
@@ -154,7 +181,7 @@ jobs:
         uses: actions/checkout@v7
 
       - name: Setup Node
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@v7
         with:
           node-version: 24
 
@@ -164,7 +191,7 @@ jobs:
           bun-version: latest
 
       - name: Cache fixture npm downloads
-        uses: actions/cache@v5
+        uses: actions/cache@v6
         with:
           path: ~/.npm
           key: ${{ runner.os }}-fixture-npm-${{ hashFiles('tests/framework-fixtures/**/files/package.json') }}
@@ -172,7 +199,7 @@ jobs:
             ${{ runner.os }}-fixture-npm-
 
       - name: Cache Playwright Chromium
-        uses: actions/cache@v5
+        uses: actions/cache@v6
         with:
           path: ~/.cache/ms-playwright
           key: ${{ runner.os }}-playwright-chromium-${{ hashFiles('package.json', 'bun.lock') }}
@@ -207,14 +234,16 @@ jobs:
     name: live-e2e full (${{ matrix.group }})
     runs-on: ubuntu-latest
     needs: changes
-    if: needs.changes.outputs.live_e2e == 'true' && github.event_name == 'workflow_dispatch'
+    if: needs.changes.outputs.live_e2e == 'true' && (github.event_name == 'workflow_dispatch' || github.event_name == 'schedule')
     timeout-minutes: 25
     strategy:
       fail-fast: true
       matrix:
         include:
           - group: platform
-            fixtures: astro-vite7,nextjs-app-router,vite8-sveltekit
+            fixtures: astro-vite7,monorepo-nested-vite,nextjs-app-router
+          - group: svelte
+            fixtures: vite8-sveltekit,vite8-sveltekit-stateful
           - group: react-a
             fixtures: vite8-https,vite8-react-base-path,vite8-react-csp-meta,vite8-react-css-modules,vite8-react-emotion
           - group: react-b
@@ -228,7 +257,7 @@ jobs:
         uses: actions/checkout@v7
 
       - name: Setup Node
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@v7
         with:
           node-version: 24
 
@@ -238,7 +267,7 @@ jobs:
           bun-version: latest
 
       - name: Cache fixture npm downloads
-        uses: actions/cache@v5
+        uses: actions/cache@v6
         with:
           path: ~/.npm
           key: ${{ runner.os }}-fixture-npm-${{ hashFiles('tests/framework-fixtures/**/files/package.json') }}
@@ -246,7 +275,7 @@ jobs:
             ${{ runner.os }}-fixture-npm-
 
       - name: Cache Playwright Chromium
-        uses: actions/cache@v5
+        uses: actions/cache@v6
         with:
           path: ~/.cache/ms-playwright
           key: ${{ runner.os }}-playwright-chromium-${{ hashFiles('package.json', 'bun.lock') }}
@@ -295,7 +324,7 @@ jobs:
 
       - name: Setup Node
         if: ${{ env.ANTHROPIC_API_KEY != '' || env.DEEPSEEK_API_KEY != '' }}
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@v7
         with:
           node-version: 24
 
@@ -307,7 +336,7 @@ jobs:
 
       - name: Cache fixture npm downloads
         if: ${{ env.ANTHROPIC_API_KEY != '' || env.DEEPSEEK_API_KEY != '' }}
-        uses: actions/cache@v5
+        uses: actions/cache@v6
         with:
           path: ~/.npm
           key: ${{ runner.os }}-fixture-npm-${{ hashFiles('tests/framework-fixtures/**/files/package.json') }}
@@ -316,7 +345,7 @@ jobs:
 
       - name: Cache Playwright Chromium
         if: ${{ env.ANTHROPIC_API_KEY != '' || env.DEEPSEEK_API_KEY != '' }}
-        uses: actions/cache@v5
+        uses: actions/cache@v6
         with:
           path: ~/.cache/ms-playwright
           key: ${{ runner.os }}-playwright-chromium-${{ hashFiles('package.json', 'bun.lock') }}
@@ -359,7 +388,7 @@ jobs:
 
       - name: Setup Node
         if: ${{ env.DEEPSEEK_API_KEY != '' }}
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@v7
         with:
           node-version: 24
 
@@ -371,7 +400,7 @@ jobs:
 
       - name: Cache fixture npm downloads
         if: ${{ env.DEEPSEEK_API_KEY != '' }}
-        uses: actions/cache@v5
+        uses: actions/cache@v6
         with:
           path: ~/.npm
           key: ${{ runner.os }}-fixture-npm-${{ hashFiles('tests/framework-fixtures/**/files/package.json') }}
@@ -380,7 +409,7 @@ jobs:
 
       - name: Cache Playwright Chromium
         if: ${{ env.DEEPSEEK_API_KEY != '' }}
-        uses: actions/cache@v5
+        uses: actions/cache@v6
         with:
           path: ~/.cache/ms-playwright
           key: ${{ runner.os }}-playwright-chromium-${{ hashFiles('package.json', 'bun.lock') }}
@@ -412,7 +441,7 @@ jobs:
         uses: actions/checkout@v7
 
       - name: Setup Node
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@v7
         with:
           node-version: 24
 

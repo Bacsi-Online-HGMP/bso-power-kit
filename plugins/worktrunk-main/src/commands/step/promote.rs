@@ -4,11 +4,12 @@ use std::fs;
 use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 
-use anyhow::Context;
+use anyhow::{Context, bail};
 use color_print::cformat;
 use path_slash::PathExt as _;
 use worktrunk::copy::{copy_dir_recursive, copy_leaf};
 use worktrunk::git::Repository;
+use worktrunk::path::format_path_for_display;
 use worktrunk::progress::Progress;
 use worktrunk::styling::{eprintln, hint_message, info_message, success_message, warning_message};
 
@@ -34,13 +35,27 @@ fn move_entry(src: &Path, dest: &Path, is_dir: bool) -> anyhow::Result<()> {
 }
 
 /// Copy then delete — fallback when `rename` fails with EXDEV (cross-device).
+///
+/// Refuses to delete when the copy reports a skip, since the source still holds
+/// content the destination never received. A socket or FIFO is not a skip and
+/// goes with the rest of the source: it carries no content to lose, and
+/// refusing over one would abort a promote after the branch exchange.
 fn copy_and_remove(src: &Path, dest: &Path, is_dir: bool) -> anyhow::Result<()> {
+    let skipped = if is_dir {
+        copy_dir_recursive(src, dest, None, true, &Progress::disabled())?
+    } else {
+        usize::from(copy_leaf(src, dest, None, true)?.is_none())
+    };
+    if skipped > 0 {
+        bail!(
+            "{} was not fully copied, so the source is left in place; run with -vv to list what was skipped",
+            format_path_for_display(src)
+        );
+    }
+
     if is_dir {
-        copy_dir_recursive(src, dest, None, true, &Progress::disabled())?;
         fs::remove_dir_all(src).context(format!("removing source directory {}", src.display()))?;
     } else {
-        copy_leaf(src, dest, None, true)?;
-
         fs::remove_file(src).context(format!("removing source file {}", src.display()))?;
     }
     Ok(())
@@ -154,21 +169,34 @@ fn distribute_staged(
 
 /// Result of a promote operation
 pub enum PromoteResult {
-    /// Branch was promoted successfully
-    Promoted,
+    /// Branch was promoted successfully.
+    ///
+    /// `mismatch` is `true` when the promote did not restore canonical state
+    /// (i.e. the target branch is not the default branch). Consumers can use
+    /// this to detect that the safety warning was printed.
+    Promoted {
+        target: String,
+        main_branch: String,
+        swapped: usize,
+        mismatch: bool,
+    },
     /// Already in canonical state (requested branch is already in main)
     AlreadyInMain(String),
 }
 
-/// Resolve the branch to promote when no explicit argument was passed.
+/// Resolve the branch to promote.
 ///
-/// From the main worktree, restore the default branch. From a linked worktree,
-/// promote the current branch.
+/// An explicit argument goes through the worktree selector, so the branch can be
+/// named by its worktree's path as well as by name. With no argument: from the
+/// main worktree, restore the default branch; from a linked worktree, promote
+/// the current branch.
 fn resolve_target_branch(branch: Option<&str>, repo: &Repository) -> anyhow::Result<String> {
     use worktrunk::git::GitError;
 
     if let Some(b) = branch {
-        return Ok(b.to_string());
+        // Promoting swaps two branches between worktrees, so a detached
+        // worktree has nothing to swap in.
+        return repo.require_selected_branch(b, "promote");
     }
 
     let current_wt = repo.current_worktree();
@@ -181,6 +209,7 @@ fn resolve_target_branch(branch: Option<&str>, repo: &Repository) -> anyhow::Res
         current_wt.branch()?.ok_or_else(|| {
             GitError::DetachedHead {
                 action: Some("promote".into()),
+                worktree: None,
             }
             .into()
         })
@@ -304,6 +333,7 @@ pub fn handle_promote(branch: Option<&str>) -> anyhow::Result<PromoteResult> {
         .clone()
         .ok_or_else(|| GitError::DetachedHead {
             action: Some("promote".into()),
+            worktree: Some(main_path.clone()),
         })?;
 
     // Resolve the branch to promote (default_branch computed lazily, only when needed)
@@ -399,7 +429,9 @@ pub fn handle_promote(branch: Option<&str>) -> anyhow::Result<PromoteResult> {
         0
     };
 
-    // Print success messages only after everything succeeded
+    // Print success messages only after everything succeeded. These go to
+    // stderr regardless of --format, matching `rebase`/`push`: the human
+    // status line is stderr, the JSON envelope on stdout is unaffected.
     eprintln!(
         "{}",
         success_message(cformat!(
@@ -415,7 +447,12 @@ pub fn handle_promote(branch: Option<&str>) -> anyhow::Result<PromoteResult> {
         );
     }
 
-    Ok(PromoteResult::Promoted)
+    Ok(PromoteResult::Promoted {
+        target: target_branch,
+        main_branch,
+        swapped,
+        mismatch: !is_restoring,
+    })
 }
 
 #[cfg(test)]
@@ -486,5 +523,53 @@ mod tests {
             "nested"
         );
         assert_eq!(fs::read_to_string(dest.join("root.txt")).unwrap(), "root");
+    }
+
+    #[test]
+    fn test_copy_and_remove_keeps_a_source_that_was_not_fully_copied() {
+        // The move copies then deletes, so an entry the copy skipped would be
+        // destroyed rather than moved. A source that is already gone is the
+        // deterministic case: `copy_leaf` reports the skip, and the delete —
+        // which would take a file recreated since — must not be reached.
+        let tmp = tempfile::tempdir().unwrap();
+        let src = tmp.path().join("gone.txt");
+        let dest = tmp.path().join("dest.txt");
+
+        let err = copy_and_remove(&src, &dest, false).unwrap_err();
+
+        assert!(
+            err.to_string().contains("was not fully copied"),
+            "unexpected error: {err}"
+        );
+        assert!(!dest.exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_copy_and_remove_drops_a_non_regular_file() {
+        // A socket has no content the destination can be short of, so it does
+        // not hold up the move. Refusing over one would strand real content:
+        // `distribute_staged` runs after the branch exchange, and a promote
+        // that dies there leaves the staged files behind a `check_leftover_
+        // staging` refusal whose remedy deletes them.
+        let tmp = tempfile::tempdir().unwrap();
+        let src = tmp.path().join("srcdir");
+        let dest = tmp.path().join("destdir");
+        fs::create_dir_all(&src).unwrap();
+        fs::write(src.join("regular.txt"), "content").unwrap();
+        let listener = std::os::unix::net::UnixListener::bind(src.join("sock")).unwrap();
+        drop(listener);
+        // Closing the fd doesn't unlink, so the socket is still there to
+        // classify. Asserted, so the test can't pass on a fixture that made none.
+        assert!(src.join("sock").exists());
+
+        copy_and_remove(&src, &dest, true).unwrap();
+
+        assert!(!src.exists());
+        assert_eq!(
+            fs::read_to_string(dest.join("regular.txt")).unwrap(),
+            "content"
+        );
+        assert!(!dest.join("sock").exists());
     }
 }

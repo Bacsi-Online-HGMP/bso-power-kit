@@ -21,7 +21,10 @@ Thumbs.db
 # Browser automation artifacts
 .playwright-mcp/
 
-# Local planning docs (not part of the plugin)
+# Local planning docs. Note the split: 14 plan/spec files predate this rule and
+# stay tracked as design history, so they DO ship with every clone — this rule
+# only keeps newer ones local. The tracked ones sit inside the GitHub Pages root,
+# so docs/robots.txt keeps them out of search results.
 docs/superpowers/
 
 # Maintainer-local Claude Code config (hooks, permissions)
@@ -29,3 +32,8 @@ docs/superpowers/
 
 # brooks-harness orchestrator run notes (runtime artifacts, not the plugin)
 _workspace/
+
+# Maintainer-local CLI tooling artifacts (not part of the plugin)
+.agents/
+.antigravitycli/
+.codex/

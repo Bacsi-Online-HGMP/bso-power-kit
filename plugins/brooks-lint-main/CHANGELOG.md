@@ -2,7 +2,174 @@
 
 All notable changes to brooks-lint are documented here.
 
-## [Unreleased]
+## [1.5.0] - 2026-08-14
+
+### Added
+
+- **DeepSeek Harness (`dsh`) support** — DeepSeek AI's open-source agent harness
+  loads standard Agent Skills through `packages/skill/skill-filesystem`, so all
+  six modes run with no conversion. `./scripts/install.sh dsh` installs into
+  `$DSH_HOME/skills` (default `~/.dsh/skills`); `--project` targets
+  `./.dsh/skills`. dsh also scans `~/.agents/skills`, so the existing
+  vendor-neutral `install.sh agents` install already covered it. New guide at
+  [`docs/dsh-setup.md`](docs/dsh-setup.md), with the platform added to the README
+  install table in all six languages and to `docs/getting-started.md`.
+
+  Three details of dsh's loader matter and are documented in the guide: discovery
+  is one level deep (`<root>/<name>/SKILL.md`), which the installer's flat layout
+  already satisfies so `../_shared/` resolves; skill names must be kebab-case,
+  which `brooks-*` already is; and dsh recognises a whitespace-bounded `/name`
+  token anywhere in a message, so `/brooks-review` and the other five work from
+  its `/` menu or typed inline. dsh also reads `AGENTS.md` — `$DSH_HOME/AGENTS.md`
+  plus every file from the project root down to the working directory — so the
+  repo's Iron Law and Health Score rules load the same way they do elsewhere.
+
+## [1.4.3] - 2026-08-04
+
+### Fixed
+
+- **`npm run validate` failed for anyone running it from inside Claude Code**
+  (#23) — `checkHookOutput()` spread the ambient `process.env` into both hook
+  runs and overrode only `HOME`. `hooks/session-start.mjs` branches on
+  `CLAUDE_PLUGIN_ROOT`, which Claude Code exports for every loaded plugin, so
+  the default run returned the plugin-shaped payload and validation died on
+  `hooks/session-start default output must include additional_context` —
+  a failure unrelated to whatever the maintainer had changed. The variable is
+  now stripped before the per-run overrides are layered on, with a regression
+  test that sets it deliberately.
+- **The GitHub Action could never have run** — `action.yml` invoked
+  `$GITHUB_ACTION_PATH/scripts/ci-review.mjs` and passed
+  `--skills-dir "$GITHUB_ACTION_PATH/skills"`, but `github.action_path` points at
+  `.github/actions/brooks-lint/` (which contains only `action.yml`), not at the
+  checked-out repository root three levels up where `scripts/` and `skills/`
+  actually live. The same mistake made the cache key hash a nonexistent
+  `package.json`, so the key was constant and the cache never invalidated. The
+  action now resolves the repository root once and derives every path from it.
+- **`.tsx`, `.jsx`, `.hpp`, `.kts` and `.mm` filenames were truncated by the
+  report parser** — the extension allowlist in `report-parse.mjs` is a
+  first-match alternation, and five entries listed the short extension before its
+  longer sibling. A bare `App.tsx:12` in a finding parsed as `App.ts` *and lost
+  the line number*, so the emitted SARIF pointed GitHub Code Scanning at a file
+  that does not exist. The list is now sorted longest-first at build time, and a
+  test walks the real allowlist so a future entry cannot regress it.
+- **Onboarding mode was missing from every non-interactive run** — brooks-audit
+  advertises "explain this codebase to a new developer" and dispatches to
+  `onboarding-guide.md`, but `assemble-prompt.mjs` never loaded that guide, so
+  the CI path and the two onboarding eval scenarios graded a model that had never
+  been given the instructions. A mode may now declare several guides, and
+  `npm run validate` checks step continuity for all of them.
+- **Step 7 of the PR review guide was unvalidated** — it was written as `##`
+  while every other step uses `###`, making it invisible to the step-continuity
+  check even though `SKILL.md` cites it by number. The heading is fixed, and the
+  validator now rejects a step heading at any other level instead of silently
+  skipping it.
+- **Shell injection surface in the composite action** — the `Check Threshold` and
+  `Quality Gates` steps interpolated `${{ inputs.* }}` directly into their script
+  bodies while the neighbouring step already used `env:` correctly. All inputs now
+  go through the environment.
+- **CONTRIBUTING pointed contributors at the wrong file** — the "add a new decay
+  risk" checklist named `validate-repo.mjs` for `PRODUCTION_RISK_COUNT` /
+  `TEST_RISK_COUNT` (they live in `scripts/frontmatter.mjs`) and omitted
+  `RISK_CATALOG`, so a new `R7` would have parsed as an uncategorised finding.
+  It also documented a `cp -r skills/ …` that nests a second `skills/` directory
+  on re-run, breaking `../_shared/` resolution.
+
+### Changed
+
+- **Risk-code ranges are derived, not hardcoded** — `eval-utils.mjs`,
+  `report-parse.mjs` and `benchmark.mjs` each carried their own `[RT][1-6]`
+  literal. They now derive from the risk counts and `RISK_CATALOG`, so adding a
+  seventh risk widens every code path at once. `run-evals.mjs` also switched from
+  a substring scan to the same word-bounded extraction the live runner
+  classifies with, so the two can no longer disagree about what a scenario expects.
+- **`strictness` presets propagated to the agent-facing docs** — `AGENTS.md` and
+  `GEMINI.md` still advertised balanced-only scoring (−15/−5/−1) as *the* scoring
+  system, which is what Codex CLI and Gemini CLI are told to prioritize. Both now
+  carry the full preset table, and `npm run validate` checks both files instead of
+  only `AGENTS.md` — the asymmetry is why `GEMINI.md` had also lost the eval count
+  and the benchmark corpus. Both also described six decay dimensions when there
+  are twelve.
+- **Dependencies and third-party code are pinned** — the Anthropic SDK is pinned
+  exactly in `package.json` and the action derives its install and cache key from
+  that single source; the documented workflow pins the action to a release tag
+  instead of `@main`; and the gallery page pins Mermaid to an exact version
+  rather than a floating `@11`.
+- **The dev PostToolUse hook watches what it claims to** — its file list omitted
+  the five localized READMEs and the docs landing page, so editing them never
+  triggered `npm run validate`. It now derives that part of the list from
+  `version-refs.mjs`, the same source bump and validate use.
+- **One language switcher instead of three** — the ~30-line IIFE was copy-pasted
+  into `index.html`, `gallery.html` and `guide.html` and had already diverged
+  (only `index.html` handled `data-src-*`). It now lives in `docs/lang-toggle.js`.
+- **Guide severity tiers reconciled with the canonical definitions** — the test
+  guide's inline calibration skipped the Warning tier for T2, left gaps in T3, and
+  promoted a slow suite to Critical where `test-decay-risks.md` caps it at
+  Warning. `remedy-guide.md`'s "do NOT modify any files" now says which modes it
+  binds, so it no longer contradicts brooks-sweep. `sweep.max_iterations` is
+  documented instead of only referenced, and the sweep report's Config line
+  carries `strictness:` like every other mode.
+- **Duplicated prose cut from every maintained document** — the six READMEs lost
+  ~28% of their length to repeated install blocks and command tables, and the
+  skill markdown lost another 713 words: `Sources` tables in `decay-risks.md` and
+  `test-decay-risks.md` are now grouped by book (34 of 55 rows had restated the
+  symptom verbatim in the principle column), severity tiers that the guides had
+  copied out of the canonical files are now referenced, and the `SKILL.md` Setup
+  boilerplate is one line per file. Every assembled mode prompt shrank 4–5%. No
+  trigger description, risk definition, severity threshold, or "What Not to Flag"
+  guard was touched.
+
+### Added
+
+- **`interface.defaultPrompt` in the Codex manifest** — OpenAI's plugin
+  validator (`plugin-creator/scripts/validate_plugin.py`, shipped with
+  codex-cli) requires `interface.defaultPrompt`, and `.codex-plugin/plugin.json`
+  did not declare it. It now carries three starter prompts covering the review,
+  audit, and debt modes. The two remaining validator complaints are deliberate
+  and documented in `CLAUDE.md`: `"commands": []` is what prevents the duplicate
+  `source-command-brooks-*` skills fixed in 1.4.2, and `skills/_shared/` is a
+  shared-framework directory rather than a skill.
+
+## [1.4.2] - 2026-07-24
+
+### Fixed
+
+- **Duplicate skills on Codex CLI** ([#22]) — after installing on Codex, the
+  skill picker showed both the six native `brooks-*` skills and six generated
+  `source-command-brooks-*` adapters. Codex's command-migration
+  ([openai/codex#33411]) falls back to scanning a plugin's `commands/` directory
+  when the manifest does not declare `commands`, so it migrated the
+  `commands/brooks-*.md` wrappers into standalone skills that duplicated the
+  native ones (and bypassed a user's `enabled = false` on a native skill, since
+  the adapter has a different identity). `.codex-plugin/plugin.json` now declares
+  an explicit `"commands": []`, which Codex treats as authoritative and stops
+  migrating the wrappers. Claude Code and Gemini do not read this manifest and are
+  unaffected — `commands/` is still consumed as-is by the Gemini extension.
+  Thanks to [@grevgeny] for the detailed diagnosis.
+
+[#22]: https://github.com/hyhmrright/brooks-lint/issues/22
+[openai/codex#33411]: https://github.com/openai/codex/commit/2cd6ed750940fd4493298b4e602e2cae9a5a2afb
+[@grevgeny]: https://github.com/grevgeny
+
+## [1.4.1] - 2026-07-18
+
+### Fixed
+
+- **Infinite Skill-invocation loop on model-invoked commands** ([#21]) — the
+  `commands/brooks-*.md` wrappers were purely self-referential ("Use the Skill
+  tool to invoke `brooks-lint:brooks-review`"). Combined with an upstream Claude
+  Code bug ([anthropics/claude-code#54535], closed NOT_PLANNED) that re-injects a
+  command body without its `<command-name>` tag after a model-invoked Skill call,
+  the model could loop: call Skill → body re-injected → call Skill again, never
+  running the skill. Each wrapper now **reads its skill's `SKILL.md` directly**
+  instead of calling the Skill tool, so the re-injection path is never triggered
+  and the skill runs once. The session-start hook bakes the absolute
+  `${CLAUDE_PLUGIN_ROOT}` path into the installed short forms, since that variable
+  does not expand in user commands under `~/.claude/commands/`. Cross-platform
+  safe: `commands/` is still consumed as-is by the Gemini extension, and Codex is
+  unaffected (it loads `skills/` only).
+
+[#21]: https://github.com/hyhmrright/brooks-lint/issues/21
+[anthropics/claude-code#54535]: https://github.com/anthropics/claude-code/issues/54535
 
 ## [1.4.0] - 2026-06-19
 

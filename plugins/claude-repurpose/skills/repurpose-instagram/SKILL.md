@@ -4,15 +4,8 @@ description: >
   Generates Instagram content from content atoms: carousel slide scripts (7-10 slides),
   captions optimized for the 125-character fold, and reel scripts with hook-first
   structure. Optimizes for watch time, saves, and shares. Sub-skill of the Content
-  Repurposing Engine. Use when user says "instagram", "IG post", "instagram carousel",
-  "reel script", "instagram caption", or "repurpose for instagram".
-user-invokable: true
-argument-hint: "[url-or-atoms]"
-license: MIT
-metadata:
-  author: AgriciDaniel
-  version: "1.0.0"
-  category: content
+  Repurposing Engine.
+user-invokable: false
 ---
 
 # Instagram Content Generator

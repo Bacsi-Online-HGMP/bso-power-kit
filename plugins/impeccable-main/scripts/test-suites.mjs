@@ -1,11 +1,12 @@
 import fs from 'node:fs';
 import path from 'node:path';
 
-export const DEFAULT_SUITES = ['core', 'detector', 'live', 'framework'];
+export const DEFAULT_SUITES = ['core', 'detector', 'live', 'framework', 'plugin-e2e'];
 export const OPT_IN_SUITES = [
   'cli-remote-e2e',
   'live-e2e',
   'live-e2e-accept-cleanup',
+  'new-work-e2e',
   'skill-behavior',
   'live-svelte-adapter-deepseek',
 ];
@@ -25,12 +26,9 @@ export const SUITES = {
     triggers: [
       ...COMMON_INFRA_PATTERNS,
       /^scripts\/(?!benchmark-detector|build-browser-detector|build-extension)/,
-      /^skill\/(SKILL\.src\.md|agents\/|reference\/|scripts\/(cleanup-deprecated|context|context-signals|critique-storage|design-parser|hook|impeccable-paths|is-generated))/,
-      /^site\/(pages|content|components|layouts)\//,
+      /^skill\/(SKILL\.src\.md|agents\/|reference\/|scripts\/(cleanup-deprecated|concept-seed|context|context-signals|critique-storage|design-parser|doctor|hook|impeccable-paths|is-generated|lib\/(artifact-schema|composition-catalog|concept-catalog|provider|staleness|staleness-deep|staleness-notice|surface-briefs|target-slug|template-extensions)|pin|surface-brief))/,
       /^README(\.npm)?\.md$/,
       /^cli\/bin\//,
-      /^tests\/(build|cleanup-deprecated|cli-ignores|context|context-signals|critique-storage|design-parser|docs-integrity|hook|hook-build|impeccable-paths|shiki-theme|skills-cli|target-args|test-suites|windows-path-fix|zip)\.test\.(js|mjs)$/,
-      /^tests\/lib\//,
     ],
     commands: [
       {
@@ -45,24 +43,35 @@ export const SUITES = {
           'tests/lib/impeccable-config.test.js',
           'tests/lib/transformers/factory.test.js',
           'tests/lib/transformers/providers.test.js',
-          'tests/docs-integrity.test.js',
           'tests/skills-cli.test.js',
           'tests/validate-plugin-versions.test.js',
+          'tests/validate-plugin-manifest.test.js',
         ],
       },
       {
         runner: 'node',
         files: [
           'tests/ci-test-plan.test.mjs',
+          'tests/cli-args.test.mjs',
+          'tests/concept-seed.test.mjs',
+          'tests/serve-question.test.mjs',
           'tests/context.test.mjs',
           'tests/context-signals.test.mjs',
           'tests/critique-storage.test.mjs',
           'tests/design-parser.test.mjs',
+          'tests/github-sheriff.test.mjs',
           'tests/hook-build.test.mjs',
           'tests/hook.test.mjs',
           'tests/impeccable-paths.test.mjs',
+          'tests/openai-plugin.test.mjs',
+          'tests/pin.test.mjs',
+          'tests/release.test.mjs',
+          'tests/doctor.test.mjs',
+          'tests/staleness.test.mjs',
+          'tests/skill-reference.test.mjs',
           'tests/target-args.test.mjs',
-          'tests/shiki-theme.test.mjs',
+          'tests/surface-brief.test.mjs',
+          'tests/template-extensions.test.mjs',
           'tests/test-suites.test.mjs',
           'tests/zip.test.mjs',
         ],
@@ -78,14 +87,14 @@ export const SUITES = {
       /^extension\/(background|content|detector|devtools|popup|manifest\.json)/,
       /^scripts\/(benchmark-detector|build-browser-detector|build-extension)\.js$/,
       /^site\/(pages\/detector|public\/antipattern|data\/anti-patterns-catalog\.js)/,
-      /^tests\/design-system\.test\.mjs$/,
-      /^tests\/(detect-antipatterns|inline-ignores|extension-build|fixtures\/antipatterns)/,
+      /^tests\/fixtures\/antipatterns/,
     ],
     commands: [
       {
         runner: 'bun',
         files: [
           'tests/detect-antipatterns.test.js',
+          'tests/detect-url-launch.test.mjs',
           'tests/inline-ignores.test.mjs',
           'tests/lib/detector-bundle.test.js',
         ],
@@ -97,6 +106,8 @@ export const SUITES = {
           'tests/design-system.test.mjs',
           'tests/detect-antipatterns-fixtures.test.mjs',
           'tests/detect-antipatterns-browser.test.mjs',
+          'tests/detect-cli-design-contamination.test.mjs',
+          'tests/detect-cli-stdin-dispatch.test.mjs',
         ],
       },
     ],
@@ -105,16 +116,18 @@ export const SUITES = {
     description: 'Fast live-mode unit and local-server integration tests, excluding full browser fixture sweeps.',
     triggers: [
       ...COMMON_INFRA_PATTERNS,
-      /^skill\/(reference\/live\.md|scripts\/(detect-csp|lib\/is-generated|live\/|live|live-|modern-screenshot|pin|palette))/,
+      // `palette` is deliberately absent: skill/scripts/palette.mjs has no
+      // test anywhere, and listing it here made edits run a suite that never
+      // touches it, which reads as coverage that does not exist.
+      /^skill\/(reference\/live\.md|scripts\/(detect-csp|lib\/is-generated|lib\/template-extensions|live\/|live|live-|modern-screenshot|pin))/,
       /^tests\/live-/,
-      /^tests\/live-e2e\/(agent|agents\/llm-agent|cli-options|preactions|session|steer|ui)\.mjs$/,
-      /^tests\/live-e2e\/agent-insert\.test\.mjs$/,
     ],
     commands: [
       {
         runner: 'node',
         files: [
           'tests/live-accept.test.mjs',
+          'tests/live-accept-css.test.mjs',
           'tests/live-accept-scrub.test.mjs',
           'tests/live-browser-dom.test.mjs',
           'tests/live-browser-script-parts.test.mjs',
@@ -131,17 +144,28 @@ export const SUITES = {
           'tests/live-e2e-steer-agent.test.mjs',
           'tests/live-e2e/agent-insert.test.mjs',
           'tests/live-event-validation.test.mjs',
+          'tests/live-frameworks.test.mjs',
+          'tests/live-generation-preflight.test.mjs',
           'tests/live-inject.test.mjs',
           'tests/live-insert.test.mjs',
           'tests/live-insert-ui.test.mjs',
           'tests/live-manual-edits-buffer.test.mjs',
           'tests/live-poll.test.mjs',
+          'tests/live-poll-lanes.test.mjs',
           'tests/live-poll-stream.test.mjs',
           'tests/live-recovery-commands.test.mjs',
           'tests/live-reference.test.mjs',
+          'tests/live-roots.test.mjs',
           'tests/live-server.test.mjs',
           'tests/live-session-store.test.mjs',
+          'tests/live-source-lock.test.mjs',
+          'tests/live-source-search.test.mjs',
+          'tests/live-svelte-ast.test.mjs',
+          'tests/live-svelte-component-accept.test.mjs',
+          'tests/live-svelte-props-script.test.mjs',
+          'tests/live-tanstack-adapter.test.mjs',
           'tests/live-target-context.test.mjs',
+          'tests/live-ui-surfaces.test.mjs',
           'tests/live-wrap.test.mjs',
           'tests/live-wrap-buffer-aware.test.mjs',
         ],
@@ -156,7 +180,9 @@ export const SUITES = {
       /^tests\/framework-fixtures\.test\.mjs$/,
       /^skill\/scripts\/(detect-csp|live-inject|live-wrap)\.mjs$/,
       /^skill\/scripts\/lib\/is-generated\.mjs$/,
-      /^skill\/scripts\/live\/sveltekit-adapter\.mjs$/,
+      /^skill\/scripts\/lib\/template-extensions\.mjs$/,
+      /^skill\/scripts\/live\/(source-search|sveltekit-adapter|tanstack-adapter)\.mjs$/,
+      /^skill\/scripts\/live\/frameworks\//,
     ],
     commands: [
       {
@@ -190,6 +216,25 @@ export const SUITES = {
       },
     ],
   },
+  'plugin-e2e': {
+    description: 'Install the committed ./plugin subtree into a real (sandboxed) Claude Code and assert skills, agents, and hooks all load. Skips when the claude CLI is not on PATH.',
+    triggers: [
+      ...COMMON_INFRA_PATTERNS,
+      /^plugin\//,
+      /^skill\/agents\//,
+      /^scripts\/build\.js$/,
+      /^scripts\/lib\/validate-plugin-manifest\.js$/,
+      /^tests\/plugin-e2e\.test\.mjs$/,
+    ],
+    commands: [
+      {
+        runner: 'node',
+        timeoutMs: 300000,
+        forceExit: true,
+        files: ['tests/plugin-e2e.test.mjs'],
+      },
+    ],
+  },
   'live-e2e': {
     description: 'Full Playwright live-mode click-to-accept sweep across runtime framework fixtures.',
     optIn: true,
@@ -206,6 +251,24 @@ export const SUITES = {
         timeoutMs: 600000,
         forceExit: true,
         files: ['tests/live-e2e.test.mjs'],
+      },
+    ],
+  },
+  'new-work-e2e': {
+    description: 'Playwright smoke sweep of the new-work concept/serve-question decision page plus the offline fake image generator.',
+    optIn: true,
+    needsPlaywright: true,
+    triggers: [
+      ...COMMON_INFRA_PATTERNS,
+      /^skill\/scripts\/(serve-question|generate-image|concept-seed)\.mjs$/,
+      /^tests\/new-work-e2e(\.test\.mjs|\/)/,
+    ],
+    commands: [
+      {
+        runner: 'node',
+        timeoutMs: 600000,
+        forceExit: true,
+        files: ['tests/new-work-e2e.test.mjs'],
       },
     ],
   },
@@ -250,8 +313,19 @@ export const SUITES = {
     commands: [
       {
         runner: 'node',
-        timeoutMs: 300000,
-        files: ['tests/skill-behavior/scenarios.test.mjs'],
+        // 300000 was too low to measure what these scenarios assert. The
+        // workflow-contract turns run 20+ steps against a frontier model, and
+        // the *correct* path is the slow one: a run that stops to put the
+        // concept to the user before building was measured at 579s, while the
+        // runs that skipped that checkpoint and failed the assertion finished
+        // in 130-200s. At a 300s cap the thorough path is killed and the hasty
+        // path is graded, so the cap was selecting for the behavior the suite
+        // exists to forbid.
+        timeoutMs: 900000,
+        files: [
+          'tests/skill-behavior/scenarios.test.mjs',
+          'tests/skill-behavior/workflow-contract.test.mjs',
+        ],
       },
     ],
   },
@@ -275,6 +349,25 @@ export const SUITES = {
     ],
   },
 };
+
+function escapeRegExp(value) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+// Every suite must select itself when one of its own test files changes.
+// Generated from the files lists so the hand-written trigger patterns above
+// only carry source paths and fixture directories; before this, four test
+// files were registered in a suite that change-based CI could never select
+// by editing them (serve-question, ci-test-plan, both validate-plugin-*),
+// and tests/lib/detector-bundle.test.js triggered core while running in
+// detector. The meta-test in tests/test-suites.test.mjs pins this invariant.
+for (const suite of Object.values(SUITES)) {
+  const ownFiles = suite.commands.flatMap((command) => command.files);
+  suite.triggers = [
+    ...(suite.triggers ?? []),
+    ...ownFiles.map((file) => new RegExp(`^${escapeRegExp(file)}$`)),
+  ];
+}
 
 export function expandSuites(requested) {
   const names = requested.length === 0 ? ['default'] : requested;

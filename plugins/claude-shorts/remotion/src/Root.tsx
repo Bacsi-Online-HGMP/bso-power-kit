@@ -20,7 +20,7 @@ export const Root: React.FC = () => {
           crop: { x: 0, y: 0, w: 607, h: 1080 },
           cropKeyframes: [],
           captions: [],
-          captionStyle: "bold" as const,
+          captionStyle: "hormozi" as const,
           hookLine1: "",
           hookLine2: "",
           showProgressBar: true,

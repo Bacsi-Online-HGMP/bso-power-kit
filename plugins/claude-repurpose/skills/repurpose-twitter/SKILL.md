@@ -4,15 +4,8 @@ description: >
   Generates Twitter/X content from content atoms: threaded breakdowns (8-12 tweets),
   standalone tweets (3-5 variations), and engagement polls. Optimizes for reply-driven
   reach, curiosity-gap hooks, and algorithm-friendly formatting. Sub-skill of the
-  Content Repurposing Engine. Use when user says "twitter", "tweet", "X post",
-  "thread", "tweet thread", or "repurpose for twitter".
-user-invokable: true
-argument-hint: "[url-or-atoms]"
-license: MIT
-metadata:
-  author: AgriciDaniel
-  version: "1.0.0"
-  category: content
+  Content Repurposing Engine.
+user-invokable: false
 ---
 
 # Twitter/X Content Generator
@@ -81,7 +74,7 @@ Write to `twitter/thread.md`.
 
 ## Output 2: Standalone Tweets (3-5)
 
-Write to `twitter/standalone-tweet.md`.
+Write to `twitter/tweets.md`.
 
 Generate 3-5 standalone tweets. Each one:
 - Captures a single atom and works completely independently

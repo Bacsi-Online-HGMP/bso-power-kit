@@ -4,12 +4,8 @@ description: >
   Generates newsletter excerpts, subject line variants, and 3-email drip
   sequences from atomized content. Produces inbox-optimized copy with
   open-rate-tested subject formulas, preview text, personal tone, and
-  single-CTA discipline per email. Sub-skill of the Content Repurposing Engine.
-  Use when user says "newsletter", "email sequence", "drip sequence",
-  "subject lines", or "repurpose for email".
-user-invokable: true
-argument-hint: "[url-or-atoms]"
-license: MIT
+  single-CTA discipline per email.
+user-invokable: false
 metadata:
   author: AgriciDaniel
   version: "1.0.0"
@@ -44,7 +40,7 @@ Load these before generating any output:
 
 ## Output 1: Newsletter Excerpt
 
-**File:** `newsletter/newsletter.md`
+**File:** `newsletter/excerpt.md`
 
 **Length:** 150-200 words.
 
