@@ -43,10 +43,10 @@ if command -v claude >/dev/null 2>&1; then
   for T in "${TARGETS[@]}"; do
     [ -d "$T" ] || continue
     if [ "$T" = "$HOME/.claude" ]; then
-      claude plugin marketplace update claude-power-kit 2>/dev/null \
+      claude plugin marketplace update bso-power-kit 2>/dev/null \
         && echo "==> marketplace updated: default" || true
     else
-      CLAUDE_CONFIG_DIR="$T" claude plugin marketplace update claude-power-kit 2>/dev/null \
+      CLAUDE_CONFIG_DIR="$T" claude plugin marketplace update bso-power-kit 2>/dev/null \
         && echo "==> marketplace updated: $(basename "$T")" || true
     fi
   done

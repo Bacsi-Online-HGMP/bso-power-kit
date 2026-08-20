@@ -122,15 +122,15 @@ gh auth setup-git     # writes the credential helper, once per machine
 **2 — Clone:**
 
 ```bash
-git clone https://github.com/Bacsi-Online-HGMP/claude-power-kit.git
+git clone https://github.com/Bacsi-Online-HGMP/bso-power-kit.git
 ```
 
 **3 — Add the marketplace and install what you need.** In Claude Code, or in Cowork via its plugin manager:
 
 ```bash
-claude plugin marketplace add Bacsi-Online-HGMP/claude-power-kit
-claude plugin install anti-slop@claude-power-kit
-claude plugin install mattpocock-skills@claude-power-kit
+claude plugin marketplace add Bacsi-Online-HGMP/bso-power-kit
+claude plugin install anti-slop@bso-power-kit
+claude plugin install mattpocock-skills@bso-power-kit
 ```
 
 Plugin names are the `name` fields in `.claude-plugin/marketplace.json` — the same names used in the sections above. Install the group you are working in, not the whole catalogue.
@@ -138,7 +138,7 @@ Plugin names are the `name` fields in `.claude-plugin/marketplace.json` — the 
 **4 — Keep it updated:**
 
 ```bash
-claude plugin marketplace update claude-power-kit
+claude plugin marketplace update bso-power-kit
 ```
 
 Do this by hand. Background auto-update drops the git credential helper on HTTPS, so on a private repo it can fail silently and fall back to re-cloning from scratch. If you would rather it worked unattended, either set `CLAUDE_CODE_PLUGIN_KEEP_MARKETPLACE_ON_FAILURE=1` or use an SSH remote with a key loaded in `ssh-agent`.

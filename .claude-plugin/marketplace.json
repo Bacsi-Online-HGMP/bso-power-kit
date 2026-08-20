@@ -1,5 +1,5 @@
 {
-  "name": "claude-power-kit",
+  "name": "bso-power-kit",
   "metadata": {
     "description": "Curated community skills, plugins & MCPs for Claude Cowork and Code (excludes official Anthropic). Standalone: run build-standalone.sh once to populate ./plugins, then add this folder as a marketplace.",
     "version": "0.2.0"

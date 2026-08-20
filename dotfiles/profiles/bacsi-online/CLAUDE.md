@@ -6,7 +6,7 @@
 
 ## Who this account is
 
-- Purpose: [e.g. hỗ trợ sinh sản / online health-support work — describe the persona]
+- Purpose: [e.g. fertility support / online health-support work - describe the persona]
 - Primary language: [Vietnamese / English / both]
 - Audience: [who Claude is writing for in this account]
 

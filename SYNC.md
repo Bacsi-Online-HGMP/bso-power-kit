@@ -1,6 +1,6 @@
 # Syncing this setup across accounts, devices, and apps
 
-This repo is both a **plugin marketplace** (`claude-power-kit`, 31 plugins) and a
+This repo is both a **plugin marketplace** (`bso-power-kit`, 31 plugins) and a
 **dotfiles source** (`dotfiles/claude-code/`). One repo = one source of truth.
 
 ## Second Pro account (this Mac)
@@ -18,14 +18,14 @@ open -n -a "Claude.app" --args --user-data-dir="$HOME/.claude-instances/pro2"
 ## New machine
 
 ```bash
-git clone <your-remote> claude-power-kit
-cd claude-power-kit && bash bootstrap.sh
+git clone <your-remote> bso-power-kit
+cd bso-power-kit && bash bootstrap.sh
 ```
 
 ## Publishing (enables device sync)
 
 ```bash
-git remote add origin git@github.com:<you>/claude-power-kit.git
+git remote add origin git@github.com:<you>/bso-power-kit.git
 git push -u origin main
 ```
 
@@ -36,7 +36,7 @@ Keep it **private** — dotfiles include your CLAUDE.md and settings.
 
 1. Change plugins or dotfiles here, commit, push.
 2. On each machine/account: `git pull`, then inside claude:
-   `/plugin marketplace update claude-power-kit`
+   `/plugin marketplace update bso-power-kit`
 3. Re-run `bash bootstrap.sh [config-dir]` if dotfiles changed.
 
 ## What does NOT sync via this repo

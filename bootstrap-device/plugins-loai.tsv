@@ -1,17 +1,19 @@
-# Plugin DA BI LOAI — giu de khong quyet lai tu dau.
-# Cot: ten<TAB>marketplace<TAB>luat<TAB>ly do
+# REJECTED plugins - kept so the decision is not made again from scratch.
+# Columns: name<TAB>marketplace<TAB>rule<TAB>reason
 #
-# ten = "*"  : loai CA MARKETPLACE. export-plugins.sh se khong ghi dong marketplace do,
-#              va bo moi plugin den tu no. Dung khi khong con muc nao trong marketplace
-#              con dung duoc — neu chi loai vai plugin thi liet ke tung ten nhu binh thuong.
+# name = "*"  : rejects the WHOLE MARKETPLACE. export-plugins.sh will not write that
+#               marketplace row, and drops every plugin coming from it. Use this when no
+#               entry in the marketplace is still usable - to reject only a few plugins,
+#               list them by name as normal.
 #
-# luat: PH1  = san cung PH=1 (luat cat, doc lap tier)
-#       catB = luat cat thuong (tier B kem co, hoac PH=2 khong co viec that)
-#       trung= luat trung "trung nhieu bat mot" — KHONG phai luat cat, diem van cao
+# rule: PH1   = the hard PH=1 floor (the cut rule, independent of tier)
+#       catB  = the ordinary cut rule (tier B with a flag, or PH=2 with no real work)
+#       trung = the duplication rule, "heavy overlap, enable one" - NOT the cut rule;
+#               the score stays high
 #
-# export-plugins.sh doc file nay: plugin nao co ten o day thi khong keo tro lai TSV cai dat.
-# Muon phuc hoi mot muc: xoa dong cua no o day, chay lai export-plugins.sh, gan pack.
-# Cham diem day du: scoring-layer-2.md
+# export-plugins.sh reads this file: any plugin named here is not pulled back into the
+# install TSV. To restore one: delete its row here, re-run export-plugins.sh, assign a pack.
+# Full scoring: scoring-layer-2.md
 frontend-design	claude-plugins-official	trung	bso-design mang nhan dien BSO, da gop bon nguon
 claude-code-setup	claude-plugins-official	trung	bootstrap-device la bo cai nha, co cot pack
 playwright	claude-plugins-official	trung	chrome-devtools-mcp doc duoc console va network

@@ -1,108 +1,130 @@
-# Đánh giá & xếp hạng 55 repo (Scraping / Management / Claude Skills / khác)
+# Review and ranking of 55 repositories (Scraping / Management / Claude Skills / other)
 
-*Ngày lập: 2026-08-05 · Số liệu GitHub lấy trực tiếp qua API cùng ngày · Phục vụ hệ sinh thái Bacsi Online / HGMP*
+*Compiled 2026-08-05 · GitHub figures pulled directly through the API the same day · For the Bacsi
+Online / HGMP ecosystem*
 
-> **Cảnh báo dùng nội bộ.** Đây là đánh giá kỹ thuật để chọn công cụ, KHÔNG phải tư vấn pháp lý. Ba nhóm rủi ro xuyên suốt cần nhớ:
-> 1. **Cài skill/plugin từ GitHub = chạy chỉ thị + script của người lạ trên máy bạn.** Luôn đọc `SKILL.md` và `install.sh`/`setup.sh` trước khi chạy, không `curl | bash` mù.
-> 2. **Mọi công cụ scraping/auto-post đều có thể vi phạm ToS nền tảng** (khoá tài khoản) và một số vi phạm pháp luật (bypass SSL, bypass paywall).
-> 3. **Không repo nào biết quy định TPBVSK Việt Nam.** Mọi title/script/caption chúng sinh ra phải qua skill `supplement-compliance` trước khi đăng.
+> **Internal-use warning.** This is a technical review for choosing tools, NOT legal advice. Three
+> categories of risk run through all of it:
+> 1. **Installing a skill/plugin from GitHub means running a stranger's instructions and scripts on
+>    your machine.** Always read `SKILL.md` and `install.sh`/`setup.sh` before running anything; never
+>    `curl | bash` blind.
+> 2. **Every scraping/auto-posting tool can breach a platform's ToS** (account ban) and some breach the
+>    law outright (SSL bypass, paywall bypass).
+> 3. **No repository knows Vietnamese health-supplement regulation.** Every title/script/caption they
+>    produce has to pass through the `supplement-compliance` skill before publishing.
 
 ---
 
-## 1. Khung chấm điểm
+## 1. The scoring frame
 
-Mỗi repo chấm 1–5 trên 6 trục (5 = tốt nhất cho bối cảnh Bacsi Online):
+Each repo is scored 1–5 on 6 axes (5 = best for the Bacsi Online context). The axis codes are kept
+verbatim because they are the table headers used across several documents:
 
-| Trục | Ý nghĩa | 5 điểm | 1 điểm |
+| Axis | Meaning | A 5 | A 1 |
 |---|---|---|---|
-| **PH** – Phù hợp/Ứng dụng | Giải đúng việc của kênh y tế + HGMP | Dùng ngay, đúng nhu cầu | Lệch hoặc trùng công cụ đã có |
-| **AT** – An toàn/Bảo mật | ToS, xử lý credential, script cài, quyền ghi | Read-only, không key, không vi phạm | Bypass/scrape lậu, ghi tài khoản, xin cookie |
-| **PB** – Phổ biến/Sức sống | Sao, fork, còn bảo trì | Nhiều sao + push gần đây | Ít sao hoặc chết/archived |
-| **FR** – Free | Chi phí bản thân repo | Free hoàn toàn | Bắt buộc trả tiền |
-| **ĐL** – Độc lập vs SaaS | Có phải phễu bán SaaS không | Độc lập, tự chủ | Vỏ mỏng dẫn về SaaS trả phí |
-| **VH** – Chi phí vận hành | Tốn API/model/hạ tầng khi chạy | Chạy chay $0 | Cần nhiều API trả phí |
+| **PH** – Phù hợp (fit / applicability) | Solves the actual work of a medical channel + HGMP | Usable immediately, matches the need | Off-target, or duplicates an existing tool |
+| **AT** – An toàn (safety / security) | ToS, credential handling, install scripts, write access | Read-only, no key, breaches nothing | Bypass/illicit scraping, writes to accounts, asks for cookies |
+| **PB** – Phổ biến (popularity / liveness) | Stars, forks, still maintained | Many stars + a recent push | Few stars, or dead/archived |
+| **FR** – Free | The repo's own cost | Entirely free | Payment required |
+| **ĐL** – Độc lập (independence vs SaaS) | Whether it is a funnel selling SaaS | Independent, self-contained | A thin shell funnelling to paid SaaS |
+| **VH** – Vận hành (running cost) | API/model/infrastructure cost per run | Runs at $0 | Needs several paid APIs |
 
-**Xếp hạng tổng (Tier):** S (nên dùng/nghiên cứu ngay) · A (tốt, có điều kiện) · B (dùng được cho việc hẹp) · C (thận trọng) · D (tránh / chỉ tham khảo).
+**Overall tier:** S (use or study immediately) · A (good, with conditions) · B (usable for a narrow
+job) · C (approach with caution) · D (avoid / reference only).
 
-Ký hiệu cảnh báo: 🔴 rủi ro pháp lý/ToS cao · 🟠 cần key/credential nhạy cảm · 🟣 phễu SaaS · ⚰️ chết/archived/lỗi thời · ⭐ điểm sáng triết lý.
+Warning symbols: 🔴 high legal/ToS risk · 🟠 needs a sensitive key/credential · 🟣 a SaaS funnel ·
+⚰️ dead/archived/obsolete · ⭐ a philosophical bright spot.
 
 ---
 
-## 2. Bảng tổng hợp số liệu thật (đối chiếu số sao bạn đưa)
+## 2. Real figures (checked against the star counts you supplied)
 
-Số sao bạn liệt kê phần lớn khớp. Vài chỗ lệch đáng chú ý:
+Most of the star counts you listed match. A few notable discrepancies:
 
-| Repo | Sao bạn ghi | Sao thật | Ghi chú quan trọng |
+| Repo | Stars you noted | Actual stars | Important note |
 |---|---|---|---|
-| youtube/api-samples | 6.0k | 6 017 | ⚰️ **ARCHIVED**, official Google nhưng đóng băng (push cuối 2024-06) |
-| Schmavery/facebook-chat-api | 1.9k | 1 947 | ⚰️ **ARCHIVED** 2021, unofficial, vi phạm ToS FB |
-| drawrowfly/tiktok-scraper | 5.2k | 5 166 | ⚰️ push cuối **2023-05**, TikTok đã đổi API → nhiều khả năng hỏng |
-| pytube/pytube | 13.2k | 13 160 | ⚰️ push cuối 2024-08, nổi tiếng hay hỏng theo thay đổi YouTube |
-| ytdl-org/youtube-dl | 140.9k | 140 872 | Còn sống yếu; bản bảo trì thực tế là **yt-dlp** (repo khác) |
-| Jamie-Landeg-Jones/youtube-dl | 37 | 38 | Chỉ là **fork** của youtube-dl, không có giá trị riêng |
-| ZeroPointRepo/youtube-skills | 485 | 487 | 🟣 phễu về TranscriptAPI (trả phí credit) |
-| AgriciDaniel/claude-ads | 7.8k | 7 828 | ⭐ kỷ luật kỹ thuật cao nhất nhóm |
-| AgriciDaniel/claude-seo | 13.4k | 13 364 | ⭐ repo lớn nhất của tác giả này |
-| mvanhorn/last30days-skill | 57.3k | 57 278 | **Bạn đã cài sẵn** (`/last30days` có trong máy) |
+| youtube/api-samples | 6.0k | 6,017 | ⚰️ **ARCHIVED**, official Google but frozen (last push 2024-06) |
+| Schmavery/facebook-chat-api | 1.9k | 1,947 | ⚰️ **ARCHIVED** 2021, unofficial, breaches Facebook's ToS |
+| drawrowfly/tiktok-scraper | 5.2k | 5,166 | ⚰️ last push **2023-05**; TikTok has changed its API since → most likely broken |
+| pytube/pytube | 13.2k | 13,160 | ⚰️ last push 2024-08, famously breaks whenever YouTube changes |
+| ytdl-org/youtube-dl | 140.9k | 140,872 | Barely alive; the actually-maintained fork is **yt-dlp** (a different repo) |
+| Jamie-Landeg-Jones/youtube-dl | 37 | 38 | Merely a **fork** of youtube-dl, with no value of its own |
+| ZeroPointRepo/youtube-skills | 485 | 487 | 🟣 a funnel to TranscriptAPI (paid credits) |
+| AgriciDaniel/claude-ads | 7.8k | 7,828 | ⭐ the highest engineering discipline in the set |
+| AgriciDaniel/claude-seo | 13.4k | 13,364 | ⭐ this author's largest repo |
+| mvanhorn/last30days-skill | 57.3k | 57,278 | **Already installed** (`/last30days` is on the machine) |
 
-*Số sao rất cao ≠ hợp với bạn. youtube-dl 140k là công cụ tải video, không liên quan làm nội dung.*
-
----
-
-## 3. NHÓM SCRAPING (13 repo)
-
-| Repo | PH | AT | PB | FR | ĐL | VH | Tier | Cờ |
-|---|:--:|:--:|:--:|:--:|:--:|:--:|:--:|---|
-| **mathiaschu/watch** | 5 | 5 | 3 | 5 | 5 | 4 | **S** | ⭐ no-key, on-device |
-| **guimatheus92/mcp-video-analyzer** | 5 | 4 | 3 | 5 | 4 | 4 | **A** | MCP, npm, bảo trì tốt |
-| davidteather/TikTok-Api | 3 | 3 | 5 | 5 | 4 | 3 | B | 🟠 dùng cookie/Webshare |
-| supadata-ai/mcp | 4 | 3 | 3 | 3 | 2 | 3 | B | 🟣🟠 SaaS Supadata |
-| ZeroPointRepo/youtube-skills | 4 | 3 | 4 | 2 | 2 | 3 | B | 🟣 phễu TranscriptAPI |
-| rugvedp/Trends-MCP | 3 | 3 | 2 | 4 | 4 | 3 | B | 🟠 RapidAPI, scrape Later.com |
-| apismith-labs/tiktok-transcript-api | 3 | 3 | 1 | 2 | 2 | 3 | C | 🟣 phễu Apify Actor |
-| ytdl-org/youtube-dl | 2 | 4 | 5 | 5 | 5 | 5 | C | ⚰️ dùng yt-dlp thay thế |
-| Tyrrrz/YoutubeDownloader | 2 | 4 | 4 | 5 | 5 | 5 | C | GUI tải video, ít liên quan |
-| pytube/pytube | 2 | 3 | 4 | 5 | 5 | 5 | C | ⚰️ hay hỏng |
-| drawrowfly/tiktok-scraper | 2 | 2 | 4 | 5 | 5 | 4 | D | ⚰️🔴 chết + scrape |
-| **Zskkk/tiktok-ssl-bypass-skill** | 1 | 1 | 1 | 5 | 5 | 2 | **D** | 🔴 bypass SSL pinning, Frida |
-| Jamie-Landeg-Jones/youtube-dl | 1 | 4 | 1 | 5 | 5 | 5 | D | fork trùng lặp |
-
-**Kết luận nhóm:** thứ bạn thực sự cần là **"cho agent xem/nghe video"**, không phải tải hàng loạt.
-
-- **mathiaschu/watch** là lựa chọn số 1: yt-dlp + ffmpeg + Whisper chạy **on-device, không API key, không telemetry, không lưu cookie**. Đúng tinh thần một kênh y tế cần kín đáo. Nó chính là phiên bản gọn của skill `youtube-video-perception` bạn vừa dùng.
-- **mcp-video-analyzer** mạnh hơn (OCR khung hình, cache, nhiều nguồn) nếu cần xử lý bulk; đánh đổi là thêm phụ thuộc npm + tuỳ chọn TwelveLabs trả phí.
-- 🔴 **tiktok-ssl-bypass-skill: tránh tuyệt đối.** Bypass chứng chỉ SSL của app là kỹ thuật tấn công, rủi ro pháp lý thật, không có chỗ trong quy trình marketing hợp chuẩn.
-- Các repo tải video (youtube-dl/pytube/YoutubeDownloader) và scraper TikTok cũ: chỉ giữ **yt-dlp** làm hạ tầng nền, bỏ qua phần còn lại.
+*A very high star count does not mean it fits you. youtube-dl at 140k is a video downloader and has
+nothing to do with producing content.*
 
 ---
 
-## 4. NHÓM MANAGEMENT / PUBLISHING (9 repo)
+## 3. THE SCRAPING GROUP (13 repos)
 
-| Repo | PH | AT | PB | FR | ĐL | VH | Tier | Cờ |
+| Repo | PH | AT | PB | FR | ĐL | VH | Tier | Flags |
 |---|:--:|:--:|:--:|:--:|:--:|:--:|:--:|---|
-| **pipeboard-co/meta-ads-mcp** | 4 | 3 | 4 | 3 | 2 | 3 | **A** | 🟣 Pipeboard, Meta Business Partner |
-| youtube/api-samples | 3 | 5 | 5 | 5 | 5 | 5 | B | ⚰️ archived nhưng là mẫu code chuẩn |
-| iscale-llc/iscale-facebook-ad-builder | 3 | 3 | 2 | 4 | 4 | 2 | B | 🟠 full-stack, nhiều key |
-| ndesv21/socialclaw | 3 | 3 | 2 | 3 | 2 | 3 | B | 🟣 dịch vụ getsocialclaw |
-| makiisthenes/TiktokAutoUploader | 3 | 2 | 4 | 5 | 5 | 4 | C | 🔴 upload lậu bằng session |
-| wanglinsaputra/OmniPost-AI | 2 | 2 | 1 | 4 | 4 | 3 | C | 🔴 auto-post qua DOM trình duyệt |
-| brodyautomates/ig-setter | 2 | 2 | 1 | 4 | 4 | 3 | C | 🟠 tự trả lời DM IG |
-| warifp/FacebookToolkit | 1 | 1 | 4 | 5 | 5 | 4 | D | 🔴⚰️ bot/scrape FB, PHP cũ |
+| **mathiaschu/watch** | 5 | 5 | 3 | 5 | 5 | 4 | **S** | ⭐ no key, on-device |
+| **guimatheus92/mcp-video-analyzer** | 5 | 4 | 3 | 5 | 4 | 4 | **A** | MCP, npm, well maintained |
+| davidteather/TikTok-Api | 3 | 3 | 5 | 5 | 4 | 3 | B | 🟠 uses cookies/Webshare |
+| supadata-ai/mcp | 4 | 3 | 3 | 3 | 2 | 3 | B | 🟣🟠 the Supadata SaaS |
+| ZeroPointRepo/youtube-skills | 4 | 3 | 4 | 2 | 2 | 3 | B | 🟣 a TranscriptAPI funnel |
+| rugvedp/Trends-MCP | 3 | 3 | 2 | 4 | 4 | 3 | B | 🟠 RapidAPI, scrapes Later.com |
+| apismith-labs/tiktok-transcript-api | 3 | 3 | 1 | 2 | 2 | 3 | C | 🟣 an Apify Actor funnel |
+| ytdl-org/youtube-dl | 2 | 4 | 5 | 5 | 5 | 5 | C | ⚰️ use yt-dlp instead |
+| Tyrrrz/YoutubeDownloader | 2 | 4 | 4 | 5 | 5 | 5 | C | A download GUI, barely relevant |
+| pytube/pytube | 2 | 3 | 4 | 5 | 5 | 5 | C | ⚰️ breaks often |
+| drawrowfly/tiktok-scraper | 2 | 2 | 4 | 5 | 5 | 4 | D | ⚰️🔴 dead + a scraper |
+| **Zskkk/tiktok-ssl-bypass-skill** | 1 | 1 | 1 | 5 | 5 | 2 | **D** | 🔴 SSL pinning bypass, Frida |
+| Jamie-Landeg-Jones/youtube-dl | 1 | 4 | 1 | 5 | 5 | 5 | D | a duplicate fork |
+
+**Group conclusion:** what you actually need is **"let the agent watch/listen to video"**, not bulk
+downloading.
+
+- **mathiaschu/watch** is the first choice: yt-dlp + ffmpeg + Whisper running **on-device, with no API
+  key, no telemetry and no stored cookies**. Exactly right for a medical channel that has to stay
+  discreet. It is essentially a compact version of the `youtube-video-perception` skill you just used.
+- **mcp-video-analyzer** is stronger (frame OCR, caching, several sources) if bulk processing is ever
+  needed; the trade is an added npm dependency plus an optional paid TwelveLabs tier.
+- 🔴 **tiktok-ssl-bypass-skill: avoid entirely.** Bypassing an app's SSL certificate is an attack
+  technique with real legal risk, and has no place in a compliant marketing process.
+- The download repos (youtube-dl/pytube/YoutubeDownloader) and the old TikTok scrapers: keep **yt-dlp**
+  only, as foundational infrastructure, and skip the rest.
+
+---
+
+## 4. THE MANAGEMENT / PUBLISHING GROUP (9 repos)
+
+| Repo | PH | AT | PB | FR | ĐL | VH | Tier | Flags |
+|---|:--:|:--:|:--:|:--:|:--:|:--:|:--:|---|
+| **pipeboard-co/meta-ads-mcp** | 4 | 3 | 4 | 3 | 2 | 3 | **A** | 🟣 Pipeboard, a Meta Business Partner |
+| youtube/api-samples | 3 | 5 | 5 | 5 | 5 | 5 | B | ⚰️ archived, but it is the canonical sample code |
+| iscale-llc/iscale-facebook-ad-builder | 3 | 3 | 2 | 4 | 4 | 2 | B | 🟠 full-stack, many keys |
+| ndesv21/socialclaw | 3 | 3 | 2 | 3 | 2 | 3 | B | 🟣 the getsocialclaw service |
+| makiisthenes/TiktokAutoUploader | 3 | 2 | 4 | 5 | 5 | 4 | C | 🔴 uploads illicitly through a session |
+| wanglinsaputra/OmniPost-AI | 2 | 2 | 1 | 4 | 4 | 3 | C | 🔴 auto-posts by driving the browser DOM |
+| brodyautomates/ig-setter | 2 | 2 | 1 | 4 | 4 | 3 | C | 🟠 auto-replies to Instagram DMs |
+| warifp/FacebookToolkit | 1 | 1 | 4 | 5 | 5 | 4 | D | 🔴⚰️ a Facebook bot/scraper, old PHP |
 | Schmavery/facebook-chat-api | 1 | 1 | 4 | 5 | 5 | 4 | D | 🔴⚰️ archived, unofficial |
 
-**Kết luận nhóm:** đây là nhóm **rủi ro nhất** vì nó *ghi* ra tài khoản thật.
+**Group conclusion:** this is the **riskiest group**, because it *writes* to real accounts.
 
-- Publishing tự động qua reverse-engineering session (TiktokAutoUploader) hoặc điều khiển DOM (OmniPost, ig-setter) đều **dễ khoá tài khoản** và không có kiểm soát an toàn. Với thương hiệu bác sĩ, một lần khoá kênh là mất trắng uy tín tích luỹ.
-- Đường đúng nếu cần đăng tự động: dùng **API chính thức có OAuth** (mẫu ở `youtube/api-samples` dù đã archived vẫn là code tham chiếu tốt), hoặc MCP có kiểm soát ghi như hướng của `pipeboard-co/meta-ads-mcp` (là Meta Business Partner được duyệt — an toàn hơn hẳn scraper, đổi lại là phễu SaaS Pipeboard).
-- Ghi chú license: `meta-ads-mcp` để **NOASSERTION** (không license rõ) → cân nhắc khi tái sử dụng mã.
+- Automated publishing through a reverse-engineered session (TiktokAutoUploader) or by driving the DOM
+  (OmniPost, ig-setter) **gets accounts banned easily** and carries no safety controls. For a
+  doctor-facing brand, one channel ban wipes out every bit of accumulated credibility.
+- The correct route if automated publishing is ever needed: **the official OAuth API** (the sample in
+  `youtube/api-samples` is still good reference code despite being archived), or an MCP with controlled
+  writes along the lines of `pipeboard-co/meta-ads-mcp` (an approved Meta Business Partner — far safer
+  than a scraper, at the cost of being a Pipeboard SaaS funnel).
+- Licence note: `meta-ads-mcp` is marked **NOASSERTION** (no clear licence) → consider that before
+  reusing its code.
 
 ---
 
-## 5. NHÓM CLAUDE SKILLS (31 repo)
+## 5. THE CLAUDE SKILLS GROUP (31 repos)
 
-Chia theo tác giả/chất lượng để dễ đọc.
+Split by author/quality for readability.
 
-### 5A. Hệ AgriciDaniel — "kỷ luật bằng chứng" ⭐ (điểm sáng lớn nhất cả danh sách)
+### 5A. The AgriciDaniel family — "evidence discipline" ⭐ (the biggest bright spot in the whole list)
 
 | Repo | PH | AT | PB | FR | ĐL | VH | Tier |
 |---|:--:|:--:|:--:|:--:|:--:|:--:|:--:|
@@ -114,14 +136,22 @@ Chia theo tác giả/chất lượng để dễ đọc.
 | AgriciDaniel/claude-shorts | 4 | 4 | 3 | 5 | 4 | 3 | A |
 | AgriciDaniel/claude-repurpose | 4 | 4 | 3 | 5 | 4 | 3 | A |
 
-Đây là bộ đáng **nghiên cứu để bắt chước cách làm**, dù không cài nguyên. Xem mục 7 (triết lý).
+This set is worth **studying to copy the method**, even without installing any of it. See section 7
+(philosophy).
 
-- **claude-blog**: kiến trúc 3 tầng (orchestrator → 31 sub-skill → agent + script), **5-Gate Delivery Contract** chặn giao hàng nếu chưa qua kiểm định, 5-category quality scoring, "brain" bằng chứng có nguồn. Rất hợp để dựng cỗ máy blog HGMP.
-- **anti-slop**: bộ dò "văn AI" nhưng thiết kế để **không bao giờ tự kết luận tác giả**; mọi dấu hiệu phải route sang một thủ tục sinh ra *artifact người kiểm được*. Triết lý "evidence discipline" cực kỳ giá trị cho môi trường y tế cần trích dẫn.
-- **claude-ads**: adapter **read-only mặc định**, muốn ghi phải qua 6 điều kiện (capability bật, ID rõ, diff before/after, phê duyệt, idempotency+rollback, verify precondition). Đây là **khuôn mẫu an toàn** nên áp cho mọi thứ đụng tài khoản thật.
-- **youtuber (YouTube Brain)**: "maturity gates" 5 mức, điểm bị **trần hoá theo độ chín** — không thể sửa markdown để tự phong "market-ready". Chống thổi phồng nội bộ.
+- **claude-blog**: a 3-tier architecture (orchestrator → 31 sub-skills → agents + scripts), a **5-Gate
+  Delivery Contract** blocking delivery until every check passes, 5-category quality scoring, and a
+  sourced evidence "brain". A very good fit for building the HGMP blog machine.
+- **anti-slop**: an "AI writing" detector designed to **never conclude who wrote something**; every
+  signal must be routed into a procedure producing *an artifact a person can check*. The "evidence
+  discipline" philosophy is extremely valuable in a medical setting that needs citations.
+- **claude-ads**: an adapter that is **read-only by default**; writing requires 6 conditions
+  (capability enabled, explicit ID, a before/after diff, approval, idempotency + rollback, precondition
+  verification). This is **the safety template** to apply to everything that touches a real account.
+- **youtuber (YouTube Brain)**: 5-level "maturity gates" where the score is **capped by maturity** —
+  editing the markdown cannot self-declare "market-ready". It prevents internal overstatement.
 
-### 5B. Hệ sergebulaev — phễu Publora 🟣
+### 5B. The sergebulaev family — a Publora funnel 🟣
 
 | Repo | PH | AT | PB | FR | ĐL | VH | Tier |
 |---|:--:|:--:|:--:|:--:|:--:|:--:|:--:|
@@ -132,122 +162,171 @@ Chia theo tác giả/chất lượng để dễ đọc.
 | sergebulaev/tiktok-skills | 2 | 3 | 1 | 4 | 2 | 4 | C |
 | sergebulaev/threads-skills | 2 | 3 | 1 | 4 | 2 | 4 | C |
 
-- Phần copywriting và **"voice rules"** (cấm em dash, cấm từ AI "leverage/delve/unlock", số cụ thể thay tính từ, title là lời hứa không phải tóm tắt) rất tốt — **nên trích riêng làm tài liệu tham khảo**.
-- Điểm trừ: đường đăng đi qua **Publora** (SaaS bên thứ ba, video upload lên S3 của họ, cần API key, trần 512MB). Không nên bật cho nội dung y tế. Bản thân skill mỏng, giá trị nằm ở references.
+- The copywriting section and its **"voice rules"** (no em dashes, no AI words like
+  "leverage/delve/unlock", concrete numbers instead of adjectives, a title is a promise not a summary)
+  are very good — **worth extracting separately as a reference document**.
+- Against it: the publishing route goes through **Publora** (a third-party SaaS, video uploaded to
+  their S3, needs an API key, capped at 512MB). Not something to enable for medical content. The skills
+  themselves are thin; the value is in the references.
 
-### 5C. Skill lớn / độc lập đáng chú ý
+### 5C. Notable large / independent skills
 
-| Repo | PH | AT | PB | FR | ĐL | VH | Tier | Ghi chú |
+| Repo | PH | AT | PB | FR | ĐL | VH | Tier | Notes |
 |---|:--:|:--:|:--:|:--:|:--:|:--:|:--:|---|
-| **mvanhorn/last30days-skill** | 5 | 4 | 5 | 4 | 4 | 3 | **S** | Bạn đã có sẵn. Research đa nguồn có chấm điểm cộng đồng |
-| **rushindrasinha/youtube-shorts-pipeline** | 4 | 4 | 5 | 5 | 5 | 3 | **A** | ⭐ anti-hallucination gate, niche-profile |
-| **hassancs91/claude-youtube-editor** | 4 | 4 | 3 | 5 | 4 | 2 | **A** | Pipeline dựng video "trung thực về chi phí" |
-| **MaxKmet/idea-validation-agents** | 4 | 5 | 4 | 5 | 5 | 4 | **A** | Không key; hợp validate sản phẩm HGMP (xem thêm mục 6) |
-| Affitor/affiliate-skills | 3 | 3 | 4 | 4 | 3 | 3 | B | ⭐ "flywheel" 8 giai đoạn, chain_metadata |
-| nicojunk/claude-ig | 3 | 4 | 1 | 5 | 4 | 4 | B | ⭐ 7 quality gate có G3 "phải disclose affiliate" |
-| bradautomates/content-ideas | 3 | 3 | 3 | 3 | 3 | 3 | B | 🟠 ScrapeCreators API; render HTML feed học ý |
-| aaaronmiller/create-viral-content | 3 | 4 | 2 | 5 | 5 | 4 | B | ⭐ 6 lượt "adversarial refine" + khung đạo đức |
-| Hao0321/claude-skill-social-post | 3 | 2 | 4 | 5 | 4 | 4 | B | 🔴 auto-post DOM FB; nhưng 7 công thức < 5K-fan hay |
-| zubair-trabzada/ai-ads-claude | 3 | 3 | 3 | 5 | 4 | 3 | B | 15 skill quảng cáo, 5 agent song song |
-| Hainrixz/claude-ads | 3 | 3 | 2 | 4 | 3 | 3 | B | ⭐ mô hình 3-tier chi phí minh bạch |
-| itchernetski/threads-carousel-claude-skill | 3 | 4 | 2 | 5 | 4 | 4 | B | Text → carousel PNG/PDF, design-system 4 trục |
-| iart-ai/tiktok-video-skills | 3 | 4 | 1 | 4 | 3 | 4 | B | 🟣 phễu iart.ai; grammar hook→retention→loop |
-| Maartenlouis/remotion-ads | 3 | 4 | 2 | 5 | 4 | 2 | B | Remotion + ElevenLabs, caption theo từ |
-| moboutrig/instagram-claude-skill | 2 | 4 | 1 | 5 | 4 | 4 | C | 🟠 IG Graph API chính thức (an toàn hơn scraper) |
+| **mvanhorn/last30days-skill** | 5 | 4 | 5 | 4 | 4 | 3 | **S** | Already installed. Multi-source research with community scoring |
+| **rushindrasinha/youtube-shorts-pipeline** | 4 | 4 | 5 | 5 | 5 | 3 | **A** | ⭐ an anti-hallucination gate, niche profiles |
+| **hassancs91/claude-youtube-editor** | 4 | 4 | 3 | 5 | 4 | 2 | **A** | A video build pipeline that is "honest about cost" |
+| **MaxKmet/idea-validation-agents** | 4 | 5 | 4 | 5 | 5 | 4 | **A** | No key; suits validating HGMP products (see also section 6) |
+| Affitor/affiliate-skills | 3 | 3 | 4 | 4 | 3 | 3 | B | ⭐ an 8-stage "flywheel", chain_metadata |
+| nicojunk/claude-ig | 3 | 4 | 1 | 5 | 4 | 4 | B | ⭐ 7 quality gates, with G3 "affiliate status must be disclosed" |
+| bradautomates/content-ideas | 3 | 3 | 3 | 3 | 3 | 3 | B | 🟠 the ScrapeCreators API; the HTML-feed rendering is the idea worth taking |
+| aaaronmiller/create-viral-content | 3 | 4 | 2 | 5 | 5 | 4 | B | ⭐ 6 "adversarial refine" passes + an ethics frame |
+| Hao0321/claude-skill-social-post | 3 | 2 | 4 | 5 | 4 | 4 | B | 🔴 auto-posts to Facebook via the DOM; but its 7 formulas for under-5K-follower accounts are good |
+| zubair-trabzada/ai-ads-claude | 3 | 3 | 3 | 5 | 4 | 3 | B | 15 advertising skills, 5 agents in parallel |
+| Hainrixz/claude-ads | 3 | 3 | 2 | 4 | 3 | 3 | B | ⭐ a transparent 3-tier cost model |
+| itchernetski/threads-carousel-claude-skill | 3 | 4 | 2 | 5 | 4 | 4 | B | Text → a carousel of PNG/PDF, a 4-axis design system |
+| iart-ai/tiktok-video-skills | 3 | 4 | 1 | 4 | 3 | 4 | B | 🟣 an iart.ai funnel; a hook→retention→loop grammar |
+| Maartenlouis/remotion-ads | 3 | 4 | 2 | 5 | 4 | 2 | B | Remotion + ElevenLabs, word-level captions |
+| moboutrig/instagram-claude-skill | 2 | 4 | 1 | 5 | 4 | 4 | C | 🟠 the official IG Graph API (safer than a scraper) |
 
-### 5D. Skill nhỏ / một tác giả / phễu cá nhân (giá trị hẹp)
+### 5D. Small / single-author / personal-funnel skills (narrow value)
 
-| Repo | Tier | Ghi chú |
+| Repo | Tier | Notes |
 |---|:--:|---|
-| rediumvex/viral-hooks-skill | C | 100 công thức hook — dùng như thư viện tham khảo |
-| rediumvex/ai-video-generator-claude | C | 🟠 phễu prompt cho Higgsfield/Seedance (trả phí) |
-| rediumvex/social-media-caption-generator-claude | C | Caption 7 nền tảng, mỏng |
-| dylanpakd-cyber/lazyreel | C | 🟣 MCP "doomscroll" 21B view, nguồn đóng |
+| rediumvex/viral-hooks-skill | C | 100 hook formulas — use it as a reference library |
+| rediumvex/ai-video-generator-claude | C | 🟠 a prompt funnel for Higgsfield/Seedance (paid) |
+| rediumvex/social-media-caption-generator-claude | C | Captions for 7 platforms, thin |
+| dylanpakd-cyber/lazyreel | C | 🟣 a "doomscroll" MCP with 21B views, closed source |
 
 ---
 
-## 6. CÁC REPO LẺ
+## 6. STANDALONE REPOS
 
-| Repo | Nhóm | PH | AT | PB | FR | ĐL | VH | Tier | Ghi chú |
+| Repo | Group | PH | AT | PB | FR | ĐL | VH | Tier | Notes |
 |---|---|:--:|:--:|:--:|:--:|:--:|:--:|:--:|---|
-| **DojoCodingLabs/remotion-superpowers** | Video edit | 4 | 4 | 2 | 5 | 5 | 3 | **A** | Plugin free biến Remotion thành studio; 5 MCP; cần vài key |
-| **joeseesun/anything-to-notebooklm** | →NotebookLM | 4 | 2 | 5 | 5 | 4 | 3 | **B** | 🔴 có tính năng **bypass paywall** (rủi ro pháp lý); 15+ nguồn→podcast/PPT/mindmap |
-| **akitaonrails/tiktok_analysis** | Privacy | 3 | 5 | 1 | 5 | 5 | 5 | **B** | ⭐ Không phải tool mà là **báo cáo dịch ngược** TikTok — đọc để hiểu rủi ro dữ liệu |
-| **MaxKmet/idea-validation-agents** | Idea | 4 | 5 | 4 | 5 | 5 | 4 | **A** | Đã chấm ở mục 5C; validate ý tưởng, không cần key |
+| **DojoCodingLabs/remotion-superpowers** | Video edit | 4 | 4 | 2 | 5 | 5 | 3 | **A** | A free plugin turning Remotion into a studio; 5 MCP servers; needs several keys |
+| **joeseesun/anything-to-notebooklm** | →NotebookLM | 4 | 2 | 5 | 5 | 4 | 3 | **B** | 🔴 includes a **paywall-bypass** feature (legal risk); 15+ sources → podcast/PPT/mindmap |
+| **akitaonrails/tiktok_analysis** | Privacy | 3 | 5 | 1 | 5 | 5 | 5 | **B** | ⭐ Not a tool but a **reverse-engineering report** on TikTok — read it to understand the data risk |
+| **MaxKmet/idea-validation-agents** | Idea | 4 | 5 | 4 | 5 | 5 | 4 | **A** | Already scored in 5C; validates ideas, no key needed |
 
-- **remotion-superpowers**: nếu Dr. Hiếu dựng video bằng code (Remotion), đây là bộ mạnh và free, có cả tầng "see/hear/analyze". Đáng thử trong nhánh sản xuất.
-- **anything-to-notebooklm**: ý tưởng "bất kỳ nội dung → NotebookLM" rất hợp để biến tài liệu y khoa thành podcast/mindmap học tập. **Nhưng** module bypass paywall là lằn ranh pháp lý — nếu dùng, phải tắt phần đó và chỉ đưa nội dung bạn có quyền.
-- **tiktok_analysis**: giữ làm tài liệu tham khảo an ninh dữ liệu, không phải công cụ.
-
----
-
-## 7. TRIẾT LÝ / WORKFLOW / PIPELINE ĐÁNG GIỮ
-
-Đây là phần giá trị nhất — chắt lọc để tái dùng cho hệ Bacsi Online/HGMP, kể cả khi không cài repo nào.
-
-### 7.1. Kỷ luật bằng chứng (evidence discipline) — *AgriciDaniel/anti-slop, youtuber, claude-ads*
-- **Mọi con số phải trỏ về một nguồn có ngày trong "source ledger"** (URL + ngày lấy + tier bằng chứng + giới hạn). Không nguồn = không được nêu claim. → Áp thẳng cho nội dung TPBVSK: mỗi công dụng phải neo về tài liệu được phép.
-- **Không tự kết luận, chỉ đưa artifact người kiểm được.** anti-slop không bao giờ phán "cái này do AI viết"; nó chỉ ra khuyết điểm cụ thể kiểm chứng được.
-- **Không cho model tự gác cửa sửa của chính nó** — scanner chạy lại sau khi sửa (chống "rubber-stamp" tự khen).
-
-### 7.2. Delivery Contract có nhiều "gate" — *claude-blog (5 gate), nicojunk/claude-ig (7 gate)*
-- Nội dung **không được giao nếu chưa qua các cổng**: đủ định dạng → kiểm thị giác (screenshot 3 khổ màn hình) → điểm review ≥ 90, 0 lỗi P0 → link/asset trả về 200.
-- Orchestrator **tự lặp lại tối đa 3 lần** trước khi đẩy lên người. → Mô hình lý tưởng cho quy trình: *soạn → tự kiểm compliance → tự kiểm chất lượng → mới trình duyệt*.
-- Quality gate kiểu "zero tolerance": ví dụ `/ig` có **G3 = không bao giờ tạo nội dung affiliate mà thiếu disclosure**. Đây chính là chỗ nhét guardrail TPBVSK vào.
-
-### 7.3. Maturity gates — chống thổi phồng — *AgriciDaniel/youtuber*
-- 5 mức chín: Scaffolded → Researched → Domain-adapted → Demo-verified → Market-ready. **Điểm bị trần theo mức chín; không thể sửa markdown để nhảy hạng.** Rất hợp để quản trị chất lượng khi có nhiều người cùng làm.
-
-### 7.4. Orchestrator + agent chuyên biệt song song — *claude-ads, Hainrixz/claude-ads, ai-ads-claude, claude-blog*
-- Một "nhạc trưởng" giữ phạm vi + tổng hợp; **nhiều agent chuyên sâu chạy song song**, mỗi agent có checklist riêng, nạp reference **on-demand (kiểu RAG)**, trả về **cả Markdown (người đọc) lẫn JSON (máy đọc, validate theo schema)**.
-- **Một agent bắt buộc lỗi → cả run bị đánh dấu "partial", không bao giờ trình như bản đầy đủ.** Trung thực về độ phủ bằng chứng (graded ≥80% / provisional 60–79% / insufficient <60%).
-
-### 7.5. Khuôn an toàn cho hành động ghi tài khoản — *AgriciDaniel/claude-ads*
-Muốn cho AI *ghi* vào tài khoản thật, bắt buộc đủ 6 lớp: (1) capability đã test & bật, (2) ID tài khoản/đối tượng rõ, (3) diff before/after kèm "blast radius", (4) chủ phê duyệt trong trần định sẵn, (5) idempotency key + audit + rollback + cửa sổ verify, (6) verify state remote vẫn khớp precondition. **Xoá vĩnh viễn: không hỗ trợ.** → Nên là chính sách chung của bạn cho mọi automation đụng kênh thật.
-
-### 7.6. Niche-profile điều phối cả pipeline — *rushindrasinha/youtube-shorts-pipeline*
-- Một file YAML "niche profile" nạp một lần, **định hình mọi khâu**: giọng script, phong cách hình, nhạc, thumbnail. Đổi profile = đổi toàn bộ "chất" mà không phải sửa prompt từng chỗ.
-- **Anti-hallucination gate**: khâu Research bơm sự thật (tên/số/claim) từ nguồn thật; LLM bị buộc *chỉ dùng dữ liệu research, không dùng kiến thức huấn luyện*. → Cực kỳ hợp nội dung y tế.
-- Có **"$0.00 mode"** (Ollama local + Edge TTS) — làm chủ chi phí.
-
-### 7.7. Flywheel khép kín, skill nối skill — *Affitor/affiliate-skills*
-- 8 giai đoạn Research → Content → Blog/SEO → Offers → Distribution → Analytics → Automation → Meta, với **Analytics vòng lại Research**. Mỗi skill khai báo `chain_metadata.suggested_next` để **agent tự nối chuỗi**, truyền dữ liệu qua ngữ cảnh hội thoại chứ không copy-paste file.
-
-### 7.8. Refine bằng nhiều "nhân vật phản biện" — *aaaronmiller/create-viral-content*
-- 6 lượt tinh luyện đối kháng: The Skeptic → The Expert → The Scroller → The Competitor → The Editor → (thumbnail). Kèm **khung đạo đức tường minh** (được: đánh bóng ý mình, chuyển chuyên môn thành nội dung dễ hiểu; cấm: astroturf, tin sai, mạo danh). → Khung đạo đức này gần như bắt buộc cho bác sĩ.
-
-### 7.9. Voice rules chống giọng AI — *sergebulaev family, anti-slop, viral-hooks*
-- Cấm em dash; viết hoa tên riêng; cấm từ sáo AI; **số cụ thể thắng tính từ**; **title là lời hứa + payoff cụ thể, không tóm tắt**; **title và thumbnail là một cặp, không lặp chữ**; **30 giây đầu (3 giây với Short) mới là thuật toán thật — bỏ intro**.
-
-### 7.10. Perception privacy-first — *mathiaschu/watch*
-- Xem/nghe video mà **không key, không telemetry, transcribe on-device, cookie đọc live không lưu**. Chuẩn mực về quyền riêng tư cho một tổ chức y tế.
-
-### 7.11. "Feedback loop tự học" bằng thao tác người dùng — *bradautomates/content-ideas*
-- Render một trang HTML tự chứa, người dùng ▲/▼ từng ý; phản ứng được lưu làm **substrate cá nhân hoá** cho lần sau. Mô hình "widget + học dần" đáng bắt chước.
+- **remotion-superpowers**: if Dr. Hieu builds video from code (Remotion), this is a strong and free
+  set, including a "see/hear/analyze" layer. Worth trying in the production branch.
+- **anything-to-notebooklm**: the "any content → NotebookLM" idea fits turning medical material into
+  study podcasts and mindmaps very well. **But** the paywall-bypass module is a legal line — if it is
+  used at all, that part must be switched off and only content you have the rights to fed in.
+- **tiktok_analysis**: keep as a data-security reference, not as a tool.
 
 ---
 
-## 8. KHUYẾN NGHỊ HÀNH ĐỘNG CHO BACSI ONLINE
+## 7. PHILOSOPHY / WORKFLOW / PIPELINE WORTH KEEPING
 
-**Dùng/nghiên cứu ngay (Tier S–A, an toàn):**
-- Perception video: **mathiaschu/watch** (hoặc giữ skill `youtube-video-perception` đang có).
-- Research trước khi làm nội dung/họp: **last30days** (đã cài).
-- Học kiến trúc để dựng cỗ máy nội dung riêng: **AgriciDaniel/claude-blog + anti-slop + claude-ads** (đọc, không cần cài nguyên).
-- Validate ý tưởng sản phẩm/nội dung HGMP: **MaxKmet/idea-validation-agents** (không key).
-- Nếu làm video pipeline: tham khảo **youtube-shorts-pipeline** (anti-hallucination + niche profile) và **remotion-superpowers / claude-youtube-editor** cho khâu dựng.
+This is the most valuable section — distilled for reuse in the Bacsi Online/HGMP system, even if not a
+single repo is installed.
 
-**Chỉ lấy tinh hoa, không cài:**
-- Voice rules + hook formulas (sergebulaev, viral-hooks, create-viral-content) → gộp thành 1 tài liệu house-style.
-- Các "gate / evidence ledger / maturity gate" → nhúng vào skill `supplement-compliance` hiện có.
+### 7.1. Evidence discipline — *AgriciDaniel/anti-slop, youtuber, claude-ads*
+- **Every figure must point back to a dated source in a "source ledger"** (URL + date retrieved +
+  evidence tier + limitations). No source = the claim cannot be made. → Applies directly to
+  health-supplement content: every benefit must anchor to permitted documentation.
+- **Never conclude, only produce artifacts a person can check.** anti-slop never declares "this was
+  written by AI"; it points at specific, verifiable defects.
+- **Never let the model gatekeep its own edits** — the scanner re-runs after a fix (preventing
+  self-congratulatory rubber-stamping).
 
-**Tránh:**
-- 🔴 tiktok-ssl-bypass, TiktokAutoUploader, OmniPost-AI, ig-setter, FacebookToolkit, facebook-chat-api — mọi thứ ghi tài khoản bằng reverse-engineering/DOM.
-- 🟣 Không bật đường Publora / TranscriptAPI / Supadata / Apify cho nội dung y tế trừ khi có lý do rõ; ưu tiên API chính thức.
-- ⚰️ Bỏ qua repo chết/archived trừ khi đọc code tham khảo (youtube/api-samples là ngoại lệ đáng đọc).
-- Bypass paywall trong anything-to-notebooklm: tắt, chỉ đưa nội dung có quyền.
+### 7.2. A Delivery Contract with several "gates" — *claude-blog (5 gates), nicojunk/claude-ig (7 gates)*
+- Content **cannot be delivered until it clears every gate**: all formats present → visual check
+  (screenshots at 3 screen sizes) → review score ≥ 90 with 0 P0 defects → links/assets return 200.
+- The orchestrator **retries up to 3 times itself** before escalating to a person. → The ideal model for
+  the process: *draft → self-check compliance → self-check quality → only then submit for approval*.
+- A "zero tolerance" quality gate: for example `/ig` has **G3 = never produce affiliate content without
+  disclosure**. That is exactly where the health-supplement guardrail slots in.
 
-**Luật vàng bao trùm:** mọi title/script/caption do bất kỳ skill nào sinh ra → **chạy qua `supplement-compliance` trước khi đăng**. Các công thức hook "shock/curiosity-gap" là nơi dễ đẻ claim công dụng vi phạm nhất.
+### 7.3. Maturity gates — anti-overstatement — *AgriciDaniel/youtuber*
+- 5 maturity levels: Scaffolded → Researched → Domain-adapted → Demo-verified → Market-ready. **The
+  score is capped by the level; editing the markdown cannot promote it.** A very good fit for managing
+  quality when several people work on the same thing.
+
+### 7.4. An orchestrator plus specialised agents in parallel — *claude-ads, Hainrixz/claude-ads, ai-ads-claude, claude-blog*
+- One "conductor" holds the scope and synthesises; **several specialist agents run in parallel**, each
+  with its own checklist, loading references **on demand (RAG-style)**, and returning **both Markdown
+  (for people) and JSON (for machines, validated against a schema)**.
+- **If one agent fails, the whole run is marked "partial" and is never presented as complete.** Honest
+  about evidence coverage (graded ≥80% / provisional 60–79% / insufficient <60%).
+
+### 7.5. A safety frame for actions that write to accounts — *AgriciDaniel/claude-ads*
+To let an AI *write* to a real account, all 6 layers are required: (1) the capability tested and
+enabled, (2) an explicit account/object ID, (3) a before/after diff with the "blast radius", (4) owner
+approval within a preset ceiling, (5) an idempotency key + audit + rollback + a verification window,
+(6) verification that the remote state still matches the precondition. **Permanent deletion: not
+supported.** → This should be your general policy for any automation touching a live channel.
+
+### 7.6. A niche profile driving the whole pipeline — *rushindrasinha/youtube-shorts-pipeline*
+- A single YAML "niche profile", loaded once, **shapes every stage**: script voice, visual style, music,
+  thumbnail. Changing the profile changes the entire character without editing prompts one by one.
+- **An anti-hallucination gate**: the Research stage injects facts (names/figures/claims) from real
+  sources, and the LLM is forced to *use only the research data, never its training knowledge*. →
+  Extremely well suited to medical content.
+- It has a **"$0.00 mode"** (local Ollama + Edge TTS) — cost stays under control.
+
+### 7.7. A closed-loop flywheel, skills chaining into skills — *Affitor/affiliate-skills*
+- 8 stages: Research → Content → Blog/SEO → Offers → Distribution → Analytics → Automation → Meta, with
+  **Analytics looping back into Research**. Each skill declares `chain_metadata.suggested_next` so **the
+  agent chains them itself**, passing data through the conversation context rather than copy-pasting
+  files.
+
+### 7.8. Refining through several adversarial personas — *aaaronmiller/create-viral-content*
+- 6 adversarial refinement passes: The Skeptic → The Expert → The Scroller → The Competitor → The Editor
+  → (thumbnail). Together with **an explicit ethics frame** (allowed: sharpening your own point,
+  translating expertise into accessible content; forbidden: astroturfing, misinformation,
+  impersonation). → That ethics frame is close to mandatory for a doctor.
+
+### 7.9. Voice rules against the AI register — *the sergebulaev family, anti-slop, viral-hooks*
+- No em dashes; capitalise proper nouns; no AI clichés; **a concrete number beats an adjective**; **a
+  title is a promise plus a specific payoff, not a summary**; **title and thumbnail are a pair and must
+  not repeat each other**; **the first 30 seconds (3 seconds on a Short) is the real algorithm — drop
+  the intro**.
+
+### 7.10. Privacy-first perception — *mathiaschu/watch*
+- Watching/listening to video with **no key, no telemetry, on-device transcription, and cookies read
+  live and never stored**. The privacy standard a medical organisation should hold to.
+
+### 7.11. A "self-learning feedback loop" from user actions — *bradautomates/content-ideas*
+- Renders a self-contained HTML page where the user marks each idea ▲/▼; those reactions are stored as a
+  **personalisation substrate** for next time. The "widget + gradual learning" model is worth copying.
 
 ---
 
-*Nguồn số liệu: GitHub REST API (`/repos/{owner}/{repo}` và README raw), truy vấn 2026-08-05. Điểm số là đánh giá định tính theo bối cảnh Bacsi Online, không phải chỉ số khách quan tuyệt đối.*
+## 8. RECOMMENDED ACTIONS FOR BACSI ONLINE
+
+**Use or study now (Tier S–A, safe):**
+- Video perception: **mathiaschu/watch** (or keep the existing `youtube-video-perception` skill).
+- Research before producing content or holding a meeting: **last30days** (already installed).
+- Learning the architecture for building our own content machine: **AgriciDaniel/claude-blog +
+  anti-slop + claude-ads** (read them; installing is not necessary).
+- Validating HGMP product or content ideas: **MaxKmet/idea-validation-agents** (no key).
+- If a video pipeline is built: study **youtube-shorts-pipeline** (anti-hallucination + niche profiles)
+  and **remotion-superpowers / claude-youtube-editor** for the assembly stage.
+
+**Take the ideas only, do not install:**
+- The voice rules and hook formulas (sergebulaev, viral-hooks, create-viral-content) → merge into one
+  house-style document.
+- The "gates / evidence ledger / maturity gates" → embed them in the existing `supplement-compliance`
+  skill.
+
+**Avoid:**
+- 🔴 tiktok-ssl-bypass, TiktokAutoUploader, OmniPost-AI, ig-setter, FacebookToolkit, facebook-chat-api —
+  anything writing to an account through reverse-engineering or the DOM.
+- 🟣 Do not enable the Publora / TranscriptAPI / Supadata / Apify routes for medical content without a
+  clear reason; prefer the official APIs.
+- ⚰️ Skip dead/archived repos unless reading the code as a reference (`youtube/api-samples` is the
+  exception worth reading).
+- The paywall bypass in anything-to-notebooklm: switch it off and feed in only content you have the
+  rights to.
+
+**The golden rule over everything:** any title/script/caption produced by any skill →
+**run it through `supplement-compliance` before publishing**. The "shock/curiosity-gap" hook formulas
+are the most likely place for a non-compliant efficacy claim to appear.
+
+---
+
+*Data source: the GitHub REST API (`/repos/{owner}/{repo}` and the raw README), queried 2026-08-05. The
+scores are a qualitative assessment against the Bacsi Online context, not an absolute objective metric.*

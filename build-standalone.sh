@@ -28,8 +28,8 @@ This script deletes both directories and rebuilds them from a local source folde
 folder is missing or out of date, you lose vendored plugins that exist nowhere else.
 
 To set up a new machine, you do not need this script:
-    git clone https://github.com/Bacsi-Online-HGMP/claude-power-kit.git
-    claude plugin marketplace add Bacsi-Online-HGMP/claude-power-kit
+    git clone https://github.com/Bacsi-Online-HGMP/bso-power-kit.git
+    claude plugin marketplace add Bacsi-Online-HGMP/bso-power-kit
 
 To genuinely re-vendor from upstream, check `git status` is clean first, then:
     bash build-standalone.sh --force
@@ -107,5 +107,5 @@ echo
 du -sh "$HERE/plugins" "$HERE/tools" 2>/dev/null || true
 [ "$miss" -eq 0 ] && echo "Done — bundle is standalone." || echo "Done with warnings — some sources were missing (see ! lines)."
 echo
-echo "To share: zip it ->   (cd \"$HERE/..\" && zip -rq claude-power-kit.zip Ultimate-Bundle)"
+echo "To share: zip it ->   (cd \"$HERE/..\" && zip -rq bso-power-kit.zip Ultimate-Bundle)"
 echo "To use in Claude Code: /plugin marketplace add ./Ultimate-Bundle"

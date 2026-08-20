@@ -42,6 +42,6 @@ echo "==> Done. Next steps:"
 if [ "$TARGET" != "$HOME/.claude" ]; then
   echo "  CLAUDE_CONFIG_DIR=$TARGET claude     # launch, then /login with the other account"
 fi
-echo "  Inside claude: /plugin  ->  browse claude-power-kit  ->  install what you need"
+echo "  Inside claude: /plugin  ->  browse bso-power-kit  ->  install what you need"
 echo
 echo "Cowork: Settings > Capabilities > add this folder as a marketplace, enable plugins."

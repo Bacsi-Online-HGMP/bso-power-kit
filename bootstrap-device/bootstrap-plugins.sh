@@ -1,23 +1,23 @@
 #!/usr/bin/env bash
-# Cài lại toàn bộ plugin Claude Code trên MÁY MỚI, theo plugins-claude-code.tsv.
+# Reinstall every Claude Code plugin on a NEW MACHINE, from plugins-claude-code.tsv.
 #
-# Chỉ lo LỚP 2 (plugin Claude Code, cài theo máy).
-# Lớp 1 (plugin Cowork) theo tài khoản Claude, tự có sau khi đăng nhập.
-# Lớp 3 (MCP connector) phải cấp quyền tay. Xem bso-marketing/docs/thiet-bi-moi.md.
+# Covers LAYER 2 only (Claude Code plugins, installed per machine).
+# Layer 1 (Cowork plugins) follows the Claude account and appears after signing in.
+# Layer 3 (MCP connectors) must be authorised by hand. See bso-marketing/docs/thiet-bi-moi.md.
 #
-# Danh sách đã qua thước 9 trục ngày 2026-08-06: giữ 16, loại 65.
-# Điểm từng mục: scoring-layer-2.md · Lý do loại: plugins-loai.tsv
+# The list passed the 9-axis rubric on 2026-08-06: 16 kept, 65 rejected.
+# Per-item scores: scoring-layer-2.md - reasons for rejection: plugins-loai.tsv
 #
-# Chạy khô để xem sẽ làm gì:  ./bootstrap-plugins.sh --dry-run
-# bash 3.2 (macOS mặc định) chạy được.
+# Dry run to see what it would do:  ./bootstrap-plugins.sh --dry-run
+# Runs on bash 3.2 (the macOS default).
 #
-# GÓI (pack) — cột 4 của TSV. Marketplace luôn thêm HẾT; chỉ plugin mới lọc theo gói.
-# Đúng luật nhà: kho cứ rộng tay, danh sách bật phải chặt.
+# PACK - column 4 of the TSV. Every marketplace is added; only plugins are filtered by pack.
+# The house rule: a generous store, a tight enable list.
 #
-#   ./bootstrap-plugins.sh                    # chỉ gói 'core'
-#   ./bootstrap-plugins.sh --pack core,code   # nhiều gói, ngăn bằng dấu phẩy
-#   ./bootstrap-plugins.sh --all              # tất, kể cả gói '?' chưa phân loại
-#   ./bootstrap-plugins.sh --list-packs       # xem có gói nào, mỗi gói mấy plugin
+#   ./bootstrap-plugins.sh                    # the 'core' pack only
+#   ./bootstrap-plugins.sh --pack core,code   # several packs, comma-separated
+#   ./bootstrap-plugins.sh --all              # everything, including the unclassified '?' pack
+#   ./bootstrap-plugins.sh --list-packs       # which packs exist, and how many plugins in each
 set -uo pipefail
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -33,27 +33,27 @@ while [ $# -gt 0 ]; do
     --all)        ALL=1 ;;
     --list-packs) LISTPACKS=1 ;;
     --pack)       shift; PACKS="${1:-}"
-                  [ -n "$PACKS" ] || { echo "--pack cần tên gói." >&2; exit 1; } ;;
+                  [ -n "$PACKS" ] || { echo "--pack needs a pack name." >&2; exit 1; } ;;
     --pack=*)     PACKS="${1#--pack=}" ;;
     -h|--help)    sed -n '2,20p' "$0"; exit 0 ;;
-    *)            echo "Không hiểu tham số: $1" >&2; exit 1 ;;
+    *)            echo "Unrecognised argument: $1" >&2; exit 1 ;;
   esac
   shift
 done
 
-[ -f "$LIST" ] || { echo "Không thấy $LIST" >&2; exit 1; }
+[ -f "$LIST" ] || { echo "Cannot find $LIST" >&2; exit 1; }
 
 if [ "$LISTPACKS" = 1 ]; then
-  echo "Gói có trong $(basename "$LIST"):"
+  echo "Packs present in $(basename "$LIST"):"
   awk -F'\t' '$1=="plugin"{p=($4==""?"?":$4); c[p]++} END{for(k in c) printf "  %-10s %3d plugin\n", k, c[k]}' "$LIST" | sort
   echo
-  echo "'?' = chưa phân loại. Chỉ cài khi dùng --all."
+  echo "'?' = unclassified. Only installed with --all."
   exit 0
 fi
 
-command -v claude >/dev/null || { echo "Chưa có lệnh 'claude' trong PATH." >&2; exit 1; }
+command -v claude >/dev/null || { echo "No 'claude' command on the PATH." >&2; exit 1; }
 
-# bash 3.2: không có mảng kết hợp. Dùng chuỗi có ngăn cách để tra.
+# bash 3.2 has no associative arrays. A delimited string is used for lookups instead.
 PACKSEL=",$(echo "$PACKS" | tr -d ' '),"
 in_pack() {
   [ "$ALL" = 1 ] && return 0
@@ -62,36 +62,36 @@ in_pack() {
 }
 
 run() {
-  if [ "$DRY" = 1 ]; then echo "  [khô] $*"; else "$@"; fi
+  if [ "$DRY" = 1 ]; then echo "  [dry] $*"; else "$@"; fi
 }
 
 if [ "$ALL" = 1 ]; then
-  echo "Gói: TẤT CẢ (--all)"
+  echo "Packs: ALL (--all)"
 else
-  echo "Gói: $PACKS   — thêm gói khác bằng --pack a,b · xem danh sách bằng --list-packs"
+  echo "Packs: $PACKS   - add more with --pack a,b - list them with --list-packs"
 fi
 echo
 
-# --- Bước 1: marketplace ---------------------------------------------------
-# Phải xong trước, không thì lệnh install không biết lấy plugin ở đâu.
-echo "== Marketplace (luôn thêm hết, không lọc theo gói) =="
+# --- Step 1: marketplaces --------------------------------------------------
+# This must finish first, or the install command has no idea where to get a plugin from.
+echo "== Marketplaces (all added, never filtered by pack) =="
 while IFS="$(printf '\t')" read -r kind name ref pack; do
   case "$kind" in \#*|'') continue;; esac
   [ "$kind" = "marketplace" ] || continue
 
   case "$ref" in
     /*)
-      echo "  ✗ $name — đăng ký kiểu thư mục local ($ref). Bỏ qua."
-      echo "    Máy cũ phải đăng ký lại bằng URL git rồi chạy export-plugins.sh lần nữa."
+      echo "  x $name - registered as a local directory ($ref). Skipped."
+      echo "    The old machine must re-register it by git URL and run export-plugins.sh again."
       continue
       ;;
   esac
 
   echo "  + $name  <- $ref"
-  run claude plugin marketplace add "$ref" || echo "    ⚠ thất bại: $name (repo private? chưa đăng nhập đúng tài khoản gh?)"
+  run claude plugin marketplace add "$ref" || echo "    ! failed: $name (private repo? signed in to the wrong gh account?)"
 done < "$LIST"
 
-# --- Bước 2: plugin --------------------------------------------------------
+# --- Step 2: plugins -------------------------------------------------------
 echo
 echo "== Plugin =="
 FAIL=""
@@ -115,13 +115,13 @@ while IFS="$(printf '\t')" read -r kind name ref pack; do
 done < "$LIST"
 
 echo
-echo "Cài $DONE plugin, bỏ qua $SKIP (ngoài gói đang chọn)."
+echo "Installed $DONE plugins, skipped $SKIP (outside the selected packs)."
 if [ -n "$FAIL" ]; then
-  echo "⚠ Cài hỏng:$FAIL"
-  echo "  Thường do marketplace ở bước 1 không thêm được. Sửa nguồn rồi chạy lại."
+  echo "! Failed to install:$FAIL"
+  echo "  Usually because a marketplace in step 1 could not be added. Fix the source and re-run."
   exit 1
 fi
-echo "✔ Xong. Mở lại Claude Code hoặc chạy /reload-plugins."
+echo "Done. Restart Claude Code or run /reload-plugins."
 echo
-echo "Nhắc: đây là LỚP 2 (plugin Claude Code). Plugin Cowork ở LỚP 1 theo tài khoản Claude,"
-echo "không script được — phải bật tay trong UI. Danh sách ở bso-marketing/docs/chon-cong-cu-2026-08-05.md."
+echo "Reminder: this is LAYER 2 (Claude Code plugins). Cowork plugins are LAYER 1, tied to the Claude account,"
+echo "and cannot be scripted - they must be enabled by hand in the UI. The list is in bso-marketing/docs/chon-cong-cu-2026-08-05.md."

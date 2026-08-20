@@ -72,7 +72,7 @@ Two ways, both free:
 **1 — One bundle (Claude Code).** This folder ships a plugin marketplace pointing at the repos already on your disk under `../Turn these to skill bundles/`:
 ```
 /plugin marketplace add ./Ultimate-Bundle
-/plugin install <name>@claude-power-kit
+/plugin install <name>@bso-power-kit
 ```
 (See `.claude-plugin/marketplace.json`. If a source path doesn't resolve, adjust the relative path to match where the repo folder sits.)
 

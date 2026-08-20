@@ -1,360 +1,388 @@
 # Scoring — Layer 2 (Claude Code plugins)
 
-Chấm 81 plugin Lớp 2 theo thước 9 trục ở `bso-marketing/docs/rubric-danh-gia-cong-cu.md`.
-Ngày 2026-08-06. Kết quả sinh ra `plugins-claude-code.tsv` (thứ được cài) và
-`plugins-loai.tsv` (thứ bị loại, giữ lý do).
+Scoring the 81 Layer-2 plugins against the 9-axis rubric in
+`bso-marketing/docs/rubric-danh-gia-cong-cu.md`. Dated 2026-08-06. The results produce
+`plugins-claude-code.tsv` (what gets installed) and `plugins-loai.tsv` (what was rejected, with the
+reason kept).
 
-## Vì sao lượt này cần thiết
+> **Language note.** The axis codes (`PH`, `CP`, `AT`, `FR`, `ĐL`, `VH`, `NG`, `PB`, `TR`) and the pack
+> names (`core`, `code`, `seo`, `vanphong`) are kept verbatim — the axes are the scoring-table headers
+> shared across documents, and the pack names are literal values in the TSV files.
 
-Cột `pack` gán ngày 2026-08-05 là **phân loại tay, không phải chấm điểm**. 62 mục bị gán `bo`
-bằng cảm nhận, không mục nào qua luật cắt.
+## Why this pass was necessary
 
-Nặng hơn: `SCORING.md` của repo này **cố ý loại official Anthropic** ("Harold's rule" — thứ
-built-in thì không cần chấm). Nên 58 plugin từ `anthropics/claude-plugins-official` chưa từng
-được thước nào chấm. Đây là **chấm lần đầu**, không phải chấm lại.
+The `pack` column assigned on 2026-08-05 was **a hand classification, not a score**. 62 entries were
+marked `bo` (dropped) by feel, and not one of them went through the cut rule.
 
-## Lỗ hổng thước phải vá trước khi chấm được
+Worse: this repo's `SCORING.md` **deliberately excluded anything official from Anthropic** ("Harold's
+rule" — built-in things need no scoring). So the 58 plugins from `anthropics/claude-plugins-official`
+had never been scored by any rubric. This is **a first scoring, not a re-scoring**.
 
-58 plugin chính chủ Anthropic ăn 5 điểm gần như tự động ở `AT FR ĐL VH PB`. `csharp-lsp` ra
-**40 điểm = tier S** dù BSO không viết một dòng C# nào. Luật cắt cũ chỉ bắt từ tier B xuống nên
-không chạm tới nó.
+## A hole in the rubric that had to be patched before scoring was possible
 
-Đã vá bằng **sàn cứng `PH` = 1 → loại thẳng, độc lập tier** (và `PB` = 1 → loại thẳng). Lý do
-đầy đủ ghi trong thước. Đổi lại, mọi điểm `PH` = 1 dưới đây **đều kèm lý do một dòng** — đó là
-điều kiện thước đặt ra khi nhận sàn cứng.
+The 58 first-party Anthropic plugins take a 5 almost automatically on `AT FR ĐL VH PB`. `csharp-lsp`
+comes out at **40 points = tier S** even though BSO does not write a single line of C#. The old cut
+rule only bit from tier B downward, so it never touched it.
 
-## Hai luật loại khác nhau — đừng lẫn
+Patched with **a hard floor: `PH` = 1 → rejected outright, independent of tier** (and `PB` = 1 →
+rejected outright). The full reasoning is recorded in the rubric. In exchange, every `PH` = 1 below
+**carries a one-line reason** — that was the condition the rubric set when it accepted the hard floor.
 
-| Luật | Ở đâu | Soi gì |
+## Two different rejection rules — do not confuse them
+
+| Rule | Where | What it examines |
 |---|---|---|
-| **Luật cắt** | Thước, mục *Luật cắt* | Chất lượng của **một** mục: sàn `PH`/`PB`, tier, cờ điểm thấp |
-| **Luật trùng** | `CLAUDE.root.md` — *trùng nhiều bật một* | Quan hệ giữa **hai** mục |
+| **The cut rule** | The rubric, section *Cut rule* | The quality of **one** entry: the `PH`/`PB` floors, tier, low-score flags |
+| **The duplication rule** | `CLAUDE.root.md` — *heavy overlap, enable one* | The relationship between **two** entries |
 
-Trục `TR` **không được dùng trong luật cắt** — thước ghi rõ. Nên 5 mục bị loại vì trùng dưới đây
-bị loại theo *luật trùng*, không phải luật cắt. Điểm của chúng vẫn cao.
+The `TR` axis **is not used in the cut rule** — the rubric says so explicitly. So the 5 entries below
+rejected for duplication were rejected under the *duplication rule*, not the cut rule. Their scores
+remain high.
 
-## Giữ lại — 16 plugin, chấm đủ 9 trục
+## Kept — 16 plugins, scored on all 9 axes
 
-Cột điểm theo thứ tự `PH CP AT FR ĐL VH NG PB` rồi `TR`.
+The score column runs `PH CP AT FR ĐL VH NG PB`, then `TR`.
 
-| Plugin | Nguồn | Pack | PH CP AT FR ĐL VH NG PB | TR | Tổng | Tier | Ghi chú |
+| Plugin | Source | Pack | PH CP AT FR ĐL VH NG PB | TR | Total | Tier | Notes |
 |---|---|---|---|:--:|:--:|:--:|---|
-| `claude-md-management` | official | core | 5 5 5 5 5 5 5 5 | 5 | **45** | S | CLAUDE.md bốn tầng (gốc · marketing · core · assets) — đúng việc |
-| `plugin-dev` | official | core | 5 5 5 5 5 5 5 5 | 5 | **45** | S | BSO tự dựng hai marketplace. Không có gì thay |
-| `skill-creator` | official | core | 5 5 5 5 5 5 5 5 | 4 | **44** | S | Trùng nhẹ bản trong bundle Cowork — khác lớp, bật cả |
-| `commit-commands` | official | core | 4 5 5 5 5 5 5 5 | 4 | **43** | S | Commit hằng ngày ở hai repo |
-| `pyright-lsp` | official | code | 4 5 5 5 5 5 4 5 | 5 | **43** | S | Pipeline video và `okf.py` đều là Python |
-| `security-guidance` | official | core | 3 5 5 5 5 5 5 5 | 4 | **42** | S | "Không commit secret" là luật nhà — có lớp máy đỡ thì tốt |
-| `hookify` | official | core | 3 5 4 5 5 5 5 5 | 5 | **42** | S | Hook cho `okf check` trước khi push |
-| `desktop-commander` | official | core | 5 5 3 5 5 5 4 5 | 4 | **41** | S | **ĐANG DÙNG.** `AT`=3: chạy shell tuỳ ý trên máy thật, quyền rất rộng |
-| `code-review` | official | code | 3 5 5 5 5 5 5 5 | 3 | **41** | S | `TR`=3 với brooks-lint và mattpocock — trùng ít, bật cả |
-| `caveman` | caveman | van | 3 4 4 5 4 5 5 5 | 5 | **40** | S | 96k sao, push 04-08. Giảm token đầu ra; **không dùng cho chữ ra sản phẩm** |
-| `ponytail` | ponytail | van | 3 5 5 5 4 5 5 5 | 3 | **40** | S | 96.5k sao, push 15-07. Văn phong gọn |
-| `github` | official | code | 4 5 4 5 5 5 4 5 | 3 | **40** | S | `TR`=3: `gh` CLI đã làm phần lớn |
-| `andrej-karpathy-skills` | karpathy-skills | code | 4 5 2 5 5 5 5 4 | 4 | **39** | S | 🟠 **`AT`=2** — xem cảnh báo bên dưới |
-| `chrome-devtools-mcp` | official | web | 4 5 4 5 5 5 3 5 | 2 | **38** | S | Trùng ba đường — xem *luật trùng* |
-| `superpowers` | official | code | 4 5 5 5 5 4 2 5 | 3 | **38** | S | `NG`=2: 14 skill tự bắn. Nặng nhất trong nhóm giữ |
-| `ecc` | ecc | code | 2 4 3 5 4 4 1 5 | 3 | **31** | A | 238k sao. `NG`=1 — agent OS đầy đủ. Giữ trong kho, **cân nhắc không bật** |
+| `claude-md-management` | official | core | 5 5 5 5 5 5 5 5 | 5 | **45** | S | Four tiers of CLAUDE.md (root · marketing · core · assets) — exactly the job |
+| `plugin-dev` | official | core | 5 5 5 5 5 5 5 5 | 5 | **45** | S | BSO runs two marketplaces of its own. Nothing replaces it |
+| `skill-creator` | official | core | 5 5 5 5 5 5 5 5 | 4 | **44** | S | Slight overlap with the Cowork bundle copy — different layers, enable both |
+| `commit-commands` | official | core | 4 5 5 5 5 5 5 5 | 4 | **43** | S | Daily commits across two repos |
+| `pyright-lsp` | official | code | 4 5 5 5 5 5 4 5 | 5 | **43** | S | The video pipeline and `okf.py` are both Python |
+| `security-guidance` | official | core | 3 5 5 5 5 5 5 5 | 4 | **42** | S | "Never commit a secret" is a house rule — a machine layer helping is welcome |
+| `hookify` | official | core | 3 5 4 5 5 5 5 5 | 5 | **42** | S | A hook running `okf check` before a push |
+| `desktop-commander` | official | core | 5 5 3 5 5 5 4 5 | 4 | **41** | S | **IN USE.** `AT`=3: it runs arbitrary shell on the real machine, a very wide permission |
+| `code-review` | official | code | 3 5 5 5 5 5 5 5 | 3 | **41** | S | `TR`=3 against brooks-lint and mattpocock — light overlap, enable both |
+| `caveman` | caveman | vanphong | 3 4 4 5 4 5 5 5 | 5 | **40** | S | 96k stars, pushed 04-08. Reduces output tokens; **never used for product-facing copy** |
+| `ponytail` | ponytail | vanphong | 3 5 5 5 4 5 5 5 | 3 | **40** | S | 96.5k stars, pushed 15-07. Concise code style |
+| `github` | official | code | 4 5 4 5 5 5 4 5 | 3 | **40** | S | `TR`=3: the `gh` CLI already does most of it |
+| `andrej-karpathy-skills` | karpathy-skills | code | 4 5 2 5 5 5 5 4 | 4 | **39** | S | 🟠 **`AT`=2** — see the warning below |
+| `chrome-devtools-mcp` | official | seo | 4 5 4 5 5 5 3 5 | 2 | **38** | S | Overlaps three ways — see *the duplication rule* |
+| `superpowers` | official | code | 4 5 5 5 5 4 2 5 | 3 | **38** | S | `NG`=2: 14 self-triggering skills. The heaviest of the kept set |
+| `ecc` | ecc | code | 2 4 3 5 4 4 1 5 | 3 | **31** | A | 238k stars. `NG`=1 — a full agent OS. Keep it in the store, **consider not enabling it** |
 
-### 🟠 `andrej-karpathy-skills` — repo đã đổi chủ
+### 🟠 `andrej-karpathy-skills` — the repo changed hands
 
-Nguồn trong TSV ghi `forrestchang/andrej-karpathy-skills`. GitHub API trả về
-**`multica-ai/andrej-karpathy-skills`** — repo đã chuyển chủ, đường cũ còn chạy nhờ redirect.
-Repo **không có license**, push cuối 2026-04-20.
+The source in the TSV reads `forrestchang/andrej-karpathy-skills`. The GitHub API returns
+**`multica-ai/andrej-karpathy-skills`** — the repo has moved, and the old path still works through a
+redirect. The repo **has no licence**, and was last pushed 2026-04-20.
 
-Theo thước, "tác giả nghi fork" là dấu hiệu `AT` thấp; chuyển chủ + mất license đúng ô đó. Tổng
-39 điểm nên luật cắt không bắt được — **đây là quyết định người, không phải quyết định của thước.**
-Hai đường: sửa nguồn thành `multica-ai/...` và ghim commit, hoặc bỏ và giữ luật trong skill nhà làm.
-Chưa quyết, chưa sửa nguồn.
+Under the rubric, "an author who looks like an impersonating fork" is a low-`AT` signal; changing
+hands plus losing the licence lands in that same box. The total is 39, so the cut rule cannot catch it
+— **this is a human decision, not the rubric's.** Two routes: fix the source to `multica-ai/...` and
+pin a commit, or drop it and keep the rules in an in-house skill. Undecided, and the source has not
+been changed.
 
-### `ecc` — giữ trong kho, chưa nên bật
+### `ecc` — keep it in the store, do not enable it yet
 
-`NG`=1 là điểm nặng nhất trong nhóm giữ: ECC là một agent harness đầy đủ (agent + command + hook
-+ skill + MCP). Đúng luật *kho rộng tay, bật chặt* thì nó vào TSV nhưng nằm ở pack `code`, chỉ cài
-khi có việc thật cần.
+`NG`=1 is the heaviest score in the kept set: ECC is a full agent harness (agents + commands + hooks +
+skills + MCP). Under the *generous store, tight enable list* rule it belongs in the TSV, but in the
+`code` pack, installed only when there is a real need.
 
-## Loại theo luật trùng — 5 plugin, điểm vẫn cao
+## Rejected under the duplication rule — 5 plugins, still scoring well
 
-Không mục nào ở đây kém. Chúng bị loại vì **có mục khác cùng miền hợp BSO hơn**.
+Nothing here is poor. They were rejected because **something else in the same domain fits BSO better**.
 
-| Plugin | Điểm | Thua ai | Vì sao bên kia thắng |
+| Plugin | Score | Lost to | Why the other one wins |
 |---|:--:|---|---|
-| `frontend-design` | 39 (S) | `bso-design` | Mang nhận diện BSO; `bso-design` đã gộp bốn nguồn |
-| `claude-code-setup` | 41 (S) | `bootstrap-device` | Bộ cài nhà có cột `pack` và biết ba lớp plugin |
-| `playwright` | 38 (S) | `chrome-devtools-mcp` | Cùng điều khiển trình duyệt; DevTools đọc được console và network |
-| `remember` | 37 (A) | memory Cowork | Trí nhớ đã có sẵn theo tài khoản, không cần lớp thứ hai |
-| `huggingface-skills` *(bản official)* | 35 (A) | — | Kéo 19 skill ML; cả 19 đều bị sàn `PH` loại bên dưới |
+| `frontend-design` | 39 (S) | `bso-design` | It carries the BSO identity; `bso-design` already merges four sources |
+| `claude-code-setup` | 41 (S) | `bootstrap-device` | The in-house installer has the `pack` column and understands the three plugin layers |
+| `playwright` | 38 (S) | `chrome-devtools-mcp` | Both drive a browser; DevTools can also read the console and the network |
+| `remember` | 37 (A) | Cowork's memory | Memory already exists per account; a second layer is unnecessary |
+| `huggingface-skills` *(the official copy)* | 35 (A) | — | It drags in 19 ML skills; all 19 are rejected by the `PH` floor below |
 
-`chrome-devtools-mcp` trùng **ba** đường: bản official (giữ), bản trong marketplace `claude-power-kit`,
-và Claude-in-Chrome ở Cowork. Bật **một** — bản official, vì nó theo Claude Code và không cần
-build-standalone.
+`chrome-devtools-mcp` overlaps **three** ways: the official copy (kept), the copy in the
+`bso-power-kit` marketplace, and Claude-in-Chrome in Cowork. Enable **one** — the official copy,
+because it travels with Claude Code and needs no build-standalone.
 
-## Loại theo sàn cứng `PH` = 1 — 44 plugin
+## Rejected by the hard `PH` = 1 floor — 44 plugins
 
-Mỗi dòng kèm lý do, đúng điều kiện thước đặt ra khi nhận sàn cứng.
+Each row carries a reason, exactly as the rubric required when it accepted the hard floor.
 
-| Plugin | Lý do `PH` = 1 |
+| Plugin | Reason for `PH` = 1 |
 |---|---|
-| `csharp-lsp` · `jdtls-lsp` · `php-lsp` · `clangd-lsp` · `typescript-lsp` | BSO không viết C#, Java, PHP, C/C++, TypeScript |
-| `auth0` · `firebase` · `supabase` · `vercel` · `expo` | Hạ tầng ứng dụng web/mobile — BSO không có sản phẩm phần mềm |
-| `coderabbit` · `greptile` | Review code dạng SaaS trả phí, trùng `code-review` miễn phí |
-| `circleback` · `mintlify` · `datarobot-agent-skills` · `dataverse` · `fiftyone` | SaaS ngoài miền: họp, docs, AutoML, CRM Microsoft, dataset thị giác |
-| `discord` · `telegram` · `imessage` · `fakechat` | Kênh chat không phải kênh của BSO (YouTube · Facebook · Zalo) |
-| `data` · `data-engineering` | Kho dữ liệu, ETL — BSO không có |
-| `agent-sdk-dev` · `atomic-agents` · `mcp-server-dev` · `mcp-tunnels` · `mcp-apps` | Dựng agent/MCP để bán hoặc phát hành; BSO chỉ tiêu thụ |
-| `microsoft-docs` | Tra tài liệu Microsoft — không chạm việc nào |
-| `math-olympiad` | Toán thi — lệch hẳn miền |
-| `playground` · `ralph-loop` | Thử nghiệm vòng lặp agent, không gắn việc nào đang chạy |
-| `firecrawl` | Scraping cần key trả phí; thước còn cảnh báo ToS ở mục 2 |
-| 19 plugin `huggingface-skills` | Huấn luyện và triển khai mô hình ML: `hf-cli` · `hf-mem` · `huggingface-best` · `huggingface-community-evals` · `huggingface-datasets` · `huggingface-gradio` · `huggingface-llm-trainer` · `huggingface-local-models` · `huggingface-lora-space-builder` · `huggingface-paper-publisher` · `huggingface-papers` · `huggingface-spaces` · `huggingface-tool-builder` · `huggingface-trackio` · `huggingface-vision-trainer` · `huggingface-zerogpu` · `train-sentence-transformers` · `transformers-js` · `trl-training`. BSO dùng mô hình qua API, không huấn luyện |
+| `csharp-lsp` · `jdtls-lsp` · `php-lsp` · `clangd-lsp` · `typescript-lsp` | BSO does not write C#, Java, PHP, C/C++ or TypeScript |
+| `auth0` · `firebase` · `supabase` · `vercel` · `expo` | Web/mobile application infrastructure — BSO has no software product |
+| `coderabbit` · `greptile` | Paid SaaS code review, duplicating the free `code-review` |
+| `circleback` · `mintlify` · `datarobot-agent-skills` · `dataverse` · `fiftyone` | Out-of-domain SaaS: meetings, docs, AutoML, Microsoft CRM, vision datasets |
+| `discord` · `telegram` · `imessage` · `fakechat` | Chat channels that are not BSO's (YouTube · Facebook · Zalo) |
+| `data` · `data-engineering` | Data warehousing and ETL — BSO has neither |
+| `agent-sdk-dev` · `atomic-agents` · `mcp-server-dev` · `mcp-tunnels` · `mcp-apps` | Building agents/MCP to sell or publish; BSO only consumes them |
+| `microsoft-docs` | Looking up Microsoft documentation — touches no part of the work |
+| `math-olympiad` | Competition mathematics — entirely the wrong domain |
+| `playground` · `ralph-loop` | Agent-loop experiments, attached to no live work |
+| `firecrawl` | Scraping requiring a paid key; the rubric also flags ToS risk in section 2 |
+| The 19 `huggingface-skills` plugins | Training and deploying ML models: `hf-cli` · `hf-mem` · `huggingface-best` · `huggingface-community-evals` · `huggingface-datasets` · `huggingface-gradio` · `huggingface-llm-trainer` · `huggingface-local-models` · `huggingface-lora-space-builder` · `huggingface-paper-publisher` · `huggingface-papers` · `huggingface-spaces` · `huggingface-tool-builder` · `huggingface-trackio` · `huggingface-vision-trainer` · `huggingface-zerogpu` · `train-sentence-transformers` · `transformers-js` · `trl-training`. BSO uses models through an API and trains nothing |
 
-## Loại theo luật cắt thường — 6 plugin
+## Rejected by the ordinary cut rule — 6 plugins
 
-Không chạm sàn `PH` nhưng rơi tier B kèm cờ, hoặc `PH` = 2 mà không có việc thật.
+They do not hit the `PH` floor, but land in tier B with a flag, or at `PH` = 2 with no real work for
+them.
 
-| Plugin | PH | Vì sao |
+| Plugin | PH | Why |
 |---|:--:|---|
-| `pr-review-toolkit` | 2 | BSO push thẳng `main`, chưa có luồng PR — `CLAUDE.md` ghi rõ "chưa có lớp chặn nào trên `main`" |
-| `code-modernization` | 2 | Không có codebase cũ cần hiện đại hoá; hai pipeline video đang chạy tốt |
-| `feature-dev` | 2 | BSO không phát triển tính năng phần mềm |
-| `code-simplifier` | 2 | Trùng `code-review`, và mã BSO là script ngắn |
-| `session-report` | 2 | `HANDOFF-*.md` viết tay đang làm đúng việc này, hợp bối cảnh hơn |
-| `explanatory-output-style` · `learning-output-style` · `ai-plugins` | 2 | Đổi giọng đầu ra của Claude, không chạm việc sản xuất |
+| `pr-review-toolkit` | 2 | BSO pushes straight to `main` and has no PR flow — `CLAUDE.md` says plainly "there is still no gate on `main`" |
+| `code-modernization` | 2 | There is no legacy codebase to modernise; the two video pipelines run fine |
+| `feature-dev` | 2 | BSO does not develop software features |
+| `code-simplifier` | 2 | Duplicates `code-review`, and BSO's code is short scripts |
+| `session-report` | 2 | The hand-written `HANDOFF-*.md` already does this job and fits the context better |
+| `explanatory-output-style` · `learning-output-style` · `ai-plugins` | 2 | They change Claude's output register and touch no production work |
 
-## Ý cần hấp thụ — `harvest` từ thứ đã loại
+## Ideas to absorb — `harvest` from what was rejected
 
-Đúng ô thứ ba của bảng `harvest` trong thước: **không cài, đọc rút ý**.
+Exactly the third cell of the `harvest` table in the rubric: **do not install, read and take the idea**.
 
-| Nguồn | Ý cần rút |
+| Source | The idea to take |
 |---|---|
-| `session-report` | Cấu trúc mục nó sinh ra — đối chiếu với `HANDOFF-*.md` xem thiếu mục nào |
-| `pr-review-toolkit` | Danh mục kiểm trước khi merge — dùng làm checklist tay cho `core/claims-matrix/`, nơi push thẳng `main` là rủi ro thật |
-| `firecrawl` | Cách nó tách nội dung chính khỏi khung trang — hữu ích nếu tự viết bước đọc nghị định |
-| `caveman` | Đã cài. Nguyên tắc "bỏ từ nối, giữ danh từ" đáng soi lại `vietnamese-anti-slop` |
+| `session-report` | The structure of the sections it produces — compare against `HANDOFF-*.md` to see what is missing |
+| `pr-review-toolkit` | Its pre-merge checklist — use it as a manual checklist for `core/claims-matrix/`, where pushing straight to `main` is a real risk |
+| `firecrawl` | How it separates the main content from the page furniture — useful if a decree-reading step is ever written in-house |
+| `caveman` | Already installed. Its "drop the connectives, keep the nouns" principle is worth re-examining in `vietnamese-anti-slop` |
 
-## Lượt 2026-08-06, phiên hai — sửa bốn quyết định
+## The 2026-08-06 pass, session two — four decisions revised
 
-### `chrome-devtools-mcp` giữ lại, chuyển pack `web` → `seo`
+### `chrome-devtools-mcp` is kept, and moves from pack `web` → `seo`
 
-Suýt bị loại vì tưởng Claude in Chrome đã phủ. **Kiểm `~/.claude/plugins/installed_plugins.json`
-cho thấy Claude Code không có Claude in Chrome** — Claude in Chrome là Lớp 3, theo tài khoản, chỉ
-sống ở Cowork/Desktop. Bỏ nó là để Claude Code mù hẳn trình duyệt.
+It was nearly rejected on the assumption that Claude in Chrome covered it. **Checking
+`~/.claude/plugins/installed_plugins.json` shows Claude Code does not have Claude in Chrome** — Claude
+in Chrome is Layer 3, tied to the account, and lives only in Cowork/Desktop. Dropping this would leave
+Claude Code entirely blind to the browser.
 
-Và nó không trùng hoàn toàn kể cả ở Cowork. Claude in Chrome có `read_console_messages` và
-`read_network_requests`, nhưng **không có** `lighthouse_audit`, `performance_start_trace`,
-`take_heapsnapshot`, `emulate`. Đó là toàn bộ phần đo Core Web Vitals mà `searchfit-seo:technical-seo`
-cần — nên pack đúng của nó là `seo`, không phải `web`.
+And it does not fully duplicate it even in Cowork. Claude in Chrome has `read_console_messages` and
+`read_network_requests`, but **does not have** `lighthouse_audit`, `performance_start_trace`,
+`take_heapsnapshot` or `emulate`. That is the entire Core Web Vitals measurement surface that
+`searchfit-seo:technical-seo` needs — so its correct pack is `seo`, not `web`.
 
-*Bài học: trước khi loại một mục vì "đã có thứ khác phủ", phải kiểm thứ kia có ở đúng lớp đó không.*
+*The lesson: before rejecting something because "we already have that covered", check that the other
+thing exists at the same layer.*
 
-### `playwright` giữ nguyên quyết định loại
+### `playwright` — the rejection stands
 
-Phần tương tác Claude in Chrome làm được hết. Cái Playwright còn hơn là chạy ngầm, kịch bản test,
-đa trình duyệt, CI — BSO không viết test cho web app.
+Claude in Chrome does everything on the interaction side. What Playwright adds beyond that is headless
+running, test scripting, multi-browser and CI — and BSO does not write tests for a web app.
 
-### Nguồn `andrej-karpathy-skills` đã sửa
+### The `andrej-karpathy-skills` source has been corrected
 
-`forrestchang/andrej-karpathy-skills` → **`multica-ai/andrej-karpathy-skills`**. Tra GitHub search
-xác nhận đây là repo gốc đã đổi tên tổ chức (199.884 sao, 20.560 fork), không phải fork.
-Vẫn **không có license** — sự thật đó không đổi, chỉ là nguồn nay trỏ đúng chỗ.
+`forrestchang/andrej-karpathy-skills` → **`multica-ai/andrej-karpathy-skills`**. A GitHub search
+confirms this is the original repo after an organisation rename (199,884 stars, 20,560 forks), not a
+fork. It still **has no licence** — that fact has not changed; only the source now points at the right
+place.
 
-Bản `0xwilliamortiz/andrej-karpathy-skills` có MIT và đóng gói sẵn thành plugin Claude Code, nhưng
-551 sao — là nhánh, không phải bản chuẩn.
+The `0xwilliamortiz/andrej-karpathy-skills` copy is MIT and pre-packaged as a Claude Code plugin, but
+has 551 stars — it is a branch, not the canonical copy.
 
-### `frontend-design` đã nhặt xong, vẫn loại
+### `frontend-design` — everything worth taking has been taken; still rejected
 
-Bốn ý đã vào `bso-marketing/assets/skills/bso-design/SKILL.md`, ghi rõ nguồn:
+Four ideas went into `bso-marketing/assets/skills/bso-design/SKILL.md`, with the source recorded:
 
-| Ý | Vì sao đáng nhặt |
+| Idea | Why it was worth taking |
 |---|---|
-| Ba cụm mặc định của ảnh AI, kèm mã màu `#F4F1EA` | Cụ thể hơn hẳn danh sách "dấu hiệu máy làm" cũ — gọi được tên mã màu |
-| Mục 10 `Chữ ký` trong `DESIGN.md` | Chín mục cũ tả cái *đúng*; mục này tả cái *đáng nhớ* |
-| Cấu trúc phải mã hoá sự thật (phép thử đánh số `01/02/03`) | Chặn đúng lỗi hay gặp ở thumbnail và lower third |
-| Chữ trên giao diện: một hành động một tên, lỗi không xin lỗi | Khoảng trống thật — `bso-design` chưa có mục nào về chữ trên nút |
+| The three default clusters of AI imagery, with the hex value `#F4F1EA` | Far more concrete than the old "signs of machine work" list — it can name the hex |
+| Section 10, `Signature`, in `DESIGN.md` | The old nine sections describe what is *correct*; this one describes what is *memorable* |
+| Structure must encode the truth (the `01/02/03` numbering test) | It blocks exactly the error that recurs in thumbnails and lower thirds |
+| Interface copy: one action one name, an error does not apologise | A real gap — `bso-design` had no section on button copy |
 
-Đây đúng ô thứ ba của bảng `harvest`: **đọc, rút ý, bỏ repo.**
+This is exactly the third cell of the `harvest` table: **read it, take the idea, drop the repo.**
 
-## `mattpocock/skills` — chấm bổ sung
+## `mattpocock/skills` — an additional scoring
 
-97.679 sao · 8.638 fork · MIT · push 2026-05-20 · 36 skill. Đang bật ở **Lớp 1 (Cowork)**, chưa
-từng có trong TSV Lớp 2.
+97,679 stars · 8,638 forks · MIT · pushed 2026-05-20 · 36 skills. Enabled at **Layer 1 (Cowork)** and
+never in the Layer 2 TSV.
 
-| PH | CP | AT | FR | ĐL | VH | NG | PB | TR | Tổng | Tier |
+| PH | CP | AT | FR | ĐL | VH | NG | PB | TR | Total | Tier |
 |:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|---|
 | 3 | 5 | 4 | 5 | 3 | 4 | 2 | 5 | 2 | **33** | A |
 
-- **`PH`=3** — chia đôi rõ rệt. Trúng: `handoff` (BSO đã dùng đúng lối này), `writing-great-skills`,
-  `grilling`, `diagnosing-bugs`, `code-review`, `teach`, `edit-article`. Trượt: `to-issues`,
-  `to-prd`, `triage`, `implement`, `setup-matt-pocock-skills` đều giả định có issue tracker mà BSO
-  không có; `migrate-to-shoehorn`, `setup-pre-commit`, `scaffold-exercises` là hệ sinh thái
-  TypeScript; `obsidian-vault` không dùng vì kho tri thức BSO chạy OKF.
-- **`AT`=4** — MIT, tác giả rõ danh tính. Trừ một điểm vì đường cài mặc định là
-  `npx skills@latest add` (chạy mã mạng của bên thứ ba), và vài skill dựng hook Husky, sinh script bash.
-- **`ĐL`=3** — README dẫn về newsletter `aihero.dev` và badge `skills.sh`. Không phải SaaS trả phí,
-  nhưng có phễu và có phụ thuộc trình cài.
-- **`NG`=2** — 36 skill, trong đó **4 `deprecated` + 6 `in-progress` vẫn được ship**, cộng `ask-matt`
-  là router chạy trên toàn bộ. Nhiều bề mặt mô tả cho khoảng 8 skill thật sự dùng.
-- **`TR`=2** — trùng ba đường: `diagnosing-bugs` ↔ `systematic-debugging`, `tdd` ↔
-  `test-driven-development`, `writing-great-skills` ↔ `writing-skills`, `handoff` ↔ plugin `handoff`
-  power-kit đang dùng, `code-review` ↔ `code-review` official + `brooks-lint`.
+- **`PH`=3** — a clear split. Hits: `handoff` (BSO already works this way), `writing-great-skills`,
+  `grilling`, `diagnosing-bugs`, `code-review`, `teach`, `edit-article`. Misses: `to-issues`, `to-prd`,
+  `triage`, `implement` and `setup-matt-pocock-skills` all assume an issue tracker BSO does not have;
+  `migrate-to-shoehorn`, `setup-pre-commit` and `scaffold-exercises` are the TypeScript ecosystem;
+  `obsidian-vault` is unused because BSO's knowledge base runs on OKF.
+- **`AT`=4** — MIT, with an identifiable author. One point off because the default install path is
+  `npx skills@latest add` (running a third party's network code), and several skills install Husky
+  hooks and generate bash scripts.
+- **`ĐL`=3** — the README funnels toward the `aihero.dev` newsletter and a `skills.sh` badge. Not paid
+  SaaS, but it is a funnel and it depends on an installer.
+- **`NG`=2** — 36 skills, of which **4 `deprecated` + 6 `in-progress` still ship**, plus `ask-matt`,
+  a router running across all of them. A lot of description surface for roughly 8 genuinely useful
+  skills.
+- **`TR`=2** — overlaps three ways: `diagnosing-bugs` ↔ `systematic-debugging`, `tdd` ↔
+  `test-driven-development`, `writing-great-skills` ↔ `writing-skills`, `handoff` ↔ the power-kit
+  `handoff` plugin already in use, `code-review` ↔ the official `code-review` + `brooks-lint`.
 
-**Không bị luật cắt** (`PH`≠1, `PB`≠1, tier A). Nhưng hai điểm 2 — nếu rơi tier B thì đã bị cắt.
-Đây là lỗ hổng cũ ở dạng nhẹ: sàn cứng `PH` không bắt được thứ *nửa hợp nhưng cồng kềnh*.
+**Not caught by the cut rule** (`PH`≠1, `PB`≠1, tier A). But two scores of 2 — had it landed in tier B
+it would have been cut. This is the old hole in a milder form: the hard `PH` floor cannot catch
+something *half-fitting but bulky*.
 
-**Kết luận: đừng cài cả 36.** Đúng cách xử là thứ đã định cho `superpowers` và `ecc` — rút phần
-dùng được thành một bộ gộp. `mattpocock` là nguồn thứ ba của bộ đó, không phải một plugin nữa
-để bật.
+**Conclusion: do not install all 36.** The right treatment is what was already planned for
+`superpowers` and `ecc` — extract the usable part into one merged set. `mattpocock` is the third source
+for that set, not another plugin to enable.
 
-## Lượt 2026-08-06, phiên ba — sửa một lỗi chấm, chốt bộ gộp
+## The 2026-08-06 pass, session three — one scoring error fixed, the merged set settled
 
-### ⚠ Sửa điểm `mattpocock/skills`: `NG` 2 → 3, tổng 33 → **34**
+### ⚠ Correcting the `mattpocock/skills` score: `NG` 2 → 3, total 33 → **34**
 
-Lần chấm trước đếm **36 skill** bằng cách `find` file `SKILL.md` trên đĩa. Sai. Đọc
-`.claude-plugin/plugin.json` cho thấy plugin chỉ ship **19 skill** — `deprecated/` (4),
-`in-progress/` (6), `misc/` (4), `personal/` (2) **không có trong manifest**, chúng nằm trong
-repo nhưng không được đóng gói.
+The previous scoring counted **36 skills** by running `find` for `SKILL.md` files on disk. That was
+wrong. Reading `.claude-plugin/plugin.json` shows the plugin ships only **19 skills** — `deprecated/`
+(4), `in-progress/` (6), `misc/` (4) and `personal/` (2) **are not in the manifest**; they are in the
+repo but not packaged.
 
-Tỉ lệ dùng được là **11/19**, không phải 8/36. `NG` = 3.
+The usable ratio is **11/19**, not 8/36. `NG` = 3.
 
-*Bài học, ghi để không lặp: **đếm skill bằng manifest của plugin, không bằng `find` trên đĩa.**
-Repo chứa nhiều hơn thứ nó phát hành.*
+*The lesson, recorded so it does not recur: **count a plugin's skills from its manifest, not from
+`find` on disk.** A repo contains more than it publishes.*
 
-### Bộ gộp: bỏ ý tưởng gộp, cài thẳng `mattpocock-skills`
+### The merged set: abandon the merge, install `mattpocock-skills` directly
 
-Ba trong bốn skill định lấy đều từ mattpocock. Với 11/19 dùng được, tách ra là **dựng một bản
-fork phải tự bảo trì** để đổi lấy rất ít — trái thẳng luật *"mở rộng cái đang chạy, đừng dựng
-cái thứ hai"*. Nên cài nguyên bộ, pack `code`.
+Three of the four skills to be taken come from mattpocock. At 11/19 usable, extracting them means
+**building a fork that has to be maintained** in exchange for very little — directly against the rule
+*"extend what runs, do not build a second one"*. So install the whole set, in pack `code`.
 
-Đối chiếu từng cặp trùng, và vì sao mattpocock thắng:
+Comparing each overlapping pair, and why mattpocock wins:
 
-| Việc | Bản thắng | Bản thua | Lý do |
+| Job | The winner | The loser | Why |
 |---|---|---|---|
-| Chốt kế hoạch | `grilling` (10 dòng) | `brainstorming` (159) | Hỏi từng câu · mỗi câu tự đề xuất đáp án · tra được trong code thì tra. Bản superpowers có `<HARD-GATE>` cấm viết code trước khi có design doc commit vào `docs/superpowers/specs/` — quá nặng, và ghi vào đường dẫn riêng của nó |
-| Tìm lỗi | `diagnosing-bugs` (134) | `systematic-debugging` (296) | Dạy phần khó thật: dựng vòng lặp pass/fail trước, 10 cách cụ thể, cấm đoán khi chưa có loop |
-| Viết skill | `writing-great-skills` (82) | `writing-skills` (689) | Cùng việc, 1/8 kích thước |
-| Viết test | *(bỏ cả hai)* | `tdd` · `test-driven-development` | BSO không có test suite |
+| Settling a plan | `grilling` (10 lines) | `brainstorming` (159) | One question at a time · each question proposes its own answer · looks it up in the code where it can. The superpowers version has a `<HARD-GATE>` forbidding any code before a design doc is committed to `docs/superpowers/specs/` — too heavy, and it writes into its own private path |
+| Finding a bug | `diagnosing-bugs` (134) | `systematic-debugging` (296) | It teaches the genuinely hard part: build the pass/fail loop first, 10 concrete techniques, no guessing before the loop exists |
+| Writing a skill | `writing-great-skills` (82) | `writing-skills` (689) | The same job at one-eighth the size |
+| Writing tests | *(drop both)* | `tdd` · `test-driven-development` | BSO has no test suite |
 
-### `verification-before-completion` tách ra thành plugin lẻ
+### `verification-before-completion` is extracted as a standalone plugin
 
-Mattpocock không có skill nào tương đương, và đây là thứ chặn đúng lỗi BSO **đã mắc thật** —
-bản handoff cũ từng ghi sai danh sách "chưa commit", bài học trong file đó là *"đọc `git status`
-trước khi tin"*.
+Mattpocock has no equivalent, and this is the thing that blocks an error BSO **actually made** — an
+older handoff recorded the "uncommitted" list incorrectly, and the lesson in that file was *"read
+`git status` before believing anything"*.
 
-Giữ cả `superpowers` chỉ vì một skill trong mười bốn thì không đáng, nên chép riêng nó ra
-`plugins/verification-before-completion/`: **nguyên văn, chỉ thêm frontmatter ghi công**
-(`license: MIT` · `source` · `author: Jesse Vincent`) và kèm `LICENSE`. Thân file có dòng cấm sửa —
-cần cập nhật thì chép lại từ nguồn, đừng vá tay.
+Keeping all of `superpowers` for one skill in fourteen is not worth it, so it was copied out into
+`plugins/verification-before-completion/`: **verbatim, with only frontmatter added for attribution**
+(`license: MIT` · `source` · `author: Jesse Vincent`) plus a `LICENSE`. The body carries a
+do-not-edit line — to update it, copy again from the source rather than patching by hand.
 
-`superpowers` và `ecc` nay nằm ở `plugins-loai.tsv`.
+`superpowers` and `ecc` now live in `plugins-loai.tsv`.
 
-### Va chạm hai skill `handoff` — xử bằng mô tả, không fork
+### Two colliding `handoff` skills — resolved through the description, not a fork
 
-Bản mattpocock ghi handoff vào **thư mục tạm của hệ điều hành**; bản power-kit ghi
-`HANDOFF-<ngày>.md` vào thư mục làm việc. `CLAUDE.md` của BSO chốt file trạng thái phiên sống ở
-gốc dự án, nên bản power-kit đúng.
+The mattpocock version writes the handoff into **the operating system's temporary directory**; the
+power-kit version writes `HANDOFF-<date>.md` into the working directory. BSO's `CLAUDE.md` settles that
+session-state files live at the project root, so the power-kit version is correct.
 
-Không fork mattpocock để gỡ skill kia. Thay vào đó **làm mô tả bản power-kit thắng rõ ràng**:
-thêm câu *"THIS is the handoff to use when the handoff file must live in the working folder …
-prefer it over any handoff skill that writes to a temporary directory."*
+Rather than forking mattpocock to remove its skill, **make the power-kit version's description win
+clearly**: add the sentence *"THIS is the handoff to use when the handoff file must live in the working
+folder … prefer it over any handoff skill that writes to a temporary directory."*
 
-Nhân tiện nhặt ba ý của bản mattpocock vào bản power-kit: mục `## Suggested skills` cuối tài
-liệu · không chép lại thứ đã nằm trong commit/ADR/plan mà trỏ đường dẫn · che thông tin nhạy cảm.
+While there, three ideas from the mattpocock version were taken into the power-kit one: a
+`## Suggested skills` section at the end · never re-copying what is already in a commit/ADR/plan but
+linking to it instead · masking sensitive information.
 
-### Sửa kèm: marketplace power-kit đang hỏng
+### An incidental fix: the power-kit marketplace was broken
 
-`claude plugin validate .` báo **2 lỗi có sẵn từ trước**, không do lượt này: `ai-research-skills`
-khai `./02-tokenization/huggingface-tokenizers` và `./02-tokenization/sentencepiece`, nhưng thư
-mục `02-tokenization/` **không tồn tại**. `build-standalone.sh` chỉ `cp -R` nguyên thư mục, không
-loại trừ gì — nên đây là lỗi của bản upstream, không phải lỗi bước đóng gói.
+`claude plugin validate .` reports **2 pre-existing errors**, not caused by this pass:
+`ai-research-skills` declares `./02-tokenization/huggingface-tokenizers` and
+`./02-tokenization/sentencepiece`, but the `02-tokenization/` directory **does not exist**.
+`build-standalone.sh` only does a plain `cp -R` of the whole directory with no exclusions — so this is
+an upstream bug, not a packaging bug.
 
-Đã gỡ hai mục chết (98 → 96 skill). Validate nay **pass**. Đây là sửa vào file của bên thứ ba,
-ghi lại ở đây để lần sau đối chiếu khi cập nhật bản upstream.
+The two dead entries were removed (98 → 96 skills). Validation now **passes**. This is an edit into a
+third party's file, recorded here so it can be reconciled the next time upstream is updated.
 
-## Ba công cụ nén token — chấm 2026-08-06, loại cả ba
+## Three token-compression tools — scored 2026-08-06, all three rejected
 
-Ứng viên do người dùng đưa. **Không phải bản thay `caveman`** — `caveman` cắt chữ Claude *viết ra*,
-ba cái này nén thứ *đi vào*. Khác khâu, nên `TR` chỉ ở mức 3, không phải cuộc đấu trùng lặp.
+Candidates supplied by the user. **They are not a replacement for `caveman`** — `caveman` trims what
+Claude *writes*, while these three compress what *goes in*. Different stages, so `TR` is only 3, not a
+duplication contest.
 
-| Repo | Sao | License | PH CP AT FR ĐL VH NG PB | TR | Tổng | Tier | Bị loại vì |
+| Repo | Stars | Licence | PH CP AT FR ĐL VH NG PB | TR | Total | Tier | Rejected for |
 |---|:--:|---|---|:--:|:--:|:--:|---|
-| `alexgreensh/token-optimizer` | 1.811 | **PolyForm NC 1.0.0** | 3 5 2 **1** 3 4 4 4 | 3 | **29** | B | `FR`=1 |
-| `headroomlabs-ai/headroom` | 65.018 | Apache-2.0 | **2** 4 **2** 5 3 4 **2** 5 | 3 | **30** | B | ba điểm 2 |
+| `alexgreensh/token-optimizer` | 1,811 | **PolyForm NC 1.0.0** | 3 5 2 **1** 3 4 4 4 | 3 | **29** | B | `FR`=1 |
+| `headroomlabs-ai/headroom` | 65,018 | Apache-2.0 | **2** 4 **2** 5 3 4 **2** 5 | 3 | **30** | B | three scores of 2 |
 | `ooples/token-optimizer-mcp` | 466 | MIT | 2 **1** 2 5 4 4 2 3 | 3 | **26** | B | `CP`=1 |
 
-### `alexgreensh/token-optimizer` — giấy phép cấm dùng thương mại
+### `alexgreensh/token-optimizer` — a licence forbidding commercial use
 
-GitHub hiển thị `NOASSERTION`; đọc thẳng file `LICENSE` thì là **PolyForm Noncommercial License 1.0.0**.
+GitHub displays `NOASSERTION`; reading the `LICENSE` file directly shows **PolyForm Noncommercial
+License 1.0.0**.
 
-BSO bán thực phẩm bảo vệ sức khoẻ. Dùng công cụ cấm thương mại vào dây chuyền sản xuất nội dung
-bán hàng là **vi phạm giấy phép**, không phải chuyện khẩu vị. `FR`=1 vì miễn phí nhưng BSO không
-dùng hợp pháp được nếu không mua giấy phép riêng.
+BSO sells health supplements. Using a tool that forbids commercial use inside the pipeline that
+produces sales content is **a licence breach**, not a matter of taste. `FR`=1 because it is free but
+BSO cannot use it lawfully without buying a separate licence.
 
-*Đây là lần đầu luật cắt bắt một mục vì giấy phép. Ghi lại: `NOASSERTION` trên GitHub không có
-nghĩa "không có license" — nó có nghĩa **GitHub không nhận dạng được**, và phải mở file ra đọc.*
+*This is the first time the cut rule has caught something on its licence. Recorded: `NOASSERTION` on
+GitHub does not mean "no licence" — it means **GitHub could not identify it**, and the file has to be
+opened and read.*
 
-### `headroomlabs-ai/headroom` — proxy chắn giữa mọi request
+### `headroomlabs-ai/headroom` — a proxy standing between every request
 
-65k sao, Apache-2.0, push 2026-08-05, có `.claude-plugin/marketplace.json`. Repo mạnh. Vẫn loại.
+65k stars, Apache-2.0, pushed 2026-08-05, with a `.claude-plugin/marketplace.json`. A strong repo.
+Rejected anyway.
 
-- **`AT`=2** — `headroom wrap` dựng một **proxy cục bộ**, **tự cài Serena**, rồi chạy agent qua
-  proxy đó. Mọi request đi qua một lớp trung gian, kể cả nội dung `core/claims-matrix/`. Repo có
-  ghi *local-first* và *reversible*, nhưng vẫn là thêm một chỗ dữ liệu compliance chảy qua và tự
-  cài thêm một công cụ thứ hai mà không hỏi.
-- **`PH`=2** — con số quảng cáo là *60–95% cho JSON*, còn *15–20% cho coding agent*. Ngữ cảnh nặng
-  của BSO là **markdown tiếng Việt** — luật, claim, handoff — không phải JSON. BSO rơi đúng vào
-  vạch thấp.
-- **`NG`=2** — thư viện + proxy + MCP, hàng loạt extras, một extras cần cả toolchain C++.
+- **`AT`=2** — `headroom wrap` stands up a **local proxy**, **installs Serena itself**, then runs the
+  agent through that proxy. Every request passes through an intermediary layer, including the contents
+  of `core/claims-matrix/`. The repo says *local-first* and *reversible*, but it is still one more
+  place compliance data flows through, and it installs a second tool without asking.
+- **`PH`=2** — the advertised figures are *60–95% for JSON* and *15–20% for a coding agent*. BSO's
+  heavy context is **Vietnamese markdown** — rules, claims, handoffs — not JSON. BSO lands squarely at
+  the low end.
+- **`NG`=2** — a library plus a proxy plus MCP, with a long list of extras, one of which needs a whole
+  C++ toolchain.
 
-Bản `SCORING.md` cũ đã gặp `headroom` một lần và xếp *MESH → caveman* với 63 điểm. Thước mới cho 30
-và loại hẳn. Hai lần đo độc lập ra cùng một kết luận.
+The old `SCORING.md` met `headroom` once before and filed it *MESH → caveman* at 63 points. The new
+rubric gives it 30 and rejects it outright. Two independent measurements reaching the same conclusion.
 
-### `ooples/token-optimizer-mcp` — `CP`=1, chặn cứng
+### `ooples/token-optimizer-mcp` — `CP`=1, a hard block
 
-Đây là mục duy nhất chạm trục compliance, và nó chạm rất mạnh. README nói thẳng cơ chế:
+This is the only entry that touches the compliance axis, and it touches it hard. The README states the
+mechanism plainly:
 
-> *"It makes the expensive call impossible. Install the plugin and a built-in `Read` of a 200 KB
-> file is **denied**, with the refusal naming the cached, [summarised] record."*
+> *"It makes the expensive call impossible. Install the plugin and a built-in `Read` of a 200 KB file
+> is **denied**, with the refusal naming the cached, [summarised] record."*
 
-`CLAUDE.md` của BSO có một luật không được phép sai: **chỉ trích nguyên văn từ `core/claims-matrix/`;
-diễn đạt lại claim đã duyệt cũng là tạo claim mới.** Một lớp cache **từ chối `Read` và trả về bản
-tóm tắt** là nguyên tắc cốt lõi đẩy thẳng tới vi phạm — đúng định nghĩa `CP`=1 trong thước.
+BSO's `CLAUDE.md` carries one rule that cannot be got wrong: **quote verbatim from
+`core/claims-matrix/` only; rephrasing an approved claim also counts as creating a new claim.** A cache
+layer that **refuses `Read` and returns a summary instead** is a core principle pushing straight toward
+a breach — precisely the rubric's definition of `CP`=1.
 
-Thêm nữa: 466 sao là mức xác nhận quá mỏng cho một thứ chặn tool built-in của agent.
+On top of that, 466 stars is far too thin a confirmation for something that blocks an agent's built-in
+tool.
 
-### Ý nhặt được — `harvest`
+### Ideas taken — `harvest`
 
-| Nguồn | Ý |
+| Source | The idea |
 |---|---|
-| `alexgreensh` | *"Find the ghost tokens"* — **đo cái gì đang ăn ngữ cảnh trước khi tối ưu.** Cowork đã có sẵn skill `explain-usage` làm đúng việc này, không cần cài gì |
-| `headroom` | Nén phải **đảo ngược được**. Bất kỳ bước rút gọn nào trong dây chuyền BSO cũng phải giữ đường về bản gốc |
-| `ooples` | Đọc thống kê cache từ **transcript của chính client**, không tự khai — nguyên tắc đo lường tốt |
+| `alexgreensh` | *"Find the ghost tokens"* — **measure what is eating the context before optimising anything.** Cowork already ships an `explain-usage` skill that does exactly this; nothing needs installing |
+| `headroom` | Compression must be **reversible**. Any summarisation step in BSO's pipeline must keep a route back to the original |
+| `ooples` | Read the cache statistics from **the client's own transcript** rather than self-reporting — a sound measurement principle |
 
-**Kết luận: không cài gì. `caveman` giữ nguyên.** Ba cái này giải bài toán ngữ cảnh bằng cách xen
-một lớp vào giữa Claude và dữ liệu. Với một repo mà sai một chữ trong claim là vi phạm nghị định,
-lớp xen giữa ấy là rủi ro chứ không phải tiện ích.
+**Conclusion: install nothing. `caveman` stays as it is.** All three solve the context problem by
+inserting a layer between Claude and the data. For a repo where one wrong word in a claim is a
+regulatory breach, that intervening layer is a risk, not a convenience.
 
-## Còn treo
+## Still open
 
-1. ~~**Bộ skill gộp chưa dựng.**~~ **ĐÓNG (2026-08-06)** — bỏ ý tưởng gộp, cài thẳng
-   `mattpocock-skills`, tách riêng `verification-before-completion`. Xem phiên ba bên trên.
-   *Ghi lại phần cũ để đối chiếu:* Ba nguồn `superpowers` (14 skill, MIT) · `ecc` (47 skill ở
-   `.agents/skills/`, MIT) · `mattpocock` (36 skill, MIT) — cả ba MIT nên tách được, chỉ cần giữ
-   dòng ghi công. Mỗi chức năng **phải chọn một bản**, nếu không bộ mới lại đẻ ra đúng cái mâu
-   thuẫn mà `CLAUDE.root.md` cấm. Dựng xong thì gỡ được `superpowers` (`NG`=2) và `ecc` (`NG`=1)
-   khỏi danh sách cài.
-2. ~~**`ecc` vào kho nhưng chưa quyết bật**~~ **ĐÓNG** — loại hẳn, vào `plugins-loai.tsv`.
-3. ~~**`mattpocock/skills` chưa vào TSV**~~ **ĐÓNG** — đã vào, pack `code`.
-4. **`andrej-karpathy-skills` vẫn không có license.** Nguồn đã trỏ đúng, nhưng chưa ghim commit.
-5. **`ai-research-skills` đã bị sửa tay** (gỡ 2 đường dẫn chết). Cập nhật bản upstream lần sau
-   phải kiểm lại `02-tokenization/` đã có chưa, đừng để bản sửa bị đè mất.
+1. ~~**The merged skill set has not been built.**~~ **CLOSED (2026-08-06)** — the merge idea was
+   abandoned; `mattpocock-skills` is installed directly and `verification-before-completion` extracted
+   separately. See session three above.
+   *The old text, kept for comparison:* three sources — `superpowers` (14 skills, MIT) · `ecc` (47
+   skills under `.agents/skills/`, MIT) · `mattpocock` (36 skills, MIT) — all three MIT, so extraction
+   was possible with only an attribution line. Each function **would have had to pick one version**, or
+   the new set would reproduce exactly the contradiction `CLAUDE.root.md` forbids. Building it would
+   have allowed removing `superpowers` (`NG`=2) and `ecc` (`NG`=1) from the install list.
+2. ~~**`ecc` is in the store but enabling it is undecided**~~ **CLOSED** — rejected outright, moved to
+   `plugins-loai.tsv`.
+3. ~~**`mattpocock/skills` is not in the TSV**~~ **CLOSED** — added, in pack `code`.
+4. **`andrej-karpathy-skills` still has no licence.** The source now points correctly, but no commit
+   has been pinned.
+5. **`ai-research-skills` has been edited by hand** (2 dead paths removed). The next upstream update
+   must check whether `02-tokenization/` now exists, so the fix is not overwritten.
 
-## Danh sách cài cuối cùng — 16 plugin
+## The final install list — 16 plugins
 
-| Pack | Số | Plugin |
+| Pack | Count | Plugins |
 |---|:--:|---|
 | `core` | 8 | claude-md-management · plugin-dev · skill-creator · commit-commands · desktop-commander · hookify · security-guidance · **verification-before-completion** |
 | `code` | 5 | pyright-lsp · code-review · github · andrej-karpathy-skills · **mattpocock-skills** |
 | `seo` | 1 | chrome-devtools-mcp |
 | `vanphong` | 2 | caveman · ponytail |
 
-67 mục ở `plugins-loai.tsv`. Tổng 83 = 81 đã chấm + `mattpocock-skills` + `verification-before-completion`.
+67 entries in `plugins-loai.tsv`. The total of 83 = the 81 scored + `mattpocock-skills` +
+`verification-before-completion`.
