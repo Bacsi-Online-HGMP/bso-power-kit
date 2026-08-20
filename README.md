@@ -1,4 +1,4 @@
-# Claude Power Kit
+# BSO Power Kit
 
 Community skills, plugins and MCPs for Claude — Cowork and Code — kept down to the ones that survived scoring. Official Anthropic skills, plugins and connectors are deliberately absent: you already get those built in.
 
