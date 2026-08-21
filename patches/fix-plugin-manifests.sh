@@ -2,7 +2,7 @@
 # Repair plugin.json manifests that fail `claude plugin validate`.
 #
 # THE BUG THIS FIXES
-# Two shape errors turn up in vendored plugins. Neither is our doing; both make
+# Three shape errors turn up in vendored plugins. None is our doing; each makes
 # the whole marketplace fail validation, which is worse than it sounds -- one bad
 # manifest reports as a failure for the entire repo, so real problems hide behind
 # it.
@@ -14,6 +14,15 @@
 #                            -> "skills": ["."]
 #     A skills entry must be a DIRECTORY containing SKILL.md. Pointing at the
 #     file itself means the skill never loads.
+#
+#   relative path missing "./"   "agents": ["agents/foo.md"]
+#                             -> "agents": ["./agents/foo.md"]
+#     `claude plugin validate` rejects a bare relative entry with the unhelpful
+#     message `agents: Invalid input`. Verified against the validator: the rule
+#     is identical for "agents", "commands" and "skills" -- bare fails,
+#     "./"-prefixed passes. "." is the accepted spelling for the plugin root and
+#     is left alone. Prefixing is meaning-preserving: "./x" and "x" resolve to
+#     the same path, so this only satisfies the schema.
 #
 # Idempotent: already-correct manifests are left byte-identical, and the script
 # reports what it changed. Safe to re-run; build-standalone.sh runs it after
@@ -86,6 +95,28 @@ for dirpath, dirnames, filenames in os.walk(root):
                 new.append(s)
         if touched:
             data['skills'] = new
+
+    # Runs AFTER the skills rule above, which can legitimately emit "." for the
+    # plugin root -- "./." would be a regression, so "." is skipped here.
+    # Absolute paths and ${CLAUDE_PLUGIN_ROOT}-style entries are left untouched:
+    # they are not relative, so the "./" rule does not apply to them.
+    for key in ('agents', 'commands', 'skills'):
+        entries = data.get(key)
+        if not isinstance(entries, list):
+            continue
+        new, touched = [], False
+        for s in entries:
+            if (isinstance(s, str) and s not in ('.', '')
+                    and not s.startswith(('./', '/', '~', '$'))):
+                prefixed = './' + s
+                if prefixed not in new:
+                    new.append(prefixed)
+                touched = True
+                changes.append(f"{key}: {s!r} -> {prefixed!r}")
+            elif s not in new:
+                new.append(s)
+        if touched:
+            data[key] = new
 
     if not changes:
         continue
