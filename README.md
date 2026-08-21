@@ -4,7 +4,7 @@ Community skills, plugins and MCPs for Claude — Cowork and Code — kept down 
 
 **For** clinicians, researchers, and hands-on builders who want a strong default toolset without wading through 1,800-skill mega-catalogs. Everything here is free and runs on almost any machine that can run Claude. Tools marked **`Code`** work only in Claude Code, not Cowork.
 
-**31 plugins.** Every entry earned its place against a 9-axis rubric; the reasoning lives in `SCORING.md`, `RANKING-CLAUDE-CODE.md`, and `bootstrap-device/scoring-layer-2.md`. Rejections are recorded in `bootstrap-device/plugins-loai.tsv` so nobody re-litigates them from scratch.
+**33 plugins.** Every entry earned its place against a 9-axis rubric; the reasoning lives in `SCORING.md`, `RANKING-CLAUDE-CODE.md`, and `bootstrap-device/scoring-layer-2.md`. Rejections are recorded in `bootstrap-device/plugins-loai.tsv` so nobody re-litigates them from scratch.
 
 ## What's inside
 
@@ -56,9 +56,10 @@ Two cautions from that merge. Use `nextlevelbuilder/ui-ux-pro-max-skill`, not th
 
 This group is the most crowded in the kit, and the overlap is not free. Seven tools all generate titles, hooks and CTR-optimised scripts, and none of them knows Vietnamese supplement advertising law. Enable them for a content session, not permanently — every extra tool competing to answer the same prompt is another path for an overreaching claim to reach a draft before compliance review catches it.
 
-### I · SEO & Ads
+### I · SEO, Ads & Growth
 - **◆ claude-seo** — 25 sub-skills for SEO analysis.
 - **claude-ads** — paid media for Google, Meta, YouTube. Read-only by default; a write needs six conditions (capability on · explicit ID · before/after diff · approval · idempotency + rollback · precondition verify). Worth reading as a safety template even if you never run an ad.
+- **marketing-skills** — 49 skills for CRO, lifecycle, landing-page copy, analytics and growth. Its SEO and paid-ads clusters lose to `claude-seo` and `claude-ads`; what it adds is the conversion and distribution half nothing else here covers — `cro`, `signup`, `paywalls`, `pricing`, `churn-prevention`, `referrals`, `launch`, plus the only email and SMS skills in the catalogue. Its copy rules push for specificity and cut hedges: do not apply them to supplement claims, which stay bound to `core/claims-matrix/` in the `bso` marketplace.
 
 ### S · Security
 - **◆ cybersecurity-defense** — blue-team playbooks: incident response, host forensics, threat hunting, ISO 27001. Apache-2.0.

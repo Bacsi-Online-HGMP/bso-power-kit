@@ -181,6 +181,11 @@
       "description": "I · SEO — paid media for Google, Meta, YouTube. Read-only by default; writes require six conditions."
     },
     {
+      "name": "marketing-skills",
+      "source": "./plugins/marketingskills",
+      "description": "I · SEO — 49 marketing skills: CRO, lifecycle, copy, SEO, analytics, growth. Send paid media to claude-ads and competitor work to the research packs instead. Its copy rules favour specificity and cut hedges; do not apply them to supplement claims, which stay bound to core/claims-matrix."
+    },
+    {
       "name": "cybersecurity-defense",
       "source": "./plugins/cybersecurity-defense",
       "description": "S · Security — blue-team playbooks: incident response, host forensics, threat hunting, ISO 27001. Apache-2.0."
