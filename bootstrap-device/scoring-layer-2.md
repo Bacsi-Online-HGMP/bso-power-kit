@@ -33,7 +33,7 @@ rejected outright). The full reasoning is recorded in the rubric. In exchange, e
 | Rule | Where | What it examines |
 |---|---|---|
 | **The cut rule** | The rubric, section *Cut rule* | The quality of **one** entry: the `PH`/`PB` floors, tier, low-score flags |
-| **The duplication rule** | `CLAUDE.root.md` — *heavy overlap, enable one* | The relationship between **two** entries |
+| **The duplication rule** | `bso-marketing/assets/workspace-root/files/CLAUDE.md` — *heavy overlap, enable one* | The relationship between **two** entries |
 
 The `TR` axis **is not used in the cut rule** — the rubric says so explicitly. So the 5 entries below
 rejected for duplication were rejected under the *duplication rule*, not the cut rule. Their scores
@@ -365,7 +365,7 @@ regulatory breach, that intervening layer is a risk, not a convenience.
    *The old text, kept for comparison:* three sources — `superpowers` (14 skills, MIT) · `ecc` (47
    skills under `.agents/skills/`, MIT) · `mattpocock` (36 skills, MIT) — all three MIT, so extraction
    was possible with only an attribution line. Each function **would have had to pick one version**, or
-   the new set would reproduce exactly the contradiction `CLAUDE.root.md` forbids. Building it would
+   the new set would reproduce exactly the contradiction `bso-marketing/assets/workspace-root/files/CLAUDE.md` forbids. Building it would
    have allowed removing `superpowers` (`NG`=2) and `ecc` (`NG`=1) from the install list.
 2. ~~**`ecc` is in the store but enabling it is undecided**~~ **CLOSED** — rejected outright, moved to
    `plugins-loai.tsv`.
