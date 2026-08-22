@@ -23,7 +23,7 @@ Product context: check for `.agents/product-marketing.md` and read it if present
 State these up front so you don't rebuild neighboring skills:
 
 - **General event tracking, tracking plans, UTM setup, GA4/GTM** → **analytics**. Attribution *assumes tracking exists*. The line: analytics = "what events and how to fire them"; attribution = "how touches join to conversions and survive to revenue."
-- **Ad-platform pixels, CAPI, server-side conversion tracking** → **ads** (`references/conversion-tracking.md`). Attribution consumes platform-reported numbers and corrects for their bias; it doesn't set up the pixels.
+- **Ad-platform pixels, CAPI, server-side conversion tracking** → **ads** (`../ads/references/conversion-tracking.md`). Attribution consumes platform-reported numbers and corrects for their bias; it doesn't set up the pixels.
 - **Pipeline stages, lead lifecycle, CRM revenue dashboards** → **revops**. Attribution feeds pipeline data; it doesn't define stages.
 - **Showing up in / measuring AI search** → **ai-seo**. Attribution names AI traffic as a blind spot only.
 
@@ -218,7 +218,7 @@ For implementation, see the [tools registry](../../tools/REGISTRY.md). Key tools
 ## Related Skills
 
 - **analytics** — event tracking, tracking plans, UTMs, GA4/GTM setup. Do this *before* attribution.
-- **ads** — ad-platform pixels, CAPI, server-side conversion tracking (`references/conversion-tracking.md`).
+- **ads** — ad-platform pixels, CAPI, server-side conversion tracking (`../ads/references/conversion-tracking.md`).
 - **revops** — pipeline stages, lead lifecycle, CRM revenue reporting. Attribution feeds it.
 - **ai-seo** — the AI-search attribution blind spot in depth.
 - **ab-testing** — controlled experiments; the incrementality mindset applied to on-site changes.
