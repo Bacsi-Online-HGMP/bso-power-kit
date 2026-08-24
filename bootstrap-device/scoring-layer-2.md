@@ -1,7 +1,7 @@
 # Scoring — Layer 2 (Claude Code plugins)
 
 Scoring the 81 Layer-2 plugins against the 9-axis rubric in
-`bso-marketing/docs/rubric-danh-gia-cong-cu.md`. Dated 2026-08-06. The results produce
+`bso-marketing/docs/tool-scoring-rubric.md`. Dated 2026-08-06. The results produce
 `plugins-claude-code.tsv` (what gets installed) and `plugins-loai.tsv` (what was rejected, with the
 reason kept).
 

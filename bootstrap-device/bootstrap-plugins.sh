@@ -3,7 +3,7 @@
 #
 # Covers LAYER 2 only (Claude Code plugins, installed per machine).
 # Layer 1 (Cowork plugins) follows the Claude account and appears after signing in.
-# Layer 3 (MCP connectors) must be authorised by hand. See bso-marketing/docs/thiet-bi-moi.md.
+# Layer 3 (MCP connectors) must be authorised by hand. See bso-marketing/docs/new-machine-setup.md.
 #
 # The list passed the 9-axis rubric on 2026-08-06: 16 kept, 65 rejected.
 # Per-item scores: scoring-layer-2.md - reasons for rejection: plugins-loai.tsv
@@ -124,4 +124,4 @@ fi
 echo "Done. Restart Claude Code or run /reload-plugins."
 echo
 echo "Reminder: this is LAYER 2 (Claude Code plugins). Cowork plugins are LAYER 1, tied to the Claude account,"
-echo "and cannot be scripted - they must be enabled by hand in the UI. The list is in bso-marketing/docs/chon-cong-cu-2026-08-05.md."
+echo "and cannot be scripted - they must be enabled by hand in the UI. The list is in bso-marketing/docs/tool-selection-2026-08-05.md."

@@ -9,7 +9,7 @@
 #   rubric: 16 kept, 65 rejected. Per-entry reasons: scoring-layer-2.md
 #   Rejected entries live in plugins-loai.tsv - export-plugins.sh reads that file so they
 #   are not pulled back in.
-#   Layer 1 (Cowork) follows the account and cannot be scripted. See docs/thiet-bi-moi.md.
+#   Layer 1 (Cowork) follows the account and cannot be scripted. See docs/new-machine-setup.md.
 marketplace	caveman	JuliusBrussee/caveman	
 marketplace	claude-plugins-official	anthropics/claude-plugins-official	
 marketplace	bso-power-kit	https://github.com/Bacsi-Online-HGMP/bso-power-kit.git	
