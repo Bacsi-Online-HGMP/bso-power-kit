@@ -372,6 +372,16 @@ When a source has no native transcript (no sidecar `.vtt`/`.srt`, no embedded su
 | `WHISPER_HF_MODEL` | HF transformers (opt-in) | — (strategy off) | `Xenova/whisper-small` |
 | `OPENAI_API_KEY` | OpenAI API | — | `sk-…` |
 
+> **`GEMINI_API_KEY` / `GEMINI_MODEL` (BSO downstream addition, not upstream).** Read by
+> `scripts/gemini_youtube_fallback.py`, the last-resort Gemini native-YouTube lane wired into the
+> `/video` skill — used only when the normal tools return no transcript for a public YouTube URL
+> (blocked download, or a long captionless video with no Whisper backend). The script resolves the
+> key from `GEMINI_API_KEY` in the environment, else `GEMINI_API_KEY=...` in
+> `~/.config/video-analyzer/.env` (`chmod 600`). `GEMINI_MODEL` defaults to the floating
+> `gemini-flash-latest` alias (set a pinned id like `gemini-2.5-flash` if you want to lock it). It is
+> a separate CLI, **not** consumed by the MCP server — so this key does **not** belong in the
+> server's `.mcp.json` env. Get a key at <https://aistudio.google.com/apikey>.
+
 > The default `tiny` model is fast but weak for non-English audio. For Portuguese (or other non-English) sources, install the CLI and set `WHISPER_MODEL=small` (or `medium`) + `WHISPER_LANGUAGE=pt` for much better accuracy. Add `WHISPER_PROMPT` with a domain glossary (brand/place names) to fix proper nouns. You can also override `model`/`language`/`initialPrompt` **per call** on `analyze_video` / `get_transcript` / `analyze_videos` — no restart needed.
 >
 > **GPU (faster-whisper):** `whisper-ctranslate2` (`pip install -U whisper-ctranslate2`) is a drop-in CLI with the same flags plus `--device cuda` / `--compute_type` / `--beam_size`. Point `WHISPER_BIN` at it and set `WHISPER_DEVICE=cuda` (+ optionally `WHISPER_COMPUTE=float16`). These GPU flags are **env-gated** — they're only passed when set, so plain `openai-whisper` (which rejects `--compute_type`) keeps working when they're unset.

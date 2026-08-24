@@ -387,3 +387,36 @@ regulatory breach, that intervening layer is a risk, not a convenience.
 
 67 entries in `plugins-loai.tsv`. The total of 83 = the 81 scored + `mattpocock-skills` +
 `verification-before-completion`.
+
+## `mcp-video-analyzer` — Gemini native-YouTube fallback added by hand (2026-08-24)
+
+`watch` and `youtube-video-perception` were both dropped from the enabled set; `mcp-video-analyzer`
+(pack, `video` skill) is the single kept video-input tool. Its MCP server and CLI both reach YouTube
+through `yt-dlp`, which leaves two gaps — a blocked download (region/login/age/throttle) and a long
+captionless video with no Whisper backend — where the transcript comes back empty. Gemini can ingest
+a **public YouTube URL natively**, no download, so it fills exactly those gaps.
+
+**This is an edit into a third party's plugin, recorded here so it can be reconciled the next time
+upstream is updated.** One new file plus two in-place edits (a clean re-vendor drops the new file and
+reverts the edits — re-apply all three):
+
+1. `plugins/mcp-video-analyzer/scripts/gemini_youtube_fallback.py` — **new file.** Stdlib-only script;
+   native YouTube → transcript, or `--ask "<q>"` → answer. Resolves the key from `GEMINI_API_KEY` in
+   the environment, else `~/.config/video-analyzer/.env` (`chmod 600`); optional `GEMINI_MODEL`,
+   default `gemini-flash-latest` (a floating alias on purpose — a pinned id would be one more thing to
+   reconcile). Carries a `--selftest` offline check (URL gate, request shape, response
+   parsing, dotenv read). Key travels in the `x-goog-api-key` header, never the URL.
+2. `plugins/mcp-video-analyzer/skills/video/SKILL.md` — **in-place edit.** Appended a "Gemini
+   native-YouTube fallback" section wiring the script in as a last resort (only when the normal tools
+   return no transcript for a YouTube URL and a key is available).
+3. `plugins/mcp-video-analyzer/README.md` — **in-place edit.** One downstream-marked note after the
+   transcription env table documenting `GEMINI_API_KEY` / `GEMINI_MODEL` and the `.env` location.
+
+The key is consumed by the standalone script (run under the agent's shell), **not** by the MCP
+server, so it is deliberately NOT added to the plugin's `.mcp.json` env — putting it there would be
+dead config. `AGENTS.md` was left untouched: the change adds no MCP tool, CLI flag, or JSON-shape
+change, so the SKILL/README/AGENTS "public contract" triple-update does not trigger.
+
+Not an upstream contribution: it is BSO-local and depends on a `GEMINI_API_KEY` in the environment.
+Text it returns is Gemini's reading of the video, not frames — the frames+transcript path stays
+preferred whenever it succeeds.
