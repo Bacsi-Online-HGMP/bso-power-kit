@@ -1,3 +1,4 @@
+<!-- lang-exception: scoring-axis codes and names are Vietnamese initials (e.g. DL = Doc lap), each glossed in English. -->
 # Scoring — Layer 2 (Claude Code plugins)
 
 Scoring the 81 Layer-2 plugins against the 9-axis rubric in

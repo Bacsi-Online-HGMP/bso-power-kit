@@ -1,3 +1,4 @@
+<!-- lang-exception: scoring-axis codes and names are Vietnamese initials (e.g. DL = Doc lap), each glossed in English. -->
 # Review and ranking of 55 repositories (Scraping / Management / Claude Skills / other)
 
 *Compiled 2026-08-05 · GitHub figures pulled directly through the API the same day · For the Bacsi
