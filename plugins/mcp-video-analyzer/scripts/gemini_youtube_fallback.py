@@ -23,10 +23,17 @@ globally-exported shell var:
     2. GEMINI_API_KEY=... in ~/.config/video-analyzer/.env  (chmod 600)
 Get a key at https://aistudio.google.com/apikey.
 
+On the free tier, RPM/RPD limits are per model, so several video analyses in a
+row exhaust one model fast. The request cascades across a chain of DISTINCT
+video-capable models (best -> lite); a per-model 429 (quota) or 5xx (congestion)
+falls straight to the next model, multiplying effective throughput.
+
 Env:
     GEMINI_API_KEY   the key (or put it in the .env above)
-    GEMINI_MODEL     optional, default "gemini-flash-latest" (a pinned id like
-                     gemini-2.5-flash works too, but is yours to keep current)
+    GEMINI_MODEL     optional; the cascade's PRIMARY model (default
+                     "gemini-flash-latest"). The built-in fallbacks follow it.
+    GEMINI_MODELS    optional; comma-separated list that REPLACES the whole
+                     cascade, in order (e.g. "gemini-3.5-flash,gemini-2.5-flash").
 
 Stdlib only — no pip install. Exits non-zero (with a reason on stderr) on any
 failure so the caller can tell "Gemini could not help" from a real transcript.
@@ -35,15 +42,62 @@ failure so the caller can tell "Gemini could not help" from a real transcript.
 import json
 import os
 import re
+import ssl
 import sys
+import time
 import urllib.error
 import urllib.request
 
-# Floating "latest" alias, not a pinned version — a specific id (gemini-2.5-flash,
-# etc.) would be one more thing to reconcile on each upstream/model refresh.
+# Primary is the floating "latest" alias so it auto-tracks Google's newest Flash
+# (currently gemini-3.7-flash) without a code edit.
 DEFAULT_MODEL = "gemini-flash-latest"
+
+# CASCADE of DISTINCT video-capable models, best -> lite. Free-tier RPM/RPD limits
+# are PER MODEL, so cascading across separate models multiplies effective
+# throughput: a single video analysis over 8 clips would blow one model's RPD,
+# but each model here carries its own quota bucket. On a per-model 429 (quota) or
+# 5xx (congestion) we fall straight to the next. Every entry was verified to
+# ACCEPT VIDEO INPUT (gemini-2.5-flash-lite is excluded — it 404s on fileData).
+# This list is deliberately version-pinned (the whole point is distinct buckets);
+# refresh it when Google adds/removes Flash models, or override per-run with the
+# GEMINI_MODELS env var (comma-separated) — no code edit needed.
+FALLBACK_MODELS = (
+    "gemini-3.6-flash",
+    "gemini-3.5-flash",
+    "gemini-3-flash-preview",
+    "gemini-2.5-flash",
+    "gemini-3.5-flash-lite",
+    "gemini-3.1-flash-lite",
+    "gemini-3.1-flash-lite-preview",
+)
+
+
+def resolve_models() -> list[str]:
+    """The ordered, de-duplicated model cascade to try in turn.
+
+    GEMINI_MODELS (comma-separated) overrides the whole cascade. Otherwise the
+    cascade is GEMINI_MODEL-or-DEFAULT_MODEL as primary, then FALLBACK_MODELS.
+    A model pinned as primary is not tried twice.
+    """
+    override = os.environ.get("GEMINI_MODELS", "").strip()
+    if override:
+        raw = [m.strip() for m in override.split(",")]
+    else:
+        primary = os.environ.get("GEMINI_MODEL", "").strip() or DEFAULT_MODEL
+        raw = [primary, *FALLBACK_MODELS]
+    chain: list[str] = []
+    for m in raw:
+        if m and m not in chain:
+            chain.append(m)
+    return chain
 API_HOST = "https://generativelanguage.googleapis.com"
 TIMEOUT_SECONDS = 300
+# Transient / quota statuses: 429 = rate or daily quota exhausted (RPM/RPD),
+# 5xx = server congestion. Both mean "try another model", and are worth ONE
+# backoff pass at the end (RPM windows reset, congestion eases). 404/400 mean the
+# model rejects the request outright — skip permanently, never retry.
+RETRY_STATUS = frozenset({429, 500, 502, 503, 504})
+RETRY_BACKOFF_SECONDS = 8
 CONFIG_ENV = os.path.expanduser("~/.config/video-analyzer/.env")
 
 
@@ -70,6 +124,23 @@ def read_dotenv_key(name: str, path: str = CONFIG_ENV) -> str | None:
 def resolve_api_key() -> str:
     """Environment first, then the ~/.config dotenv. Empty string if neither."""
     return os.environ.get("GEMINI_API_KEY", "").strip() or read_dotenv_key("GEMINI_API_KEY") or ""
+
+
+def ssl_context() -> ssl.SSLContext:
+    """A verifying TLS context, using certifi's CA bundle when it is importable.
+
+    The python.org macOS build ships no CA store (get_default_verify_paths() is
+    empty), so a bare default context fails every HTTPS call with
+    CERTIFICATE_VERIFY_FAILED. certifi carries the bundle and is present in that
+    build's site-packages; fall back to the system default elsewhere. Never
+    disables verification.
+    """
+    try:
+        import certifi
+
+        return ssl.create_default_context(cafile=certifi.where())
+    except Exception:
+        return ssl.create_default_context()
 
 # Public single-video YouTube pages only, mirroring the repo's own url-detector.
 # Playlists/channels are rejected — Gemini ingests one video, not a list.
@@ -142,6 +213,27 @@ def parse_response(payload: dict) -> str:
     return text
 
 
+def attempt_model(url, question, model, api_key, ctx):
+    """One request against one model. Returns (text, code, detail).
+
+    On success text is the answer and code is 200. On failure text is None and
+    (code, detail) explain it: an HTTP status (429/5xx = retryable, 404/400 =
+    dead), 0 for a network error, or -1 when the model replied but blocked or
+    returned no text (content issue — another model may still answer).
+    """
+    endpoint, headers, data = build_request(url, question, model, api_key)
+    req = urllib.request.Request(endpoint, data=data, headers=headers, method="POST")
+    try:
+        with urllib.request.urlopen(req, timeout=TIMEOUT_SECONDS, context=ctx) as resp:
+            return parse_response(json.loads(resp.read().decode("utf-8"))), 200, ""
+    except urllib.error.HTTPError as e:
+        return None, e.code, e.read().decode("utf-8", "replace")[:150]
+    except urllib.error.URLError as e:
+        return None, 0, f"network: {e.reason}"
+    except RuntimeError as e:  # parse_response: blocked / no text for this model
+        return None, -1, str(e)
+
+
 def run(url: str, question: str | None) -> str:
     api_key = resolve_api_key()
     if not api_key:
@@ -155,18 +247,42 @@ def run(url: str, question: str | None) -> str:
             "Gemini native ingestion only covers YouTube; use the normal tools for other sources."
         )
 
-    model = os.environ.get("GEMINI_MODEL", "").strip() or DEFAULT_MODEL
-    endpoint, headers, data = build_request(url, question, model, api_key)
-    req = urllib.request.Request(endpoint, data=data, headers=headers, method="POST")
-    try:
-        with urllib.request.urlopen(req, timeout=TIMEOUT_SECONDS) as resp:
-            payload = json.loads(resp.read().decode("utf-8"))
-    except urllib.error.HTTPError as e:
-        detail = e.read().decode("utf-8", "replace")[:500]
-        raise SystemExit(f"Gemini API HTTP {e.code}: {detail}")
-    except urllib.error.URLError as e:
-        raise SystemExit(f"Could not reach the Gemini API: {e.reason}")
-    return parse_response(payload)
+    ctx = ssl_context()
+    models = resolve_models()
+    retryable: list[str] = []  # models that hit quota/congestion — worth one more pass
+    last = ""
+
+    def note(model: str, primary: bool) -> None:
+        if model != models[0] or not primary:
+            sys.stderr.write(f"answered by fallback model: {model}\n")
+
+    # Pass 1 — one shot per model, spreading across distinct free-tier quota
+    # buckets. Fall straight through on 429 (quota) / 5xx (congestion); a hard
+    # 404/400 means the model can't serve this request, so drop it for good.
+    for model in models:
+        text, code, detail = attempt_model(url, question, model, api_key, ctx)
+        if text is not None:
+            note(model, True)
+            return text
+        last = f"{model}: {code} {detail}"
+        sys.stderr.write(f"{model} -> {code}, next\n")
+        if code in RETRY_STATUS or code == 0:  # quota / congestion / network
+            retryable.append(model)
+
+    # Pass 2 — a single backoff pass over the quota/congestion failures only.
+    # RPM windows reset and 503s ease within seconds; a persistent RPD 429 will
+    # just fail again, which is the correct outcome (quota really is spent).
+    if retryable:
+        sys.stderr.write(f"all {len(models)} models busy; backing off {RETRY_BACKOFF_SECONDS}s\n")
+        time.sleep(RETRY_BACKOFF_SECONDS)
+        for model in retryable:
+            text, code, detail = attempt_model(url, question, model, api_key, ctx)
+            if text is not None:
+                sys.stderr.write(f"answered by fallback model: {model} (2nd pass)\n")
+                return text
+            last = f"{model}: {code} {detail}"
+
+    raise SystemExit(f"Gemini API failed across {len(models)} models (last: {last}).")
 
 
 def _selftest() -> None:
@@ -199,6 +315,25 @@ def _selftest() -> None:
         assert read_dotenv_key("GEMINI_API_KEY", p) == "abc123"  # trims spaces + quotes
         assert read_dotenv_key("MISSING", p) is None
         assert read_dotenv_key("GEMINI_API_KEY", os.path.join(d, "nope")) is None  # no file
+
+    ctx = ssl_context()  # verifying context; certifi bundle when importable
+    assert isinstance(ctx, ssl.SSLContext)
+    assert ctx.verify_mode == ssl.CERT_REQUIRED
+
+    chain = resolve_models()
+    assert chain[0] == DEFAULT_MODEL  # floating-latest leads
+    assert len(chain) == len(set(chain)) >= 5  # deduped, and a real cascade of buckets
+    os.environ["GEMINI_MODEL"] = FALLBACK_MODELS[0]
+    try:
+        pinned = resolve_models()
+        assert pinned[0] == FALLBACK_MODELS[0] and pinned.count(FALLBACK_MODELS[0]) == 1
+    finally:
+        del os.environ["GEMINI_MODEL"]
+    os.environ["GEMINI_MODELS"] = "m-a, m-b ,m-a,m-c"  # whole-cascade override, trims + dedups
+    try:
+        assert resolve_models() == ["m-a", "m-b", "m-c"]
+    finally:
+        del os.environ["GEMINI_MODELS"]
 
     ok = {"candidates": [{"content": {"parts": [{"text": "0:00\thello"}]}}]}
     assert parse_response(ok) == "0:00\thello"

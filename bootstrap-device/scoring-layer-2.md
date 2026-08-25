@@ -402,9 +402,14 @@ reverts the edits — re-apply all three):
 
 1. `plugins/mcp-video-analyzer/scripts/gemini_youtube_fallback.py` — **new file.** Stdlib-only script;
    native YouTube → transcript, or `--ask "<q>"` → answer. Resolves the key from `GEMINI_API_KEY` in
-   the environment, else `~/.config/video-analyzer/.env` (`chmod 600`); optional `GEMINI_MODEL`,
-   default `gemini-flash-latest` (a floating alias on purpose — a pinned id would be one more thing to
-   reconcile). Carries a `--selftest` offline check (URL gate, request shape, response
+   the environment, else `~/.config/video-analyzer/.env` (`chmod 600`). Because free-tier RPM/RPD is
+   per-model, the request **cascades across ~8 distinct video-capable Flash models** (primary
+   `gemini-flash-latest`, then pinned fallbacks best→lite), falling through on 429/5xx to spread load;
+   `GEMINI_MODEL` sets the primary, `GEMINI_MODELS` replaces the whole chain. TLS uses certifi's CA
+   bundle (the python.org build ships none). The fallback list is version-pinned by necessity (the
+   point is distinct quota buckets) — refresh it when Google adds/removes Flash models; note
+   `gemini-2.5-flash-lite` is intentionally excluded (it 404s on video input). Carries a `--selftest`
+   offline check (URL gate, request shape, cascade resolution, TLS context, response
    parsing, dotenv read). Key travels in the `x-goog-api-key` header, never the URL.
 2. `plugins/mcp-video-analyzer/skills/video/SKILL.md` — **in-place edit.** Appended a "Gemini
    native-YouTube fallback" section wiring the script in as a last resort (only when the normal tools
