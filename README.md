@@ -107,7 +107,7 @@ Four repos are marketplaces or frameworks in their own right. Vendoring them wou
 
 `puppeteer` (npm) · `simple-icons` (npm) · `diffusionstudio/lottie` (npm) · `supertone-inc/supertonic-py` (pip). Libraries, not plugins — a pinned copy here would only go stale.
 
-`GoogleCloudPlatform/knowledge-catalog` (OKF) already lives in `bso-marketing/assets/tools/okf/` and is not duplicated.
+`GoogleCloudPlatform/knowledge-catalog` (OKF) already lives in `bso-marketing/tools/okf/` and is not duplicated.
 
 ## Install
 

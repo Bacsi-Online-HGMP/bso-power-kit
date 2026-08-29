@@ -1,0 +1,3 @@
+# Documents
+
+* [vietnamese-anti-slop](SKILL.md) - `Skill` — Edits or audits Vietnamese prose to strip out cliche and produce a real human voice. Use this skill whenever the user writes, edits or reviews any Vietnamese content: a video script, a caption, a blog post, a product description, an email, a customer-care message, a title, a thumbnail - or when the user says "this reads like AI wrote it", "it sounds like a cliche", "rewrite it naturally", "it sounds like clickbait journalism", or "check whether this is formulaic". It complements no-ai-slop and stop-slop, which only catch English tells. It does NOT replace supplement-compliance - see the Compliance boundary section.
