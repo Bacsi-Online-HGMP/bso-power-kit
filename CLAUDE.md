@@ -22,6 +22,12 @@ goes to `bso-marketing` instead.
 them. Where an upstream file has been edited (see `bootstrap-device/scoring-layer-2.md`), that edit
 is recorded so it can be reconciled on the next upstream update.
 
+**`skills/` holds first-party skills, not vendored ones.** A skill lands here only when it
+carries no operator-specific rules, claims, disclaimers or brand identity. `vietnamese-anti-slop`
+arrived on 2026-08-29 from `bso-marketing` under that test; `supplement-compliance`,
+`bso-design` and `presentation-creator` were examined at the same time and stayed there, because
+each embeds the HGMP identity or the Vietnamese claim rules. See ADR-0011 in `bso-strategy`.
+
 **`bootstrap-device/plugins-claude-code.tsv` is generated.** Only the `pack` column is edited by
 hand; `export-plugins.sh` preserves it and regenerates everything else. Rejections live in
 `plugins-loai.tsv` so they are not re-litigated.
@@ -47,12 +53,10 @@ The carve-out is **final product content and regulator-facing wording**. It does
 
 | Stays Vietnamese | Why |
 |---|---|
-| `assets/scripts/**` | Narration and on-screen copy for a Vietnamese audience |
-| `assets/outlines/**` | The episode outlines those scripts come from |
-| `core/claims-matrix/**` · `core/disclaimers.md` | Legally binding wording shown to a Vietnamese regulator |
-| `core/rules/vn/nghi-dinh-vn/_ocr/**` | OCR of Vietnamese decrees — a primary source |
-| `assets/skills/supplement-compliance/references/vn/**` | Vietnamese claim-language rules |
-| `assets/skills/vietnamese-anti-slop/**` | Rules about writing Vietnamese prose; the examples are the content |
+| `skills/vietnamese-anti-slop/**` | Rules about writing Vietnamese prose; the examples are the content |
+| `bso-marketing/docs/core/claims-matrix/**` · `.../disclaimers.md` | Legally binding wording shown to a Vietnamese regulator |
+| `bso-marketing/docs/core/rules/vn/nghi-dinh-vn/_ocr/**` | OCR of Vietnamese decrees — a primary source |
+| `bso-marketing/tools/skills/supplement-compliance/references/vn/**` | Vietnamese claim-language rules |
 | Drive `output/**` · Drive `source/INPUT/**` | Finished product folders and the Vietnamese production material |
 
 Anything in the carve-out keeps its **byte-for-byte** Vietnamese. Never "tidy up" an approved claim,
@@ -74,14 +78,14 @@ commit through.
 
 ### How it is enforced
 
-`assets/tools/git-hooks/pre-commit` reads the **added lines** of the staged diff and blocks the
+`bso-marketing/tools/git-hooks/pre-commit` reads the **added lines** of the staged diff and blocks the
 commit when it finds Vietnamese diacritics outside the carve-out. Existing Vietnamese never blocks
 an unrelated edit — only newly added Vietnamese does.
 
 Install it once per machine, in every repo at the project root:
 
 ```bash
-sh bso-marketing/assets/tools/git-hooks/install.sh
+sh bso-marketing/tools/git-hooks/install.sh
 ```
 
 The hook is a safety net, not the rule. It catches diacritics; it cannot catch Vietnamese written

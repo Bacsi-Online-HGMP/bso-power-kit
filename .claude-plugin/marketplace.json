@@ -204,6 +204,15 @@
       "name": "worktrunk",
       "source": "./plugins/worktrunk-main/plugins/worktrunk",
       "description": "U · Utilities (Code) — parallel git worktrees for running agents side-by-side."
+    },
+    {
+      "name": "vietnamese-anti-slop",
+      "source": "./",
+      "strict": false,
+      "skills": [
+        "./skills/vietnamese-anti-slop"
+      ],
+      "description": "W · Writing — edits and audits Vietnamese prose to remove cliche. Complements no-ai-slop and stop-slop, which only catch English tells."
     }
   ]
 }
