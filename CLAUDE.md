@@ -26,7 +26,7 @@ is recorded so it can be reconciled on the next upstream update.
 carries no operator-specific rules, claims, disclaimers or brand identity. `vietnamese-anti-slop`
 arrived on 2026-08-29 from `bso-marketing` under that test; `supplement-compliance`,
 `bso-design` and `presentation-creator` were examined at the same time and stayed there, because
-each embeds the HGMP identity or the Vietnamese claim rules. See ADR-0011 in `bso-strategy`.
+each embeds the HGMP identity or the Vietnamese claim rules. See ADR-0012 in `bso-strategy`.
 
 **`bootstrap-device/plugins-claude-code.tsv` is generated.** Only the `pack` column is edited by
 hand; `export-plugins.sh` preserves it and regenerates everything else. Rejections live in
