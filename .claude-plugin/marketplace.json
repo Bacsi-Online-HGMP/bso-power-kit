@@ -213,6 +213,15 @@
         "./skills/vietnamese-anti-slop"
       ],
       "description": "W · Writing — edits and audits Vietnamese prose to remove cliche. Complements no-ai-slop and stop-slop, which only catch English tells."
+    },
+    {
+      "name": "digesting-books",
+      "source": "./",
+      "strict": false,
+      "skills": [
+        "./skills/digesting-books"
+      ],
+      "description": "A · Research — splits a book or long PDF, EPUB or DOCX into chapter files, then keeps notes per chapter so later work reads the notes, not the book."
     }
   ]
 }

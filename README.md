@@ -13,6 +13,7 @@ Community skills, plugins and MCPs for Claude — Cowork and Code — kept down 
 ### A · Research
 - **◆ academic-research-skills** — deep research and academic writing pipeline. Heavy: a full run costs roughly $4–6 by its own docs, so reach for a narrow mode (`/ars-outline`, `/ars-3w`) before `/ars-full`.
 - **idea-validation-agents** — pressure-test a product idea before building it. No API key.
+- **digesting-books** — first-party skill in `skills/`. Splits a book or long PDF, EPUB or DOCX into chapter files, then keeps notes per chapter, so later work reads the notes instead of the book. Needs `pypdf` for PDFs. Without the marketplace, link it in once per machine: `ln -s "$PWD/skills/digesting-books" ~/.claude/skills/digesting-books` (run from this repo).
 
 ### C · Coding Discipline & Quality
 - **◆ mattpocock-skills** — 19 engineering and productivity skills: grilling, diagnosing-bugs, writing-great-skills, code-review, tdd. Took over as spine when superpowers was dropped.
