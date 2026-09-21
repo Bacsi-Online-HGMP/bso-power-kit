@@ -31,7 +31,14 @@ Output (JSON when ``--json`` is set)::
       "flags": ["filler", "ai-patterns", "low-density", ...],
       "matches": {"filler": [...], "ai_patterns": [...]},
       "tokens":                 int,
-      "unique_tokens":          int
+      "unique_tokens":          int,
+      "coverage":               present only for CJK-dominant text, e.g.
+                                 {"script": "cjk", "entity_density": "not_computed",
+                                  "phrase_lists": "english_only"}: the
+                                 filler/AI-pattern phrase lists and the
+                                 capitalisation-based entity heuristic are
+                                 English-only, so a CJK score is not directly
+                                 comparable to a Latin-script one.
     }
 
 Attribution
@@ -53,7 +60,6 @@ import sys
 from collections import Counter
 from pathlib import Path
 from typing import Iterable
-
 
 # Padding / filler phrases that QRG §4.6 flags as "little-to-no value".
 # Each phrase scores 1 hit; threshold tuned at ~3 hits per 1000 tokens.
@@ -141,11 +147,44 @@ _AI_PATTERNS: tuple[str, ...] = (
 )
 
 
-_TOKEN_RE = re.compile(r"[A-Za-z][A-Za-z'\-]*")
+# Latin words, Hangul eojeol, and CJK/kana characters. Korean is space
+# delimited so a run of syllables is one token; Chinese and Japanese are
+# unspaced, so one ideograph or kana counts as one token.
+_TOKEN_RE = re.compile(
+    r"[A-Za-z][A-Za-z'\-]*"
+    r"|[\uac00-\ud7a3]+"
+    r"|[\u3041-\u3096\u30a1-\u30fa\u30fc]"
+    r"|[\u3400-\u4dbf\u4e00-\u9fff]"
+)
 _NUMBER_RE = re.compile(r"\b\d+(?:[.,]\d+)?(?:%|st|nd|rd|th)?\b")
 # Capitalised multi-word names: rough proper-noun heuristic. Two or more
 # capitalised tokens in a row count as one entity.
 _ENTITY_RE = re.compile(r"\b(?:[A-Z][a-z]+(?:\s+[A-Z][a-z]+)+)\b")
+# NOTE: CJK scripts have no letter case, so this heuristic finds no entities
+# in Korean/Japanese/Chinese text. Density for those languages therefore rests
+# on _NUMBER_RE alone and skews low. Tokenisation (above) is the load-bearing
+# fix; CJK named-entity detection needs a real model, not a regex.
+
+# Same character classes as the CJK branches of _TOKEN_RE, used only to guess
+# whether a text is CJK-dominant so we can flag which signals below are not
+# meaningfully computed for it. Not a language detector.
+_CJK_CHAR_RE = re.compile(
+    r"[가-힣ぁ-ゖァ-ヺー㐀-䶿一-鿿]"
+)
+_LATIN_CHAR_RE = re.compile(r"[A-Za-z]")
+
+
+def _detect_script(text: str) -> str | None:
+    """Return "cjk" when CJK/Hangul/kana characters dominate ``text``, else None.
+
+    ``None`` covers Latin-script and any other text; the coverage note is
+    only added when the score's known-unreliable-for-CJK signals apply.
+    """
+    cjk_chars = len(_CJK_CHAR_RE.findall(text))
+    if cjk_chars == 0:
+        return None
+    latin_chars = len(_LATIN_CHAR_RE.findall(text))
+    return "cjk" if cjk_chars >= latin_chars else None
 
 
 def _count_phrase_hits(text: str, patterns: Iterable[str]) -> list[str]:
@@ -226,7 +265,7 @@ def analyse(text: str) -> dict:
         + min(100, n_tokens / 10.0) * 0.10  # length bonus capped at 1000 tokens
     )
 
-    return {
+    result = {
         "filler_score": filler_score,
         "ai_pattern_score": ai_pattern_score,
         "information_density": round(information_density, 3),
@@ -238,8 +277,40 @@ def analyse(text: str) -> dict:
         "unique_tokens": unique,
     }
 
+    # The filler/AI-pattern phrase lists and the capitalisation-based entity
+    # heuristic are English-only; they are silently near-zero for CJK text
+    # rather than reporting "no filler found". Flag that explicitly so a CJK
+    # score is never read as comparable to a Latin-script one. Latin/other
+    # output is unchanged: no "coverage" key is added when every signal was
+    # actually computed.
+    script = _detect_script(text)
+    if script == "cjk":
+        result["coverage"] = {
+            "script": "cjk",
+            "entity_density": "not_computed",
+            "phrase_lists": "english_only",
+        }
+
+    return result
+
+
+def _configure_utf8() -> None:
+    """Read stdin and write stdout as UTF-8 regardless of the console codec.
+
+    Windows consoles default to a legacy code page, which cannot encode CJK
+    text and would raise UnicodeEncodeError on the first non-Latin character.
+    """
+    for stream in (sys.stdin, sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if reconfigure:
+            try:
+                reconfigure(encoding="utf-8", errors="replace")
+            except (ValueError, OSError):
+                pass
+
 
 def main() -> int:
+    _configure_utf8()
     parser = argparse.ArgumentParser(
         description="QRG-aligned content quality scorer."
     )
@@ -283,6 +354,12 @@ def main() -> int:
         if result["matches"]["ai_patterns"]:
             print(f"  AI-pattern hits:     {', '.join(result['matches']['ai_patterns'][:5])}"
                   f"{' …' if len(result['matches']['ai_patterns']) > 5 else ''}")
+        if result.get("coverage"):
+            print(
+                "  Note: CJK text detected, entity-density and phrase-list "
+                "signals are English-only heuristics here, so this score is "
+                "not directly comparable to a Latin-script page."
+            )
 
     return 0 if result["overall_quality"] >= args.threshold else 1
 

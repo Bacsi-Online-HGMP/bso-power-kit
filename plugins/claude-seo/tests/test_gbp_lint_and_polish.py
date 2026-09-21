@@ -7,7 +7,6 @@ Tests for v2 Checkpoint 6 (Phase F — local + international + privacy polish):
 
 from __future__ import annotations
 
-import os
 import sys
 from pathlib import Path
 
@@ -18,8 +17,8 @@ _SCRIPTS = _REPO / "scripts"
 if str(_SCRIPTS) not in sys.path:
     sys.path.insert(0, str(_SCRIPTS))
 
+pytest.importorskip("requests")
 import gbp_deprecation_lint as gbp  # noqa: E402
-
 
 # ---------------------------------------------------------------------------
 # gbp_deprecation_lint

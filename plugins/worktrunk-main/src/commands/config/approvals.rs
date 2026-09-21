@@ -19,7 +19,7 @@ use worktrunk::styling::{
 };
 
 use crate::cli::SwitchFormat;
-use crate::commands::command_approval::{announce_batch_approval, prompt_for_batch_approval};
+use crate::commands::command_approval::{announce_batch_approval, prompt_for_batch_review};
 use crate::commands::project_config::{
     ApprovableCommand, collect_commands_for_aliases, collect_commands_for_hooks,
 };
@@ -28,7 +28,9 @@ use crate::output::print_json;
 /// Every approvable command a project config declares: hooks in lifecycle
 /// order, then aliases (alphabetical), then any commit-message guidance.
 /// The shared collection behind `wt config approvals {list,add}`.
-fn collect_approvable_commands(project_config: &ProjectConfig) -> Vec<ApprovableCommand> {
+pub(super) fn collect_approvable_commands(
+    project_config: &ProjectConfig,
+) -> Vec<ApprovableCommand> {
     let all_hooks: Vec<_> = HookType::iter().collect();
     let mut commands = collect_commands_for_hooks(project_config, &all_hooks);
     commands.extend(collect_commands_for_aliases(project_config));
@@ -236,7 +238,7 @@ pub fn add_approvals(show_all: bool, yes: bool) -> anyhow::Result<()> {
         announce_batch_approval(&batch, &project_id);
         true
     } else {
-        prompt_for_batch_approval(&batch, &project_id)?
+        prompt_for_batch_review(&batch, &project_id)?
     };
 
     if !approved {

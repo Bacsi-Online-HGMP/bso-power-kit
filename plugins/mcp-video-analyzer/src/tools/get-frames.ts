@@ -12,15 +12,15 @@ import {
 import { optimizeFramesKeepingOriginals } from '../processors/image-optimizer.js';
 import { createProgressReporter } from '../utils/progress.js';
 import { createTempDir } from '../utils/temp-files.js';
-import { isVideoSource, toLocalPath } from '../utils/url-detector.js';
+import { isVideoSource, sourceRejectionMessage, toLocalPath } from '../utils/url-detector.js';
+import { warningReason } from '../utils/warnings.js';
 import { maxWidthParam } from './frame-options.js';
 
 const GetFramesSchema = z.object({
   url: z
     .string()
     .refine(isVideoSource, {
-      message:
-        'Must be a supported video URL (Loom, YouTube, Vimeo, TikTok, Instagram, X/Twitter, Twitch, Dailymotion, Facebook), a direct .mp4/.webm/.mov URL, or an absolute path / file:// URI to a local video file',
+      error: (issue) => sourceRejectionMessage(issue.input),
     })
     .describe(
       'Video source: Loom share link, platform video URL (YouTube, Vimeo, TikTok, Instagram, X, Twitch, Dailymotion, Facebook), direct .mp4/.webm/.mov URL, or absolute path to a local video file',
@@ -96,9 +96,7 @@ Supports: Loom (loom.com/share/...), YouTube/Vimeo/TikTok/Instagram/X/Twitch/Dai
       // metadata error would skip it and mislabel the result as "install
       // yt-dlp" when the real cause was the metadata fetch.
       const metadata = await adapter.getMetadata(url).catch((e: unknown) => {
-        warnings.push(
-          `Could not fetch video metadata: ${e instanceof Error ? e.message : String(e)}`,
-        );
+        warnings.push(`Could not fetch video metadata: ${warningReason(e)}`);
         return {
           platform: adapter.name,
           title: 'Unknown',
@@ -150,7 +148,10 @@ Supports: Loom (loom.com/share/...), YouTube/Vimeo/TikTok/Instagram/X/Twitch/Dai
         await progress(40, 'Extracting frames via browser fallback...');
         const timestamps = generateTimestamps(metadata.duration, maxFrames);
         frames = await extractBrowserFrames(url, tempDir, { timestamps }).catch((e: unknown) => {
-          warnings.push(`Browser extraction failed: ${e instanceof Error ? e.message : String(e)}`);
+          // `warningReason`, not `e.name`: a refused destination has to say WHY
+          // it was refused, or the SSRF verdict reaches the user as the bare
+          // string "BlockedDestinationError".
+          warnings.push(`Browser extraction failed: ${warningReason(e)}`);
           return [];
         });
       }

@@ -118,6 +118,11 @@
 //!   `LLM_SEMAPHORE` (summary), `COPY_POOL` (copy)
 //! - Global state: `OUTPUT_STATE` (output), `TRACE` and `SUBPROCESS` (log_files), `COMMAND_LOG`
 //! - Config: `CONFIG_PATH` (config/user/path), `SHELL_CONFIG`, `GIT_ENV_OVERRIDES` (shell_exec)
+//! - Serialization: `WORKTREE_REGISTRY_LOCKS` (this module) — one `RwLock` per
+//!   canonical git common dir, handed to each `Repository` at construction so
+//!   `list_worktrees` reads and `git worktree remove` teardowns can't overlap.
+//!   Keyed like a cache but holding no git data, so nothing in it goes stale;
+//!   see the static's own doc comment for the ordering rules.
 //!
 //! The picker also maintains a `PreviewCache` (`Arc<DashMap>` in `commands/picker/items.rs`)
 //! for rendered preview output, scoped to a single picker session.
@@ -125,7 +130,7 @@
 use std::ffi::{OsStr, OsString};
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
-use std::sync::{Arc, LazyLock, OnceLock};
+use std::sync::{Arc, LazyLock, OnceLock, RwLock, RwLockReadGuard, RwLockWriteGuard};
 
 use crate::shell_exec::Cmd;
 
@@ -139,7 +144,9 @@ use dunce::canonicalize;
 use crate::config::{LoadError, ProjectConfig, ResolvedConfig, UserConfig};
 
 // Import types from parent module
-use super::{CommandError, DefaultBranchName, ForgeKind, GitError, LineDiff, WorktreeInfo};
+use super::{
+    CommandError, DefaultBranchName, ForgeKind, GitError, GitItemId, LineDiff, WorktreeInfo,
+};
 
 // Re-export types needed by submodules
 pub(super) use super::{
@@ -162,7 +169,7 @@ mod worktrees;
 // Re-export WorkingTree, Branch, IntegrationTargets, and RefSnapshot
 pub use branch::Branch;
 pub use branch::is_valid_branch_name;
-pub use diff::CommitMessageDetail;
+pub use diff::{CommitMessageDetail, PreparedDiff};
 pub use integration::{BranchDiffSpec, IntegrationTargets, select_comparison_base};
 pub use ref_snapshot::RefSnapshot;
 pub(super) use working_tree::path_to_logging_context;
@@ -315,8 +322,8 @@ pub(super) struct RepoCache {
     /// **The `commit_sha` field on each entry is a snapshot at scan time.**
     /// Code that needs a current SHA must resolve through a [`RefSnapshot`]
     /// captured at the moment the read happens — not through this inventory.
-    /// The inventory is used for branch-name listing and upstream-tracking
-    /// metadata, both of which are stable for the duration of a command.
+    /// Everything else the inventory holds goes stale the same way once the
+    /// command runs a hook; [`Repository::local_branches`] owns that contract.
     pub(super) local_branches: OnceCell<branches::LocalBranchInventory>,
     /// Remote-tracking branch inventory: one `git for-each-ref refs/remotes/`
     /// scan, cached for the lifetime of the repository. Sorted by most recent
@@ -351,6 +358,10 @@ pub(super) struct RepoCache {
     /// (working-tree diff + conflict detection) share one subprocess per worktree
     /// instead of spawning `git status` twice.
     pub(super) status_porcelain: DashMap<PathBuf, String>,
+    /// Process-scoped object databases created by observational repository
+    /// clones. Original clones consult this shared set so Worktrunk's own
+    /// temporary directories never appear as untracked worktree content.
+    pub(super) observation_object_directories: DashMap<PathBuf, ()>,
 }
 
 /// Result of resolving a worktree name.
@@ -367,11 +378,15 @@ pub enum ResolvedWorktree {
         path: PathBuf,
         /// The branch name, if known (None for detached HEAD)
         branch: Option<String>,
+        /// Canonical identity captured when the selector resolves.
+        id: GitItemId,
     },
     /// Only a branch exists (no worktree)
     BranchOnly {
         /// The branch name
         branch: String,
+        /// Canonical local-ref identity captured when the selector resolves.
+        id: GitItemId,
     },
     /// The selector named a directory holding no worktree — the skeleton an
     /// interrupted create or remove leaves behind.
@@ -385,6 +400,27 @@ pub enum ResolvedWorktree {
         /// The directory, resolved against `-C` but spelled as the selector did
         path: PathBuf,
     },
+}
+
+impl ResolvedWorktree {
+    fn worktree(path: PathBuf, branch: Option<String>) -> Self {
+        let id = GitItemId::worktree(&path);
+        Self::Worktree { path, branch, id }
+    }
+
+    fn branch_only(branch: String) -> Self {
+        let id = GitItemId::local_branch(&branch);
+        Self::BranchOnly { branch, id }
+    }
+
+    /// Canonical identity selected by this resolution, when it names a Git
+    /// item rather than an unregistered directory.
+    pub fn id(&self) -> Option<&GitItemId> {
+        match self {
+            Self::Worktree { id, .. } | Self::BranchOnly { id, .. } => Some(id),
+            Self::NoWorktreeAtPath { .. } => None,
+        }
+    }
 }
 
 /// A worktree selector after normalization and expansion — the token to look
@@ -471,6 +507,23 @@ static DEFAULT_BASE_PATH: LazyLock<PathBuf> = LazyLock::new(|| PathBuf::from("."
 /// callers go through `base_path()`) always passes the same `PathBuf`, so
 /// equality on the raw path is sufficient.
 static GIT_COMMON_DIR_CACHE: LazyLock<DashMap<PathBuf, PathBuf>> = LazyLock::new(DashMap::new);
+
+/// Process-local coordination for Git's worktree registry, keyed by the
+/// canonical Git common directory. Every [`Repository`] for the same common
+/// directory shares one read/write lock. The dedicated
+/// [`Repository::list_worktrees`] accessor takes the read side, while
+/// [`Repository::prune_worktree_entry`] and [`Repository::remove_worktree`]
+/// take the write side.
+///
+/// Guards are non-reentrant: a guarded operation must not call another of
+/// these accessors. In `wt step prune`, the lock order is the command's
+/// `check_lock` followed by this registry lock; code holding a registry guard
+/// must never acquire `check_lock`.
+///
+/// External Git processes and raw worktree commands issued through
+/// [`Repository::run_command`] do not honor this lock.
+static WORKTREE_REGISTRY_LOCKS: LazyLock<DashMap<PathBuf, Arc<RwLock<()>>>> =
+    LazyLock::new(DashMap::new);
 
 /// Process-wide map of `worktree_path -> canonicalized worktree root`,
 /// keyed by the canonicalized path used as the cache key (same convention as
@@ -625,6 +678,68 @@ pub fn normalize_selector(name: &str) -> &str {
     if trimmed.is_empty() { name } else { trimmed }
 }
 
+/// Quote one path for Git's C-style alternate-object-directory list.
+#[cfg(unix)]
+fn quote_alternate_object_directory(path: &OsStr) -> OsString {
+    use std::os::unix::ffi::{OsStrExt, OsStringExt};
+
+    let mut quoted = Vec::with_capacity(path.as_bytes().len() + 2);
+    quoted.push(b'"');
+    for &byte in path.as_bytes() {
+        match byte {
+            b'\\' | b'"' => {
+                quoted.push(b'\\');
+                quoted.push(byte);
+            }
+            b'\n' => quoted.extend_from_slice(b"\\n"),
+            b'\r' => quoted.extend_from_slice(b"\\r"),
+            b'\t' => quoted.extend_from_slice(b"\\t"),
+            b'\x08' => quoted.extend_from_slice(b"\\b"),
+            b'\x0c' => quoted.extend_from_slice(b"\\f"),
+            b' '..=b'~' => quoted.push(byte),
+            _ => {
+                quoted.push(b'\\');
+                quoted.push(b'0' + ((byte >> 6) & 0o7));
+                quoted.push(b'0' + ((byte >> 3) & 0o7));
+                quoted.push(b'0' + (byte & 0o7));
+            }
+        }
+    }
+    quoted.push(b'"');
+    OsString::from_vec(quoted)
+}
+
+#[cfg(not(unix))]
+fn quote_alternate_object_directory(path: &OsStr) -> OsString {
+    let mut quoted = String::from("\"");
+    for ch in path.to_string_lossy().chars() {
+        match ch {
+            '\\' | '"' => {
+                quoted.push('\\');
+                quoted.push(ch);
+            }
+            '\n' => quoted.push_str("\\n"),
+            '\r' => quoted.push_str("\\r"),
+            '\t' => quoted.push_str("\\t"),
+            _ => quoted.push(ch),
+        }
+    }
+    quoted.push('"');
+    quoted.into()
+}
+
+/// Prepend the real object database while preserving inherited alternates.
+fn alternate_object_directories(primary: &Path) -> OsString {
+    let mut alternates = quote_alternate_object_directory(primary.as_os_str());
+    if let Some(inherited) =
+        std::env::var_os("GIT_ALTERNATE_OBJECT_DIRECTORIES").filter(|value| !value.is_empty())
+    {
+        alternates.push(if cfg!(windows) { ";" } else { ":" });
+        alternates.push(inherited);
+    }
+    alternates
+}
+
 /// Repository state for git operations.
 ///
 /// Represents the shared state of a git repository (the `.git` directory).
@@ -658,24 +773,36 @@ pub struct Repository {
     git_common_dir: PathBuf,
     /// Cached data for this repository. Shared across clones via Arc.
     pub(super) cache: Arc<RepoCache>,
+    /// Shared by every `Repository` that resolves to `git_common_dir`.
+    worktree_registry_lock: Arc<RwLock<()>>,
     /// When set, object-writing git plumbing is redirected into a temporary
-    /// object database so observational commands run in a read-only checkout.
-    /// `None` for the normal (persistent) path. See
-    /// [`Repository::redirect_objects_if_read_only`].
-    temporary_object_directory: Option<Arc<TemporaryObjectDirectory>>,
+    /// object database. `None` for the normal persistent path. See
+    /// [`Repository::redirect_objects_for_observation`].
+    /// Held behind an `Arc` so list's parallel repository clones share one
+    /// store, removed when the last clone drops.
+    temporary_object_store: Option<Arc<TemporaryObjectStore>>,
 }
 
-/// A throwaway object database that a redirected [`Repository`] writes new
-/// objects into, with the real database (plus any inherited alternates) as
-/// read-only alternates so existing objects still resolve.
+/// A process-scoped object database plus its visibility registration.
 ///
-/// Held behind an `Arc` so cloning a `Repository` — as `wt list` does for its
-/// parallel tasks — shares one store and one `TempDir` lifetime; the directory
-/// is removed when the last clone drops.
+/// The shared registration lets repository clones that do not carry the
+/// redirect exclude Worktrunk's own directory from untracked-file views. It
+/// must disappear with the last redirected clone so a subsequently-created
+/// user path at the same location is visible again.
 #[derive(Debug)]
-struct TemporaryObjectDirectory {
+struct TemporaryObjectStore {
     directory: tempfile::TempDir,
     alternates: OsString,
+    registered_path: PathBuf,
+    cache: Arc<RepoCache>,
+}
+
+impl Drop for TemporaryObjectStore {
+    fn drop(&mut self) {
+        self.cache
+            .observation_object_directories
+            .remove(&self.registered_path);
+    }
 }
 
 impl Repository {
@@ -705,6 +832,10 @@ impl Repository {
     pub fn at(path: impl Into<PathBuf>) -> anyhow::Result<Self> {
         let discovery_path = path.into();
         let git_common_dir = Self::resolve_git_common_dir(&discovery_path)?;
+        let worktree_registry_lock = WORKTREE_REGISTRY_LOCKS
+            .entry(git_common_dir.clone())
+            .or_insert_with(|| Arc::new(RwLock::new(())))
+            .clone();
 
         let cache = RepoCache::default();
         // Consume any `git config --list -z` map preloaded by
@@ -732,86 +863,86 @@ impl Repository {
             discovery_path,
             git_common_dir,
             cache: Arc::new(cache),
-            temporary_object_directory: None,
+            worktree_registry_lock,
+            temporary_object_store: None,
         })
     }
 
-    /// If this repository's object database is read-only, return a clone whose
-    /// object-writing git plumbing is redirected into a temporary object
-    /// database (with the real database as a read-only alternate); otherwise
-    /// return `Ok(None)` and let the caller keep using `self` unchanged.
+    /// Share registry coordination across fresh repository caches.
+    pub(super) fn worktree_registry_read(&self) -> RwLockReadGuard<'_, ()> {
+        self.worktree_registry_lock
+            .read()
+            .unwrap_or_else(|error| error.into_inner())
+    }
+
+    /// Exclude registry readers and other teardowns for this repository.
+    pub(super) fn worktree_registry_write(&self) -> RwLockWriteGuard<'_, ()> {
+        self.worktree_registry_lock
+            .write()
+            .unwrap_or_else(|error| error.into_inner())
+    }
+
+    /// Return a clone whose object-writing git plumbing is redirected into a
+    /// temporary object database.
     ///
     /// Only *observational* commands may redirect. `wt list`'s merge and
     /// conflict probes create ephemeral objects (`write-tree`, `commit-tree`,
     /// `merge-tree --write-tree`) that are never referenced, so writing them to
     /// a throwaway store is harmless and lets the command run in a read-only
-    /// checkout. A *mutating* command must never redirect — its commit would be
-    /// written to the throwaway store and lost at process exit. Because a
-    /// read-only object database also blocks the ref/index/worktree writes
-    /// those commands need, keeping them on the persistent database makes them
-    /// fail loudly rather than silently succeed into a store that vanishes.
-    pub fn redirect_objects_if_read_only(&self) -> Option<Self> {
-        let objects = self.object_database_path();
-
-        // Probe effective writability by creating a file in the object
-        // database — the same thing git's object writers do, so this fails
-        // exactly when they would (a read-only mount and a `chmod`ed directory
-        // both surface here, unlike the owner-write permission bit). A
-        // successful probe file is dropped immediately.
-        if tempfile::Builder::new()
-            .prefix(".worktrunk-write-probe-")
-            .tempfile_in(&objects)
-            .is_ok()
-        {
-            return None;
-        }
-
-        self.with_temporary_object_directory()
-    }
-
-    /// Build a clone whose object writes are redirected into a fresh temporary
-    /// object database, with the real database as a read-only alternate so
-    /// existing objects still resolve. Returns `None` when the temporary store
-    /// can't be created (no writable temp dir), leaving the caller on the real
-    /// database. This is the *mechanism*; the *policy* — whether to redirect at
-    /// all — lives in [`Self::redirect_objects_if_read_only`], the only
-    /// production caller.
-    fn with_temporary_object_directory(&self) -> Option<Self> {
-        let alternates = self.object_database_path().into_os_string();
-        let directory = tempfile::Builder::new()
-            .prefix("worktrunk-list-objects-")
-            .tempdir()
-            .ok()?;
+    /// checkout. If the system temporary directory is unavailable, the store
+    /// falls back to the Git common directory. A *mutating* command must never
+    /// redirect because its commit would disappear with the store.
+    pub fn redirect_objects_for_observation(&self) -> anyhow::Result<Self> {
+        let alternate = self.object_database_path();
+        let mut builder = tempfile::Builder::new();
+        builder.prefix("worktrunk-list-objects-");
+        let directory = match builder.tempdir() {
+            Ok(directory) => directory,
+            Err(temp_error) => builder.tempdir_in(&self.git_common_dir).context(format!(
+                "Failed to create temporary object database in the system temp directory or Git common directory; system temp error: {temp_error}"
+            ))?,
+        };
+        let alternates = alternate_object_directories(&alternate);
+        let registered_path = directory.path().to_path_buf();
+        self.cache
+            .observation_object_directories
+            .insert(registered_path.clone(), ());
 
         let mut clone = self.clone();
-        clone.temporary_object_directory = Some(Arc::new(TemporaryObjectDirectory {
+        clone.temporary_object_store = Some(Arc::new(TemporaryObjectStore {
             directory,
             alternates,
+            registered_path,
+            cache: Arc::clone(&self.cache),
         }));
-        Some(clone)
+        Ok(clone)
     }
 
-    /// Absolute path to this repository's shared object database — the store a
-    /// redirected repository probes for writability and names as its read-only
-    /// alternate.
-    ///
-    /// This is the common dir's `objects`, shared by every linked worktree. It
-    /// does not resolve an inherited `GIT_OBJECT_DIRECTORY` (set only when `wt`
-    /// runs under a git alias); that combined with a read-only store and a
-    /// `wt list` is vanishingly rare, and the redirect degrades to reading the
-    /// common store rather than failing.
+    /// Absolute path to the effective object database that a redirected
+    /// repository names as its read-only alternate.
     fn object_database_path(&self) -> PathBuf {
-        let objects = self.git_common_dir.join("objects");
+        let objects = std::env::var_os("GIT_OBJECT_DIRECTORY")
+            .map(PathBuf::from)
+            .map(|path| {
+                if path.is_absolute() {
+                    path
+                } else {
+                    std::env::current_dir()
+                        .unwrap_or_else(|_| self.discovery_path.clone())
+                        .join(path)
+                }
+            })
+            .unwrap_or_else(|| self.git_common_dir.join("objects"));
         canonicalize(&objects).unwrap_or(objects)
     }
 
-    /// The `(object-directory, alternates)` environment for a redirected
-    /// repository, or `None` when object writes go to the real database.
+    /// The object-directory environment for a redirected repository, or `None`
+    /// when object writes go to the real database.
     /// Copied into [`WorkingTree`]'s [`TempIndex`], which builds its own `Cmd`.
     pub(super) fn object_store_environment(&self) -> Option<(&Path, &OsStr)> {
-        self.temporary_object_directory
+        self.temporary_object_store
             .as_ref()
-            .map(|temporary| (temporary.directory.path(), temporary.alternates.as_os_str()))
+            .map(|store| (store.directory.path(), store.alternates.as_os_str()))
     }
 
     /// Add the temporary-object-database environment to `cmd` when this
@@ -1200,16 +1331,6 @@ impl Repository {
             emit_user_config_warnings(&warnings);
             config
         })
-    }
-
-    /// Check if this repository shares its cache with another.
-    ///
-    /// Returns true if both repositories point to the same underlying cache.
-    /// This is primarily useful for testing that cloned repositories share
-    /// cached data.
-    #[doc(hidden)]
-    pub fn shares_cache_with(&self, other: &Repository) -> bool {
-        Arc::ptr_eq(&self.cache, &other.cache)
     }
 
     /// Resolve the git common directory for a path.
@@ -1610,6 +1731,14 @@ impl Repository {
         self.config_bool("core.bare")
     }
 
+    /// Whether `commit.gpgSign` asks for signed commits.
+    ///
+    /// `git commit` and `git merge` honor it; `git commit-tree` ignores it, so
+    /// a commit meant to match what porcelain would record passes `-S` itself.
+    pub fn signs_commits(&self) -> anyhow::Result<bool> {
+        self.config_bool("commit.gpgSign")
+    }
+
     /// Get the sparse checkout paths for this repository.
     ///
     /// Returns the list of paths from `git sparse-checkout list`. For non-sparse
@@ -1810,14 +1939,14 @@ impl Repository {
     /// Run a git command and return whether it succeeded (exit code 0).
     ///
     /// This is useful for commands that use exit codes for boolean results,
-    /// like `git merge-base --is-ancestor` or `git diff --quiet`.
+    /// like `git merge-base --is-ancestor`.
     ///
     /// # Examples
     /// ```no_run
     /// use worktrunk::git::Repository;
     ///
     /// let repo = Repository::current()?;
-    /// let is_clean = repo.run_command_check(&["diff", "--quiet", "--exit-code"])?;
+    /// let merged = repo.run_command_check(&["merge-base", "--is-ancestor", "feature", "main"])?;
     /// # Ok::<(), anyhow::Error>(())
     /// ```
     pub fn run_command_check(&self, args: &[&str]) -> anyhow::Result<bool> {
@@ -2043,57 +2172,62 @@ fn parse_config_list_z(stdout: &[u8]) -> indexmap::IndexMap<String, Vec<String>>
 /// stderr output is byte-identical regardless of which path runs.
 fn emit_user_config_warnings(warnings: &[LoadError]) {
     for warning in warnings {
-        match warning {
-            LoadError::File { path, kind, err } => {
-                let label = kind.label();
-                let path_display = crate::path::format_path_for_display(path);
-                crate::styling::eprintln!(
-                    "{}",
-                    crate::styling::warning_message(cformat!(
-                        "{label} @ <bold>{path_display}</> failed to parse, skipping"
-                    ))
-                );
-                crate::styling::eprintln!(
-                    "{}",
-                    crate::styling::format_with_gutter(&err.to_string(), None)
-                );
-            }
-            LoadError::Env { err, vars } => {
-                let var_list: Vec<_> = vars
-                    .iter()
-                    .map(|(name, value)| format!("{name}={value}"))
-                    .collect();
-                crate::styling::eprintln!(
-                    "{}",
-                    crate::styling::warning_message(format!(
-                        "Ignoring env var overrides: {}",
-                        var_list.join(", ")
-                    ))
-                );
-                crate::styling::eprintln!(
-                    "{}",
-                    crate::styling::format_with_gutter(err.trim(), None)
-                );
-            }
-            LoadError::CliOverride { err, overrides } => {
-                crate::styling::eprintln!(
-                    "{}",
-                    crate::styling::warning_message(format!(
-                        "Ignoring --config-set overrides: {}",
-                        overrides.join(", ")
-                    ))
-                );
-                crate::styling::eprintln!(
-                    "{}",
-                    crate::styling::format_with_gutter(err.trim(), None)
-                );
-            }
-            LoadError::Validation(err) => {
-                crate::styling::eprintln!(
-                    "{}",
-                    crate::styling::warning_message(format!("Config validation warning: {err}"))
-                );
-            }
+        emit_config_load_warning(warning);
+    }
+}
+
+/// Render one [`LoadError`] as a `▲` warning (plus a gutter for the parser's
+/// own output, where there is one).
+///
+/// Also the project-config path: [`Repository::warn_if_project_config_unloadable`]
+/// feeds the `LoadError::File` that `ProjectConfig::load` returns through
+/// here, so `▲ Project config @ … failed to parse, skipping` and its user
+/// counterpart are one line of code rather than two that can drift.
+fn emit_config_load_warning(warning: &LoadError) {
+    match warning {
+        LoadError::File { path, kind, err } => {
+            let label = kind.label();
+            let path_display = crate::path::format_path_for_display(path);
+            crate::styling::eprintln!(
+                "{}",
+                crate::styling::warning_message(cformat!(
+                    "{label} @ <bold>{path_display}</> failed to parse, skipping"
+                ))
+            );
+            crate::styling::eprintln!(
+                "{}",
+                crate::styling::format_with_gutter(&err.to_string(), None)
+            );
+        }
+        LoadError::Env { err, vars } => {
+            let var_list: Vec<_> = vars
+                .iter()
+                .map(|(name, value)| format!("{name}={value}"))
+                .collect();
+            crate::styling::eprintln!(
+                "{}",
+                crate::styling::warning_message(format!(
+                    "Ignoring env var overrides: {}",
+                    var_list.join(", ")
+                ))
+            );
+            crate::styling::eprintln!("{}", crate::styling::format_with_gutter(err.trim(), None));
+        }
+        LoadError::CliOverride { err, overrides } => {
+            crate::styling::eprintln!(
+                "{}",
+                crate::styling::warning_message(format!(
+                    "Ignoring --config-set overrides: {}",
+                    overrides.join(", ")
+                ))
+            );
+            crate::styling::eprintln!("{}", crate::styling::format_with_gutter(err.trim(), None));
+        }
+        LoadError::Validation(err) => {
+            crate::styling::eprintln!(
+                "{}",
+                crate::styling::warning_message(format!("Config validation warning: {err}"))
+            );
         }
     }
 }

@@ -6,8 +6,22 @@ There is **one** user-invocable skill, `impeccable`, with **23 commands** undern
 
 - `SKILL.src.md` — frontmatter (with the auto-trigger-optimized description and the `allowed-tools` list), shared design laws, and the **Commands** router table. Provider `SKILL.md` files are generated from this source.
 - `reference/` — one `<command>.md` per command (`audit.md`, `polish.md`, `critique.md`, etc.), the shared playbooks the router loads outside the command table (`new-work.md`, `craft-floor.md`, `operate.md`, `routing.md`), and the native platform references (`ios.md`, `android.md`). When a sub-command is matched, the router loads its reference file.
-- `scripts/command-metadata.json` — single source of truth for each command's description, argument hint, and (eventually) category. Both the build and `pin.mjs` read from this.
-- `scripts/pin.mjs` — creates/removes lightweight redirect shims so users can have `/audit` as a standalone shortcut that delegates to `/impeccable audit`.
+- `scripts/command-metadata.json` — single source of truth for each command's description, argument hint, and (eventually) category. Both the build and the engine's `pin` verb read from this.
+- `scripts/impeccable` (+ `impeccable.cmd`, `VERSION`): the launcher every skill verb goes through. See **Engine binary** below.
+- `impeccable pin` — an engine verb that creates/removes lightweight redirect shims so users can have `/audit` as a standalone shortcut that delegates to `/impeccable audit`.
+
+### Engine binary (the runtime behind every verb)
+
+The skill has no runtime of its own. Every command the skill text runs is `{{scripts_path}}/impeccable <verb>` (Setup step 1 says `impeccable context`; `impeccable.cmd` is the Windows twin for shells without `sh`). `skill/scripts/impeccable` is a POSIX `sh` launcher: it execs `$IMPECCABLE_BIN` if set, else the sibling `scripts/bin/<os>-<arch>/impeccable[.exe]`, else `~/.impeccable/bin/impeccable`, else the version-pinned user cache `~/.impeccable/bin/<VERSION>/`, else `impeccable` on PATH, and as a last resort downloads the pinned version into that cache. It exports `IMPECCABLE_SKILL_DIR` (the skill dir, for `reference/*.md` and `command-metadata.json`) and `IMPECCABLE_SELF` (how the binary spells itself in the commands it prints).
+
+The binary is built from **this repo's Cargo workspace** (`Cargo.toml` at the root, `crates/*`; `cargo build --release -p impeccable`). Its verbs are the old script basenames (`context`, `doctor`, `pin`, `hook`, `hook-before-edit`, `live*`, `detect`, ...) with two aliases: `signals` for context-signals and `hooks` for hook-admin. Its observable behavior is specified in `docs/CLI-CONTRACT.md` and pinned by `tests/oracle/`. **Read `docs/ENGINE.md` before touching `crates/`**: it maps the crates and the browser-bundle flow.
+
+- **The rule engine is in the workspace.** Every `check_*` / `scan_*`, the browser rule adapters and the visual-contrast decisions live in `crates/core`, Apache-2.0 like everything else; `crates/foundation` holds what they are written against (JS semantics, color, the registry, the `Dom` trait, the plain-data input and output types) and `crates/core` re-exports it, so consumers name one crate. `crates/wasm` compiles the same source to WebAssembly for the extension, the live overlay and the site, and `cargo xtask bundle` builds those artifacts. There is no build-time download and no exact toolchain pin: `cargo build --release -p impeccable` works offline on stable.
+- **`ENGINE_VERSION`** (repo root) pins the engine release (`engine-v<X>` on this repo's GitHub Releases, built by `.github/workflows/release-engine.yml` when `bun run release:engine` pushes the tag). The build copies it to `skill/scripts/VERSION`, which the launcher reads to name the download and the cache dir; `cli/bin/cli.js` reads the same version from `package.json`'s `optionalDependencies`. Bumping it is a release-time decision, like the other manifest versions.
+- **Binaries are never tracked.** `skill/scripts/bin/` and `**/skills/impeccable/scripts/bin/` are gitignored, so the tracked provider dirs and `plugin/` ship launcher-only and users get the binary on first run. `bun run build:release` produces launcher-only zips by default; `IMPECCABLE_BUNDLE_ENGINE=1 bun run build:release` fetches every target (`scripts/fetch-engine.mjs --all --lenient`) and stages `bin/<os-arch>/` into the dist skill copies **after** the root harness dirs and `plugin/` were synced, so `dist/universal.zip` is self-contained for offline installs while git stays clean. Bundling is opt-in because five targets in every provider copy put `universal.zip` near 340 MB, past the 25 MB Cloudflare Pages file cap that `impeccable install` downloads through.
+- **Tests get a binary** from `IMPECCABLE_BIN`, then `skill/scripts/bin/<os-arch>/` (`bun run fetch:engine`; `IMPECCABLE_BIN=<local build> bun run fetch:engine` copies a local build there), then `target/release/impeccable` from a plain `cargo build --release -p impeccable`. `tests/lib/engine-bin.mjs` is the one resolver; suites that need the binary skip cleanly without it.
+- **The oracle is the behavior gate.** `tests/oracle/` holds goldens recorded from the JS scripts before they left the tree, plus reviewed deltas in `DELTAS.md`; `tests/oracle.test.mjs` replays them against the binary in `bun run test`. New cases are recorded from the binary (`record.mjs --bin`) and reviewed by hand. `tests/oracle/vectors/calls/` is the frozen function-level snapshot; it cannot be regenerated.
+- **What stays JavaScript here:** the in-page live-mode JS (`skill/scripts/live-browser*.js`, `modern-screenshot.umd.js`), the build and test tooling, the extension shell, and the npm shim.
 
 **Do not add standalone skills** unless there's a strong reason. The consolidation was deliberate: the `/` menu pollution problem is real and gets worse as users install more plugins.
 
@@ -39,36 +53,36 @@ A second axis, **orthogonal to mode**. Mode answers "what does the visitor come 
 - **android** — a native Android app. Loads `reference/android.md` (Material Design 3 distilled).
 - **adaptive** — a cross-platform app shipping both iOS and Android from one codebase (Flutter, React Native, KMP) that adapts per OS. Loads **both** `reference/ios.md` and `reference/android.md`. A Flutter/RN app that uses one look on both platforms (Material-everywhere is the Flutter default) is not adaptive; it takes that single platform's value.
 
-PRODUCT.md carries a `## Platform` section with a bare value (`web` / `ios` / `android` / `adaptive`). It's parsed by `extractPlatform()` in `skill/scripts/context.mjs`, built on the generic `extractSectionValue()` helper; a **missing field defaults to `web`** so legacy projects are unaffected. A line that names both native targets (e.g. `ios, android`) is also read as `adaptive`; any other unrecognized value falls back to web **and** the `context.mjs` CLI prints a WARNING directive naming the bad value, so a toolchain name or typo never silently gets web guidance. `context.mjs` inlines the native reference(s) directly into its output when the value is `ios`, `android`, or `adaptive` (both), so native conventions land in context without a second model-directed read. `init` (Step 3) confirms an ambiguous platform as part of the product-truth interview, and Step 4 records it as the bare value.
+PRODUCT.md carries a `## Platform` section with a bare value (`web` / `ios` / `android` / `adaptive`). The `context` verb parses it; a **missing field defaults to `web`** so legacy projects are unaffected. A line that names both native targets (e.g. `ios, android`) is also read as `adaptive`; any other unrecognized value falls back to web **and** `impeccable context` prints a WARNING directive naming the bad value, so a toolchain name or typo never silently gets web guidance. `impeccable context` inlines the native reference(s) directly into its output when the value is `ios`, `android`, or `adaptive` (both), so native conventions land in context without a second model-directed read. `init` (Step 3) confirms an ambiguous platform as part of the product-truth interview, and Step 4 records it as the bare value.
 
 `ios.md` and `android.md` are distilled from the MIT-licensed [ehmo/platform-design-skills](https://github.com/ehmo/platform-design-skills); attribution is in `NOTICE.md`.
 
 Where a command's native guidance diverges too much to share a file, it gets a **native variant**: `reference/<command>.native.md`, listed in SKILL.md's Commands table and routed **instead of** the web file when `setup.platform` is native (Setup step 2). One variant covers ios, android, and adaptive; per-OS specifics stay in the platform refs, which Setup loads regardless. Variants today: `audit.native.md`, `adapt.native.md` (their web files carry a one-line web-only guard that redirects stray native readers). `audit.native.md` mirrors `audit.md`'s report skeleton; change the skeleton in both together. Commands whose divergence the platform refs already cover (`animate`, `layout`) carry nothing extra; don't add in-file translation notes, they make native runs pay for web content.
 
-**Live mode, the `detect` CLI, and the design hook are web-only.** They operate on a browser / HTML rules, so SKILL.md's routing skips live and `detect.mjs` for any native (`ios` / `android` / `adaptive`) project, and the hook (`hook-lib.mjs` `resolveProjectPlatform` / `isNativePlatform`, also used by `hook-before-edit.mjs`) skips its scan when PRODUCT.md declares a native platform — a React Native project is made of exactly the `.tsx` / `.ts` / `.js` files the hook watches.
+**Live mode, `impeccable detect`, and the design hook are web-only.** They operate on a browser / HTML rules, so SKILL.md's routing skips live and `impeccable detect` for any native (`ios` / `android` / `adaptive`) project, and the `hook` and `hook-before-edit` verbs skip their scan when PRODUCT.md declares a native platform — a React Native project is made of exactly the `.tsx` / `.ts` / `.js` files the hook watches.
 
 ### Artifact staleness and the doctor pass
 
 Impeccable writes files into user projects, so a released version has to cope with artifacts an older one wrote. Three kinds of drift travel under "out of date" and they are handled separately:
 
-1. **Tool version drift** (installed skill older than published). `computeUpdateDirective()` in `context.mjs`, emitted as `UPDATE_AVAILABLE`. Predates this system, unchanged.
-2. **Schema drift** (an artifact carries fields nothing reads, is missing fields now expected, or sits in a retired location). Deterministic. `skill/scripts/lib/staleness.mjs`.
+1. **Tool version drift** (installed skill older than published). Emitted by `impeccable context` as `UPDATE_AVAILABLE`. Predates this system, unchanged.
+2. **Schema drift** (an artifact carries fields nothing reads, is missing fields now expected, or sits in a retired location). Deterministic; the engine's staleness module.
 3. **Truth drift** (the code moved on and the document no longer describes it). Not mechanical. `document` and `init` own the rewrite; the deep pass measures a proxy and is required to say it is a proxy.
 
 **Two tiers, and the split is a performance contract, not a preference.**
 
-- **Tier 1** is `collectBootFindings()` in `lib/staleness.mjs`, called from `appendStalenessDirective()` in `context.mjs`. It may only spend what a boot already spends: markdown already in memory, a bounded set of stats, and the small JSON files the boot reads regardless. **No directory walks, no git, no cross-workspace sweep.** The one walk it uses (`discoverTargetCandidates`) is one `resolveTargetSelection` has already paid for. Adding an expensive check here taxes every session in every project.
-- **Tier 2** is `lib/staleness-deep.mjs`, run on demand by `skill/scripts/doctor.mjs`. Git log, per-workspace sweep, ignore-list validation against the live `ANTIPATTERNS` registry, hook script resolution.
+- **Tier 1** runs inside `impeccable context` at boot. It may only spend what a boot already spends: markdown already in memory, a bounded set of stats, and the small JSON files the boot reads regardless. **No directory walks, no git, no cross-workspace sweep.** The one walk it uses is the target-candidate discovery the boot has already paid for. Adding an expensive check here taxes every session in every project.
+- **Tier 2** is the deep pass behind `impeccable doctor`, run on demand. Git log, per-workspace sweep, ignore-list validation against the live rule registry, hook launcher resolution.
 
 **Findings are data.** `{ id, artifact, path, severity, summary, fix }`, so the boot directive, the text report, and `--json` all render one set. Severity says what should happen, not how bad it is: `auto` (fix silently on the next write to that file), `mention` (state once, carry on), `route` (name the command that owns the repair). `doctor --fix` applies only `auto`, and only where no judgment is involved.
 
-**Emission discipline.** Boot output is already heavy, so Tier 1 emits **one** `CONTEXT_STALE` directive for the whole set, and `lib/staleness-notice.mjs` throttles `mention` and `route` findings to once a week per project (cached in `~/.impeccable/staleness-check.json`, alongside the update cache, so no gitignore entry is owed). `auto` findings are never throttled and never shown to the user. Opt out with `"stalenessCheck": false` or `IMPECCABLE_NO_STALENESS_CHECK=1`. **A test that asserts on other boot directives should set that env var**, which is why the update-check suite in `tests/context.test.mjs` does.
+**Emission discipline.** Boot output is already heavy, so Tier 1 emits **one** `CONTEXT_STALE` directive for the whole set, and `mention` and `route` findings are throttled to once a week per project (cached in `~/.impeccable/staleness-check.json`, alongside the update cache, so no gitignore entry is owed). `auto` findings are never throttled and never shown to the user. Opt out with `"stalenessCheck": false` or `IMPECCABLE_NO_STALENESS_CHECK=1`. **An oracle case that asserts on other boot directives should pin that env var.**
 
-**Provenance stamps.** PRODUCT.md carries `<!-- impeccable:product-schema N -->` (constants in `lib/artifact-schema.mjs`, template in `init.md`). Without it, every check is a heuristic reconstruction of what era a file came from. **Stamps are schema versions, not release versions**: a PRODUCT.md written by v4.0.0 is not stale under v4.0.1, and a schema version changes only when the shape does. **DESIGN.md deliberately carries no stamp** because it follows the external design.md spec that Stitch's linter validates, and every DESIGN.md signal (sidecar `schemaVersion`, sidecar mtime, section coverage, git drift) is measurable without one.
+**Provenance stamps.** PRODUCT.md carries `<!-- impeccable:product-schema N -->` (schema constants live in the engine; template in `init.md`). Without it, every check is a heuristic reconstruction of what era a file came from. **Stamps are schema versions, not release versions**: a PRODUCT.md written by v4.0.0 is not stale under v4.0.1, and a schema version changes only when the shape does. **DESIGN.md deliberately carries no stamp** because it follows the external design.md spec that Stitch's linter validates, and every DESIGN.md signal (sidecar `schemaVersion`, sidecar mtime, section coverage, git drift) is measurable without one.
 
-**When you retire a PRODUCT.md field, add it to `PRODUCT_DEPRECATED_SECTIONS`** in `lib/artifact-schema.mjs` with the reason. The reason is not decoration: told only that a field is deprecated, models preserve it "just in case", which is how a retired axis keeps steering current output.
+**When you retire a PRODUCT.md field, add it to the engine's deprecated-sections list** with the reason (and record the new boot output as an oracle case). The reason is not decoration: told only that a field is deprecated, models preserve it "just in case", which is how a retired axis keeps steering current output.
 
-**`doctor` is a utility command, not a design command.** It follows the `hooks` and `pin` pattern (a line in SKILL.src.md plus `reference/doctor.md`), not the Commands-table pattern. It is deliberately **not** in `IMPECCABLE_SUB_COMMANDS`, `command-metadata.json`, `SKILL_CATEGORIES`, or `pin.mjs`'s `VALID_COMMANDS`, and it does not count toward the 23. Keep maintenance tooling out of the design menu.
+**`doctor` is a utility command, not a design command.** It follows the `hooks` and `pin` pattern (a line in SKILL.src.md plus `reference/doctor.md`), not the Commands-table pattern. It is deliberately **not** in `IMPECCABLE_SUB_COMMANDS`, `command-metadata.json`, `SKILL_CATEGORIES`, or the `pin` verb's valid-command list, and it does not count toward the 23. Keep maintenance tooling out of the design menu.
 
 ## Repo split: public product vs private service (impeccable-site)
 
@@ -76,7 +90,7 @@ As of v4 the repo holds only the open-source product layer: the skill, CLI, exte
 
 Consequences here:
 
-- `skill/scripts/concept-seed.mjs` has no local catalog. It resolves data via `IMPECCABLE_CATALOG_DIR` (private repo, evals, tests), then the roll API at impeccable.style, then a degraded promotion-only seed. Tests run against `tests/fixtures/concept-catalog/`.
+- `impeccable concept-seed` has no local catalog. It resolves data via `IMPECCABLE_CATALOG_DIR` (private repo, evals, tests), then the roll API at impeccable.style, then a degraded promotion-only seed. Oracle cases run against `tests/fixtures/concept-catalog/`.
 - The choice-ping telemetry (`--chosen`) honors `DO_NOT_TRACK` and `IMPECCABLE_NO_TELEMETRY` and only fires for API-dealt rolls.
 - Site copy, changelog, theme, and count validation for site pages happen in impeccable-site; this repo's `validateProse` scans only the READMEs.
 - The release script reads the changelog from `../impeccable-site/site/pages/changelog.astro` when releasing from here.
@@ -90,7 +104,7 @@ The build's `validateProse` step (in `scripts/build.js`) enforces a denylist: em
 
 `validateProse` scans `README.md` and `README.npm.md`; site copy is validated in impeccable-site.
 
-**`skill/` is checked too, by a second gate.** `validateProse` skips it because the full ruleset does not fit LLM-facing reference instructions. `validateSkillProse` then scans `skill/**/*.md` (markdown only, not `skill/scripts/**` code or comments) and fails the build on em dashes plus the subset of phrases with no technical reading: `load-bearing`, `highest-leverage`, `biggest unlock`, `reflex defaults`, `collapses into monoculture`, `data-driven`, `delve`, `tapestry`, `in today's`, `gone are the days`, `let's dive in`, `in summary`, `in conclusion`. The words it does *not* enforce in `skill/` (`seamless`, `robust`, `elevate`, and friends) are the ones with legitimate technical uses. Net effect: an em dash in `skill/reference/*.md` fails `bun run build`; an em dash in a `skill/scripts/*.mjs` code comment does not.
+**`skill/` is checked too, by a second gate.** `validateProse` skips it because the full ruleset does not fit LLM-facing reference instructions. `validateSkillProse` then scans `skill/**/*.md` (markdown only, not the launcher or page JS under `skill/scripts/`) and fails the build on em dashes plus the subset of phrases with no technical reading: `load-bearing`, `highest-leverage`, `biggest unlock`, `reflex defaults`, `collapses into monoculture`, `data-driven`, `delve`, `tapestry`, `in today's`, `gone are the days`, `let's dive in`, `in summary`, `in conclusion`. The words it does *not* enforce in `skill/` (`seamless`, `robust`, `elevate`, and friends) are the ones with legitimate technical uses. Net effect: an em dash in `skill/reference/*.md` fails `bun run build`; an em dash in a `scripts/*.js` code comment does not.
 
 The deeper structural issues (negation pivot, triadic auto-pilot, uniform paragraph rhythm, hollow confidence) require human judgment. `docs/STYLE.md` lists them. Use them on every editorial pass.
 
@@ -100,10 +114,13 @@ The build system compiles the impeccable skill from `skill/` to provider-specifi
 
 ```bash
 bun run build            # Build dist/ provider output without syncing root harness dirs
-bun run build:release    # Build dist/ provider output and sync root harness dirs + plugin/
+bun run build:release    # Build dist/ provider output, sync root harness dirs + plugin/, stage engine binaries into dist zips
 bun run rebuild          # Clean and rebuild without root harness sync
 bun run rebuild:release  # Clean and rebuild with root harness sync
+bun run fetch:engine     # Download the pinned engine binary for this machine into skill/scripts/bin/
 ```
+
+The skill's `scripts/` payload is copied verbatim to every provider (launcher with its executable bit, `impeccable.cmd`, `VERSION`, `command-metadata.json`, page JS); nothing under `skill/scripts/bin/` is read as source. The in-page detector bundle and the extension's detector pieces are produced by `cargo xtask bundle`, which `bun run build:extension` runs; the page JS and the bundling itself live in the `impeccable-bundle` library crate (`crates/bundle`) so a downstream rule pack can build the same artifacts for its own wasm module.
 
 Source files use placeholders that get replaced per-provider:
 - `{{model}}` — Model name (Claude, Gemini, GPT, etc.)
@@ -140,9 +157,25 @@ bun run test                  # Default suite: unit + static framework fixtures 
 bun run test:live-e2e         # Opt-in: full-cycle live-mode E2E across framework fixtures
 bun run test:skill-behavior   # Opt-in: LLM-backed checks that the skill text actually drives the agent's setup flow
 bun run test:plugin-e2e       # Just the plugin loader E2E (also part of the default suite)
+bun run test:cleanup          # Kill live servers a previous run of THIS checkout left behind
 ```
 
-Unit tests (build orchestration, detector logic) run via `bun test`. Fixture tests (jsdom-based HTML detection) run via `node --test` because bun is too slow with jsdom. The `test` script handles this split automatically.
+Unit tests (build orchestration, transformers, validators) run via `bun test`. Everything that spawns the engine binary (`tests/oracle.test.mjs`, `tests/framework-fixtures.test.mjs`) runs via `node --test`; both skip cleanly when no binary is found (`bun run fetch:engine` or `IMPECCABLE_BIN`). The `test` script handles this split automatically. Runtime unit and integration tests live under `crates/` and run with `cargo test --workspace`; the oracle goldens pin observable verb behavior across the same workspace.
+
+### Live servers must not outlive their test process
+
+A live server does not die with the process that started it: a direct child survives its parent, and `impeccable live-server --background` is orphaned to pid 1 by design (`spawn_detached_with_args` in `crates/live/src/server.rs`). Teardown in an `after()` hook or a `finally` covers only the exits JavaScript can observe, so a `SIGKILL`, a Ctrl-C, or a wedged runner used to leave servers squatting the live suite's fixed ports for days (issue #717).
+
+Three pieces keep that from recurring, and a new test that starts a server owes the first one:
+
+- **`armLiveServerReaper()`** (`tests/lib/live-servers.mjs`), called once at module scope by any test file that starts a live server. It stamps the process environment with a unique marker, installs exit and signal handlers, and spawns a detached reaper holding a pipe to the process. When the process dies for any reason at all, the pipe closes and the reaper kills the servers carrying that marker. Wrap direct children in `trackServerChild()` so the common case is a cheap `child.kill()`. On this branch the two places that start one are `tests/live-e2e/session.mjs` and the oracle's daemon steps (`runDaemonStep` in `tests/oracle/lib.mjs`); both already arm it.
+
+  The mechanism is deliberately implementation-agnostic, which is what let it survive the Node-to-Rust swap unchanged: it keys on the environment rather than on anything the server implements. That works because the daemon spawn does `env_clear().envs(env)` against `Io::stdio()`'s `env`, which is `std::env::vars()`, so the detached Rust process carries the parent's environment and the markers reach it. If a future change scrubs or narrows that env, the guard goes silently blind, so keep the daemon inheriting it.
+- **The runner guard.** `scripts/run-tests.mjs` runs each suite command as its own process-group leader, ends that group on `SIGINT` / `SIGTERM` / `SIGHUP` and on the wall-clock cap, and after every suite checks whether any live server carrying that suite's run id is still alive. If one is, it kills it and fails the run. Bypass with `IMPECCABLE_SKIP_LEAK_CHECK=1`. The same group is what `IMPECCABLE_TEST_WALL_CLOCK_MS` (or a suite's `wallClockMs`) SIGKILLs when a command wedges, so a suite blocked in a synchronous call still ends and still gets swept.
+- **`bun run test:cleanup`.** A one-shot sweep for leftovers from earlier runs.
+- **`tests/live-server-leak.test.mjs`** pins the guarantee against the real engine binary (resolved through `tests/lib/engine-bin.mjs`, skipped when there is none): it boots `impeccable live-server`, SIGKILLs the process that started it, and fails if the server outlives it.
+
+**Everything that kills is scoped by an environment marker this repo's harness exported**, never by process name, port, or path. A sweep can never touch a live server that another checkout, or the user's own session, is running. Keep it that way, and keep marker values opaque: every one is a random token or a hash of the checkout path (`repoMarker()`), drawn from `[A-Za-z0-9_-]` so it can never contain whitespace. `ps -E` flattens the environment into one whitespace-separated line, so a value free to hold a space could hide the end of its own entry and let one checkout's cleanup reach another's servers. `assertMarkerValue` refuses such a value; the readable path travels separately as `IMPECCABLE_TEST_REPO_PATH`, which nothing matches on.
 
 ### Which opt-in suite a change owes
 
@@ -150,13 +183,14 @@ The default suite does not cover everything. When a change touches one of these 
 
 | Area touched | Run | Cost |
 |---|---|---|
-| `skill/scripts/live-*.{mjs,js}`, `skill/scripts/live/**` | `bun run test:live-e2e` | ~2 min, real npm installs + dev servers, needs Playwright Chromium |
-| `live-accept` / `live-browser` / `live-server` / `live-wrap` / `live/sveltekit-adapter` | also `bun run test:live-e2e-accept-cleanup` | bills a provider API key |
-| `live/sveltekit-adapter.mjs`, `live/svelte-component.mjs` | `bun run test:live-svelte-adapter-deepseek` | bills DeepSeek |
-| `SKILL.src.md` Setup, `context.mjs`, Setup-adjacent reference files | `bun run test:skill-behavior` | ~5 min, bills all four provider keys |
-| `serve-question.mjs`, `generate-image.mjs`, `concept-seed.mjs` | `bun run test:new-work-e2e` | Playwright, offline, no API cost |
-| `cli/bin/commands/skills.mjs` | `bun run test:cli-remote-e2e` | hits impeccable.style |
+| `ENGINE_VERSION` bump, `skill/scripts/live-browser*.js` | `bun run test:live-e2e` | ~2 min, real npm installs + dev servers, needs Playwright Chromium |
+| `ENGINE_VERSION` bump | also `bun run test:live-e2e-accept-cleanup` | bills a provider API key |
+| `ENGINE_VERSION` bump | `bun run test:live-svelte-adapter-deepseek` | bills DeepSeek |
+| `SKILL.src.md` Setup, Setup-adjacent reference files, `ENGINE_VERSION` bump | `bun run test:skill-behavior` | ~5 min, bills all four provider keys |
+| `ENGINE_VERSION` bump | `bun run test:new-work-e2e` | Playwright, offline, no API cost |
 | `plugin/`, `skill/agents/`, `scripts/build.js`, plugin manifest validator | `bun run test:plugin-e2e` | ~1 s; already in the default suite, needs the `claude` CLI |
+
+For verb-level behavior changes in `crates/`, run focused crate tests and `cargo test --workspace`, then `cargo build --release -p impeccable`. Run `IMPECCABLE_BIN="$PWD/target/release/impeccable" bun run test` to exercise the changed source rather than an older downloaded release. Add a new oracle case when the contract grows and review golden changes by hand. See `docs/ENGINE.md` for browser-bundle checks and generated assets.
 
 **Plugin loader E2E** (`tests/plugin-e2e.test.mjs`, in the default suite): installs the committed `./plugin` subtree into a real Claude Code, sandboxed via `CLAUDE_CONFIG_DIR` in a temp dir, and asserts the component inventory from `claude plugin details`: the skill parses, every `plugin/agents/*.md` is visible, hooks are discovered. This is the only check that catches loader-contract surprises the unit guards can't know about (PR #494 shipped an `agents` manifest key that silently loaded zero agents; `claude plugin validate` never flags plugin-manifest problems). Runs in about a second; skips cleanly when the `claude` CLI is not on PATH. The known contract itself (allowed manifest keys, no `agents` key, trailing-slash `skills` path, source agents shipped) is pinned deterministically by `scripts/lib/validate-plugin-manifest.js`, unit-tested in `tests/validate-plugin-manifest.test.js` and enforced as a `bun run build` gate. Never add a key to the generated plugin manifest without verifying it against a real install and extending `KNOWN_LOADER_KEYS`.
 
@@ -174,13 +208,13 @@ IMPECCABLE_E2E_DEBUG=1 bun run test:live-e2e                # dump page DOM + de
 
 **One-time setup**: `npx playwright install chromium` (the suite uses a specific Chromium build keyed to the bundled Playwright version).
 
-**Kept out of the default `bun run test`** because (a) it does real `npm install` per fixture, (b) it boots framework dev servers, (c) wall time is ~2 minutes, and (d) it requires Playwright's browser cache. Run it locally before shipping changes to anything in `skill/scripts/live-*.{mjs,js}` or `skill/scripts/live/**`.
+**Kept out of the default `bun run test`** because (a) it does real `npm install` per fixture, (b) it boots framework dev servers, (c) wall time is ~2 minutes, and (d) it requires Playwright's browser cache. Run it locally before shipping changes to the page JS or before bumping `ENGINE_VERSION`. (Its helpers still drive the live verbs by script path; retargeting them at the launcher is pending.)
 
-Three live-mode invariants worth knowing before editing (established by the 2026-07 rewrite, full rationale in `docs/LIVE-REWRITE-PLAN.md`):
+Three live-mode invariants worth knowing before editing (established by the 2026-07 rewrite, full rationale in `docs/LIVE-REWRITE-PLAN.md`; the implementation is the engine's `live` crate now, the contract is unchanged):
 
-- **Roots.** `skill/scripts/live/roots.mjs` resolves appRoot/repoRoot/contextRoot once at boot and persists `.impeccable/live/roots.json`; every live CLI calls `enterLiveRoot()` in its main guard and chdirs onto the manifest's appRoot. Never derive a live path from ambient cwd in a new script; go through the manifest.
+- **Roots.** `impeccable live` resolves appRoot/repoRoot/contextRoot once at boot and persists `.impeccable/live/roots.json`; every live verb re-anchors on that manifest and chdirs onto its appRoot. Never derive a live path from ambient cwd; go through the manifest.
 - **Svelte preview modules must live under `node_modules/.impeccable-live`.** SvelteKit restricts vite `server.fs.allow` to src/lib, src/routes, .svelte-kit, and node_modules; a preview tree under `.impeccable/` 403s. Staleness is handled by per-publish revision dirs (`r<N>/`, bumped by the server on every done-reply), not by file watching.
-- **`svelte` is a devDependency for tests only.** The AST scaffolder (`live/svelte-ast.mjs`) and accept pipeline (`live/accept-css.mjs`) resolve the compiler from the USER app's node_modules at runtime; unit tests and the static fixture sweep symlink this repo's copy into staged fixtures. Skill scripts still ship dependency-free.
+- **`svelte` is a devDependency for tests only.** The Svelte scaffolder and accept pipeline resolve the compiler from the USER app's node_modules at runtime; the fixture sweep and oracle cases symlink this repo's copy into staged fixtures.
 
 The agent is pluggable via a one-method interface in `tests/live-e2e/agent.mjs`: `generateVariants(event, context) → { scopedCss, variants[] }`. The default fake agent emits canned variants that exercise all three param kinds (`range`, `steps`, `toggle`). The orchestrator (wrap, write, accept, carbonize) is agent-agnostic.
 
@@ -208,37 +242,33 @@ IMPECCABLE_SKILL_BEHAVIOR_VERBOSE=1 bun run test:skill-behavior    # dump per-sc
 
 **Adding a scenario.** Write the fixture in `tests/skill-behavior/fixtures.mjs`, add the `it()` block in `scenarios.test.mjs` (the harness uses the source `skill/` dir via a symlink, so no rebuild needed), and update the baseline table in the suite's README. The harness's `fileLoaded(trace, filename)` helper checks both `read` and bash `cat` — different models prefer different tools.
 
-**The harness symlinks source, not built output.** This is deliberate so SKILL.md / reference / `scripts/context.mjs` edits show up immediately without `bun run build:skills`. The trade-off: reference files surface their raw `{{placeholders}}`, but the assertions key on tool calls rather than content, so it doesn't matter for correctness.
+**The harness symlinks source, not built output.** This is deliberate so SKILL.md / reference edits show up immediately without `bun run build:skills`; the launcher under `skill/scripts/` resolves the binary the same way tests do. The trade-off: reference files surface their raw `{{placeholders}}`, but the assertions key on tool calls rather than content, so it doesn't matter for correctness.
 
 ## CLI
 
-The CLI lives in this repo under `cli/`: `cli/bin/` (entry + sub-commands), `cli/engine/` (the detect-antipatterns rule engine + browser variant), `cli/lib/` (helpers shared by CLI and Cloudflare Pages Functions). Published to npm as `impeccable`.
+`cli/` is the npm package `impeccable`, now a thin shim: `cli/bin/cli.js` locates the engine binary (`IMPECCABLE_BIN`, then the `@impeccable/cli-<os>-<arch>` optional dependency pinned at `ENGINE_VERSION`, then `~/.impeccable/bin/<version>/`, then a checksum-verified download into that cache) and execs it with argv. The verbs users see (`detect`, `ignores`, `install`, `update`, `check`, `link`, `help`, the legacy `skills` namespace) are the binary's. `cli/platform-packages/<os>-<arch>/package.json` are the templates the engine release publishes; the version pinned in `package.json` `optionalDependencies` must equal `ENGINE_VERSION`.
 
 ```bash
 npx impeccable detect [file-or-dir-or-url...]   # detect anti-patterns
-npx impeccable detect --fast --json src/         # regex-only, JSON output
-npx impeccable live                              # start browser overlay server
-npx impeccable skills install                    # install skills
-npx impeccable --help                            # show help
+npx impeccable detect --json src/               # JSON output
+npx impeccable install                          # install skills
+npx impeccable --help                           # show help
 ```
 
-The browser detector (`cli/engine/detect-antipatterns-browser.js`) is generated from the main engine. After changing `cli/engine/detect-antipatterns.mjs`, rebuild it:
-
-```bash
-bun run build:browser
-```
-
-**IMPORTANT**: Always use `node` (not `bun`) to run the detect CLI. Bun's jsdom implementation is extremely slow and will cause scans with HTML files to hang for minutes.
+The package no longer exports a JS detector API (`main` / `exports` are gone); the in-page bundle for the extension and site is built from this workspace by `cargo xtask bundle`.
 
 ## Versioning
 
 **Feature PRs do not bump versions and do not add changelog entries.** Bumping is a release step, not part of the change that earns the release: a version in a feature branch conflicts with every other open branch, and a changelog entry describes a release that has not happened. Land the code first; the maintainer bumps and writes the changelog when cutting the release. This holds even though the "Bump when: ..." notes below name the source dirs — those say *which* component a change belongs to, not *when* to edit the manifest. The only PR that touches a manifest version is one whose purpose is the release itself.
 
-There are three independently versioned components. Only bump the one(s) that actually changed:
+There are three independently versioned components plus the engine pin. Only bump the one(s) that actually changed:
+
+**Engine pin** (`ENGINE_VERSION`, root):
+- The engine release the launcher downloads and the npm shim's `optionalDependencies` pin. Bump it when a new engine release is published; keep `package.json` `optionalDependencies` at the same version and run `bun run build` (it rewrites `skill/scripts/VERSION`). A skill release that needs the new engine bumps this together with the skill version.
 
 **CLI** (npm package):
 - `package.json` → `version`
-- Bump when: CLI code changes (`cli/bin/`, `cli/engine/detect-antipatterns.mjs`, etc.)
+- Bump when: CLI shim code changes (`cli/bin/cli.js`, `cli/platform-packages/`)
 
 **Skills** (Claude Code plugin / skill definitions):
 - `.claude-plugin/plugin.json` → `version` (source of truth)
@@ -248,7 +278,7 @@ There are three independently versioned components. Only bump the one(s) that ac
 
 **Chrome extension**:
 - `extension/manifest.json` → `version`
-- Bump when: extension code changes (`extension/`)
+- Bump when: extension code changes (`extension/`), or a rule change alters what the shipped bundle detects. The extension runs the rules as WebAssembly in an offscreen document; `extension/detector/` is built at package time by `cargo xtask bundle` and is not tracked, so an extension release always needs `bun run build:extension` (and therefore a Rust toolchain plus `wasm-pack`) before the zip is attached.
 
 **Website changelog** (`site/pages/changelog.astro` in the private impeccable-site repo):
 - Add a new `<article>` entry at the top of the relevant component's group, and move the `cf-entry--current` class + `Current` badge onto it (off the previous newest skill entry). The component is derived from the entry `id` prefix: `cli-*`, `ext-*`, else skill.
@@ -275,6 +305,16 @@ Skill releases attach `dist/universal.zip`. Extension releases run `bun run buil
 
 If you need to fix release notes after the fact (typo, missing thank-you, formatting bug): `gh release edit <tag> --notes-file <md>`. The release script's `htmlToMarkdown` function is the cleanest source for regenerating notes from the changelog.
 
+### Release order is mechanically enforced (triage decision D4)
+
+The skill launcher, the npm shim (`cli/bin/cli.js`), and `impeccable install` all resolve the engine binary for the pinned `ENGINE_VERSION`. Nothing they do works until the engine release exists first. **The order is: publish the engine release, then the platform packages, then release/merge the skill (or CLI):**
+
+1. Publish engine `engine-v<ENGINE_VERSION>`: `bun run release:engine` tags and pushes; `release-engine.yml` builds the five `impeccable-<os>-<arch>[.exe]` binaries plus a `.sha256` beside each and publishes the release on this repo. The whole workspace builds from source, so nothing has to ship ahead of it.
+2. Publish the five `@impeccable/cli-<os>-<arch>@<ENGINE_VERSION>` npm platform packages.
+3. Only then tag/publish the skill or CLI release, and only then merge a branch that bumps `ENGINE_VERSION` (the `sync-generated-output.yml` workflow rewrites provider dirs on merge to `main`).
+
+`scripts/check-engine-release.mjs` verifies step 1 and 2 for the pinned version (ranged-GET each release asset, registry-probe each npm package; honors `IMPECCABLE_DOWNLOAD_BASE`). It exits non-zero and names exactly which assets are missing. `scripts/release.mjs` runs it as a hard gate before tagging the **skill** and **CLI** components and refuses to proceed when any asset is absent; the **extension** release is exempt because it ships a vendored WASM detector and never execs the engine. `IMPECCABLE_SKIP_ENGINE_CHECK=1` bypasses the gate only for the case where the assets exist but the registry probe is unreachable. CI's `engine-release-ready` job runs the same script as a hard gate, so missing release assets fail CI.
+
 ## Adding New Commands
 
 All commands live under `/impeccable`. To add a new one:
@@ -283,7 +323,7 @@ All commands live under `/impeccable`. To add a new one:
 2. Add a row to the **Sub-command reference table** in `skill/SKILL.src.md`
 3. Add an entry to the **Command menu** section in the same file
 4. Add the command name to `IMPECCABLE_SUB_COMMANDS` in `scripts/lib/utils.js`
-5. Add it to `VALID_COMMANDS` in `skill/scripts/pin.mjs`
+5. Add it to the `pin` verb's valid-command list (`crates/context`) and record the pin/unpin oracle case
 6. Add its metadata (description + argumentHint) to `skill/scripts/command-metadata.json`
 7. Add its category to `SKILL_CATEGORIES` in `scripts/lib/skill-categories.js`
 8. Add its relationships to `COMMAND_RELATIONSHIPS` in impeccable-site's `sub-pages-data.js`
@@ -301,39 +341,27 @@ The build validator (`generateCounts` in `scripts/build.js`) checks these files 
 
 ## Adding or modifying anti-pattern detection rules
 
-`cli/engine/detect-antipatterns.mjs` is the source of truth for the rule engine. It powers the CLI, the public-site overlay, the Chrome extension, and the homepage rule count. Five places stay in sync:
+The rule logic lives in `crates/core`: every check, the browser rule adapters over the `Dom` trait, and the visual-contrast decisions. `crates/wasm` compiles the same source for the extension, the live overlay and the site. Everything a rule change touches:
 
-| Where | How it stays in sync |
+| Where | What it is |
 |---|---|
-| `cli/engine/detect-antipatterns.mjs` (`ANTIPATTERNS` array + `checkXxx` logic) | Hand-edited |
-| `cli/engine/detect-antipatterns-browser.js` | `bun run build:browser` |
-| `extension/detector/detect.js` + `extension/detector/antipatterns.json` | `bun run build:extension` |
-| impeccable-site `site/public/js/generated/counts.js` | its own build |
+| `docs/CLI-CONTRACT.md` | Hand-edited: the observable contract of `impeccable detect` and every other verb |
+| `crates/foundation` | What checks are written against: the rule registry (`registry.rs`, also published as `antipatterns.json`), findings, color, the `Dom` trait, `SnapshotDom`, and the plain-data input and output types |
+| `crates/core` | The checks themselves, plus the re-exports that let consumers name one crate |
+| `crates/html`, `crates/browser`, `crates/detect` | The engines: parsing, cascade, CDP, snapshots, file walking, output. They call the checks through `impeccable_core::checks::*` and `impeccable_core::browser::*` |
+| `tests/fixtures/antipatterns/{rule-id}.html` | Hand-edited fixture (two columns, should-flag / should-pass, unique headings, explicit pixel dimensions) |
+| `tests/oracle/golden/*` | Recorded from the binary with `node tests/oracle/record.mjs --bin detect-`, reviewed by hand |
+| `tests/oracle/vectors/calls/` | Frozen function-level vectors; replayed by `crates/core/tests/vectors.rs` through `impeccable_core::vectors::call` |
+| `crates/live/assets/detect-antipatterns-browser.js` | The in-page bundle, a tracked generated file. `cargo xtask bundle` rewrites it; the binary embeds it and serves it as `/detect.js` |
+| `crates/live/assets/antipatterns.json` | The registry as `[{ id, name, category, description }]`, the second tracked generated file. Same writer and the same `cargo xtask bundle --check` staleness gate. It exists because `extension/detector/` is gitignored: this is how a consumer without a Rust toolchain (impeccable.style, working from a tarball of this repo) reads the rule list. Adding or renaming a rule means committing this file too |
+| `extension/detector/` | The five generated pieces (`core.js`, `core_bg.wasm`, `snapshot.js`, `overlay.js`, `antipatterns.json`) written by `cargo xtask bundle`, which `bun run build:extension` runs. Gitignored, never tracked |
 | `skill/SKILL.src.md` and `reference/*.md` | Hand-edited if the rule introduces new design guidance |
 
-Always run all three builds and the test suite after a rule change:
+Order for a new rule: fixture here first, registry row in `crates/foundation/src/registry.rs`, the check in `crates/core` against that fixture, oracle case + golden, `cargo xtask bundle` to refresh the two tracked live assets, then `bun run build && bun run test` with a binary present. Rule counts quoted in `README.md` / `README.npm.md` are validated by `generateCounts` against `crates/live/assets/antipatterns.json`.
 
-```bash
-bun run build && bun run build:browser && bun run build:extension && bun run test
-```
+### Rule packs (downstream crates adding rules)
 
-### TDD order (non-negotiable)
-
-1. **Fixture** at `tests/fixtures/antipatterns/{rule-id}.html` with two columns (should-flag / should-pass), each case identified by a unique heading. Cover ≥4 flag cases and ≥5 false-positive shapes. Use **explicit pixel dimensions in CSS** because jsdom does no layout.
-2. **Failing test** in `tests/detect-antipatterns-fixtures.test.mjs` using the snippet-substring pattern (regex `/"([^"]+)"/` against `SHOULD_FLAG` / `SHOULD_PASS` lists). Run it and watch it fail before implementing.
-3. **Rule entry** in the `ANTIPATTERNS` array: `id`, `category` (`slop` for AI tells, `quality` for real design or a11y issues), `name`, `description`, optional `skillSection` and `skillGuideline`.
-4. **Pure check function** `checkXxx(opts)` returning `[{ id, snippet }]`. No DOM access in the pure function.
-5. **Two adapters**: `checkElementXxxDOM(el)` for the browser (`getComputedStyle` + `getBoundingClientRect`) and `checkElementXxx(el, tag, window)` for jsdom (`parseFloat(style.width)` instead of layout). `cli/engine/detect-antipatterns.mjs` is now a thin facade over `cli/engine/{registry,rules,engines,shared}`: the registry entry goes in `registry/antipatterns.mjs`, the pure check + adapters in `rules/checks.mjs`, and the wiring into **both** element loops in `engines/static-html/detect-html.mjs` (jsdom) and `browser/injected/index.mjs` (concatenated into the browser bundle). Forgetting one loop is the most common mistake; symptom is "test passes, live page silent" or vice versa.
-6. **Verify on a live page**: `http://localhost:4321/fixtures/antipatterns/{rule-id}.html` and the homepage (no false positives). The two adapter paths can disagree, so manual browser checks catch what the fixture test can't.
-
-### Conventions and jsdom gotchas
-
-- **Snippet format**: wrap the identifying heading text in straight double quotes (e.g. `'icon tile above h3 "Lightning Fast"'`) so the fixture test can extract it. For rules not anchored to a heading, pick another stable identifier.
-- **jsdom doesn't lay out**: `getBoundingClientRect()` returns 0×0. Read `parseFloat(style.width)` and `parseFloat(style.height)` from explicit CSS instead.
-- **`background:` shorthand isn't decomposed in jsdom**: use the existing `resolveBackground()` and `resolveGradientStops()` helpers (in `engines/static-html/detect-html.mjs`).
-- **Computed colors aren't normalized in jsdom**: `parseGradientColors()` handles both hex and rgb forms.
-
-Reference rules to copy from (all in `cli/engine/rules/checks.mjs`): `side-tab` (border), `low-contrast` (color + gradient), `icon-tile-stack` (sibling relationship), `flat-type-hierarchy` (page-level), `kicker-above-heading` (heading-anchored with rule-ownership stand-down).
+A crate that depends on this workspace can add rules without forking it: implement `impeccable_core::rule_pack::RulePack` (text plus the two browser DOM hooks) and, for the static engine, `impeccable_html::StaticRulePack`, call `impeccable_core::rule_pack::install(&PACK)` at startup, and hand the pack to the engine through `TextOptions` / `ScanOptions`, `DetectHtmlOptions`, `StaticHtmlEngine`, or `BrowserConfig`. Every hook runs after the built-ins and before inline ignores, so built-in output with no pack installed is byte-identical, which the oracle enforces. The registry keeps `ANTIPATTERNS` as the built-in list and `registry::extend` appends a pack's rows, panicking on an id collision. `crates/wasm --features detect` exposes the two file engines as JSON exports (`detect_text_json`, `detect_html_source_json`) for hosts that cannot exec the binary; Pristine consumes that path. Full contract in `docs/ENGINE.md` ("Rule packs"). The shipped `impeccable` binary installs no pack, and nothing in this repo should start doing so.
 
 ## Evals Framework (separate private repo)
 

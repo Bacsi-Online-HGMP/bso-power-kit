@@ -2,12 +2,53 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { runInNewContext } from 'node:vm';
 
 const SOURCE = readFileSync(join(process.cwd(), 'skill/scripts/live-browser.js'), 'utf-8');
 const PENDING_DOCK_POSITION_SOURCE = SOURCE.match(/function positionPendingDock\(\) \{[\s\S]*?\n  \}/)?.[0] || '';
 const CAPTURE_AND_EMIT_SOURCE = SOURCE.match(/async function captureAndEmit\([\s\S]*?\n  \}/)?.[0] || '';
 
 describe('live-browser source contracts', () => {
+  it('does not checkpoint a generation before captureAndEmit creates its session', () => {
+    for (const name of ['handleGo', 'handleInsertCreate']) {
+      const body = SOURCE.match(new RegExp(`function ${name}\\(\\) \\{[\\s\\S]*?\\n  \\}`))?.[0];
+      assert.ok(body);
+      assert.doesNotMatch(body, /sendCheckpoint\('generate_started'\)/);
+    }
+  });
+
+  for (const annotated of [false, true]) {
+    for (const outcome of ['created', 'failed', 'superseded']) {
+      it(`${annotated ? 'annotated' : 'plain'} generation checkpoints only its acknowledged current session (${outcome})`, async () => {
+        const capture = Promise.withResolvers();
+        const creation = Promise.withResolvers();
+        const events = [];
+        const context = {
+          currentSessionId: 'session-a', state: 'GENERATING', PORT: 1234, TOKEN: 'test',
+          console, Date,
+          captureElementToBlob: () => capture.promise,
+          showShaderOverlay() {},
+          fetch: async () => ({ ok: true, json: async () => ({ path: '/annotation.png' }) }),
+          sendEvent: async (payload) => { events.push(payload.type); return creation.promise; },
+          sendCheckpoint: (reason) => events.push(reason),
+        };
+        const emit = runInNewContext(`(${CAPTURE_AND_EMIT_SOURCE})`, context);
+        const pending = emit({}, { type: 'generate', id: 'session-a' }, {
+          comments: annotated ? [{ text: 'change title' }] : [], strokes: [],
+        }, {});
+        await new Promise(resolve => setImmediate(resolve));
+        assert.deepEqual(events, annotated ? [] : ['generate']);
+        capture.resolve({ blob: {}, paper: 'white' });
+        await new Promise(resolve => setImmediate(resolve));
+        assert.deepEqual(events, ['generate'], 'capture/upload must not checkpoint before creation is acknowledged');
+        if (outcome === 'superseded') context.currentSessionId = 'session-b';
+        creation.resolve(outcome === 'failed' ? null : { ok: true });
+        await pending;
+        assert.deepEqual(events, outcome === 'created' ? ['generate', 'generate_started'] : ['generate']);
+      });
+    }
+  }
+
   it('reports foreground poll connectivity without a background worker dependency', () => {
     assert.match(
       SOURCE,
@@ -29,7 +70,7 @@ describe('live-browser source contracts', () => {
     );
     assert.match(
       CAPTURE_AND_EMIT_SOURCE,
-      /if \(hasAnnotations\) \{[\s\S]*?basePayload\.clientSentAt = Date\.now\(\);\s*sendEvent\(screenshotPath \? \{ \.\.\.basePayload, screenshotPath \} : basePayload\);\s*\}/,
+      /if \(hasAnnotations\) \{[\s\S]*?basePayload\.clientSentAt = Date\.now\(\);\s*const created = await sendEvent\(screenshotPath \? \{ \.\.\.basePayload, screenshotPath \} : basePayload\);/,
       'annotated generation should dispatch exactly after capture and upload resolve',
     );
   });
@@ -353,12 +394,12 @@ describe('live-browser source contracts', () => {
     );
     assert.match(
       SOURCE,
-      /function scheduleAcceptCleanup\(accepted\)[\s\S]*?queueMicrotask\(function\(\) \{[\s\S]*?cleanupAcceptedSession\(\);[\s\S]*?setTimeout\(function\(\) \{[\s\S]*?ensureAcceptedDomClean\(accepted\);[\s\S]*?\}, 1200\);/,
+      /function scheduleAcceptCleanup\(accepted\)[\s\S]*?queueMicrotask\(function\(\) \{[\s\S]*?cleanupAcceptedSession\(\);[\s\S]*?setTimeout\(function\(\) \{[\s\S]*?ensureAcceptedDomClean\(accepted, recoveryRevision\);[\s\S]*?\}, 1200\);/,
       'foreground cleanup should be immediate while the no-HMR DOM fallback stays deferred',
     );
     assert.match(
       SOURCE,
-      /function ensureAcceptedDomClean\(pending\)[\s\S]*?acceptedDomAlreadyClean\(pending\)[\s\S]*?findAcceptedRuntimeWrappers\(sessionId\)[\s\S]*?for \(const wrapper of wrappers\)[\s\S]*?parent\.insertBefore\(accepted\.firstChild, wrapper\);[\s\S]*?wrapper\.remove\(\);[\s\S]*?acceptedDomAlreadyClean\(pending\)/,
+      /function ensureAcceptedDomClean\(pending, recoveryRevision\)[\s\S]*?acceptedDomAlreadyClean\(pending\)[\s\S]*?findAcceptedRuntimeWrappers\(sessionId\)[\s\S]*?for \(const wrapper of wrappers\)[\s\S]*?parent\.insertBefore\(accepted\.firstChild, wrapper\);[\s\S]*?wrapper\.remove\(\);[\s\S]*?acceptedDomAlreadyClean\(pending\)/,
       'post-cleanup fallback should unwrap the accepted variant instead of preserving live runtime wrappers',
     );
     assert.match(
@@ -383,42 +424,519 @@ describe('live-browser source contracts', () => {
     );
     assert.match(
       SOURCE,
-      /function reloadAfterMissingAcceptedDom\(pending\)[\s\S]*?location\.reload\(\);/,
+      /function reloadAfterMissingAcceptedDom\(pending, recoveryRevision\)[\s\S]*?location\.reload\(\);/,
       'missing accepted DOM after clean source should recover by reloading the clean page',
+    );
+    assert.match(
+      SOURCE,
+      /restoreAcceptedDomFromSnapshot\(pending, recoveryRevision\)[\s\S]*?function restoreAcceptedDomFromSnapshot\(pending, recoveryRevision\)[\s\S]*?reloadAfterMissingAcceptedDom\(pending, recoveryRevision\)/,
+      'snapshot restoration must carry the originating recovery revision into its reload fallback',
+    );
+    assert.match(
+      SOURCE,
+      /function ensureAcceptedDomClean\(pending, recoveryRevision\) \{[\s\S]{0,250}?deferredRecoverySuperseded\(pending\?\.id, recoveryRevision\)[\s\S]*?setTimeout\(function\(\) \{[\s\S]{0,180}?deferredRecoverySuperseded\(pending\?\.id, recoveryRevision\)[\s\S]{0,180}?location\.reload\(\);/,
+      'accepted-session cleanup and its reload fallback must yield to a newer Live session',
     );
   });
 
-  it('normalizes generated JSX source before source-fallback DOM parsing', () => {
+  it('never runs accept or discard structural fallbacks inside framework-owned HMR DOM', () => {
     assert.match(
       SOURCE,
-      /parser\.parseFromString\(normalizeSourceFallbackBlock\(block, filePath\), 'text\/html'\)/,
-      'source fallback should normalize JSX wrapper syntax before DOMParser sees it',
+      /if \(hasFrameworkHmrOwnership\(wrappers\[0\] \|\| pending\?\.parentElement\)\) \{[\s\S]{0,500}?acceptedDomAlreadyClean\(pending\)[\s\S]{0,80}?location\.reload\(\);[\s\S]{0,80}?return;[\s\S]{0,120}?if \(wrappers\.length === 0\)/,
+      'accept cleanup must use a reload grace fallback before any framework-owned structural mutation',
     );
     assert.match(
       SOURCE,
-      /function normalizeSourceFallbackBlock\(block, filePath\)[\s\S]*?<style\\b\(\[\^>\]\*\)>\\s\*\\\{\\s\*`\(\[\\s\\S\]\*\?\)`\\s\*\\\}\\s\*<\\\/style>/,
-      'source fallback should unwrap JSX style template literals',
+      /if \(hasFrameworkHmrOwnership\(lateWrapper\)\) \{[\s\S]{0,1100}?location\.reload\(\);[\s\S]{0,100}?return;[\s\S]{0,150}?releaseDiscardedStaticWrappers\(cleanupSessionId, lateWrappers\)/,
+      'discard cleanup must use a reload grace fallback before replacing a framework-owned wrapper',
     );
     assert.match(
       SOURCE,
-      /replace\(\/\\bclassName\\s\*=\/g, 'class='\)/,
-      'source fallback should translate className back to HTML class attributes',
+      /function releaseDiscardedStaticWrapper\(wrapper\)[\s\S]{0,400}?replaceChild\(content, wrapper\)/,
+      'only the static-wrapper release helper may structurally restore discarded DOM',
     );
     assert.match(
       SOURCE,
-      /value\.replace\(\/\\\$\\\{\[\^}\]\*\\\}\/g, ' '\)/,
-      'source fallback should reduce JSX template className values to literal class tokens',
+      /if \(hasFrameworkHmrOwnership\(lateWrapper\)\) \{[\s\S]{0,900}?removeDiscardStateStylesheet\(cleanupSessionId\);[\s\S]{0,250}?location\.reload\(\);/,
+      'discard must keep its original-visibility stylesheet until the HMR grace window ends',
+    );
+    assert.match(
+      SOURCE,
+      /const recoverySuperseded = deferredRecoverySuperseded\(cleanupSessionId, cleanupRevision\);[\s\S]{0,700}?if \(recoverySuperseded\) \{[\s\S]{0,250}?watchForDiscardedFrameworkWrapperRemoval\(cleanupSessionId\)[\s\S]{0,150}?releaseDiscardedStaticWrappers\(cleanupSessionId, lateWrappers\)[\s\S]{0,80}?return;/,
+      'discard cleanup and its reload grace callback must yield to a newer Live session',
+    );
+    assert.match(
+      SOURCE,
+      /function discardStateStyleId\(sessionId\)[\s\S]{0,100}?DISCARD_STATE_STYLE_ID \+ '-' \+ sessionId[\s\S]{0,400}?getElementById\(discardStateStyleId\(sessionId\)\)/,
+      'concurrent discard sessions must retain independent visibility stylesheets',
+    );
+    assert.match(
+      SOURCE,
+      /function removeDiscardStateStylesheet\(sessionId\)[\s\S]{0,100}?if \(!sessionId\) return;[\s\S]{0,100}?getElementById\(discardStateStyleId\(sessionId\)\)\?\.remove\(\);/,
+      'an older discard callback must remove only its own session stylesheet',
+    );
+    assert.match(
+      SOURCE,
+      /setTimeout\(function\(\) \{[\s\S]{0,300}?const staleWrappers = discardedWrappers\(cleanupSessionId\);[\s\S]{0,250}?deferredRecoverySuperseded\(cleanupSessionId, cleanupRevision\)[\s\S]{0,250}?watchForDiscardedFrameworkWrapperRemoval\(cleanupSessionId\)[\s\S]{0,100}?return;[\s\S]{0,100}?removeDiscardStateStylesheet\(cleanupSessionId\);[\s\S]{0,250}?location\.reload\(\);/,
+      'framework discard recovery may observe safe HMR cleanup but must not reload replacement work',
+    );
+    assert.match(
+      SOURCE,
+      /const discardedFrameworkWrapperWatchers = new Map\(\);[\s\S]*?function watchForDiscardedFrameworkWrapperRemoval\(sessionId\)[\s\S]{0,1500}?const replacementActive = !!currentSessionId[\s\S]{0,180}?state !== 'IDLE' && state !== 'PICKING'[\s\S]{0,300}?setTimeout\(resolveStillMounted, 12000\)[\s\S]{0,300}?location\.reload\(\);/,
+      'discard recovery must keep observing during replacement work and reload stale framework DOM once Live is idle',
+    );
+  });
+
+  it('recovers a handled variant or carbonize wrapper after HMR cancels the original cleanup timer', () => {
+    const start = SOURCE.indexOf('function scheduleHandledRuntimeWrapperReload(wrapper,');
+    const end = SOURCE.indexOf('\n  function resumeSession(', start);
+    const recovery = SOURCE.slice(start, end);
+    assert.match(recovery, /impeccableCarbonize/);
+    assert.match(recovery, /sessionStorage\.getItem\(handledWrapperReloadKey\(sessionId\)\)/);
+    assert.match(recovery, /sessionStorage\.setItem\(handledWrapperReloadKey\(sessionId\), String\(reloadAttempts \+ 1\)\)/);
+    assert.match(recovery, /if \(reloadAttempts >= 2\) return true;/);
+    assert.match(recovery, /handledRuntimeWrapperReloadSessions\.has\(sessionId\)/);
+    assert.match(recovery, /handledRuntimeWrapperReloadSessions\.add\(sessionId\)/);
+    assert.match(
+      recovery,
+      /deferredRecoverySuperseded\(sessionId, recoveryRevision\)[\s\S]*?return true;[\s\S]*?setTimeout\(function\(\) \{[\s\S]{0,180}?deferredRecoverySuperseded\(sessionId, recoveryRevision\)[\s\S]{0,220}?handledRuntimeWrapperReloadSessions\.delete\(sessionId\);[\s\S]{0,80}?return;/,
+      'handled-wrapper recovery must never reload a newer Live session',
+    );
+    assert.match(
+      SOURCE,
+      /const handledRuntimeWrapperReloadSessions = new Set\(\);[\s\S]*?function handledWrapperReloadKey\(sessionId\)[\s\S]{0,100}?HANDLED_WRAPPER_RELOAD_KEY \+ ':' \+ sessionId/,
+      'overlapping handled sessions must have independent timers and retry budgets',
+    );
+    assert.match(recovery, /\[data-impeccable-variants=.+\[data-impeccable-carbonize=/s);
+    assert.match(recovery, /if \(staleWrapper\) location\.reload\(\);/);
+    assert.match(
+      SOURCE,
+      /function resumeSession\(recoveryRevision = liveInteractionRevision, opts = \{\}\)[\s\S]{0,700}?\[data-impeccable-carbonize\][\s\S]{0,180}?scheduleHandledRuntimeWrapperReload\(runtimeWrapper, recoveryRevision\)/,
+      'resume must inspect handled carbonize wrappers before clearing handled state',
+    );
+    assert.match(
+      SOURCE,
+      /function restoreSessionSupersedingHandledWrapper\(runtimeWrapper\)[\s\S]{0,900}?saved\.id === handledSessionId[\s\S]{0,300}?restoreSessionWithoutWrapper\('browser_resumed_over_handled_wrapper'\)/,
+      'handled-wrapper recovery must recognize a different durable session as newer work',
+    );
+    assert.match(
+      SOURCE,
+      /function isUsableInjectionAnchor\(el\)[\s\S]{0,250}?closest\?\.\('\[data-impeccable-variants\],\[data-impeccable-carbonize\]'\)/,
+      'a newer restored session must wait for a real page anchor outside stale handled wrappers',
+    );
+    const resumeStart = SOURCE.indexOf('function resumeSession(');
+    const resumeEnd = SOURCE.indexOf('\n  //', resumeStart);
+    const resume = SOURCE.slice(resumeStart, resumeEnd);
+    assert.ok(
+      resume.indexOf('restoreSessionSupersedingHandledWrapper(runtimeWrapper)')
+        < resume.indexOf('scheduleHandledRuntimeWrapperReload(runtimeWrapper, recoveryRevision)'),
+      'a newer durable session must restore before a stale handled wrapper can schedule another reload',
+    );
+    assert.doesNotMatch(
+      resume,
+      /clearHandled\(\);/,
+      'bounded handled state must survive arbitrarily late wrapper hydration and later reloads',
+    );
+    assert.match(
+      resume,
+      /browser_resumed_svelte_orphan_wrapper[\s\S]{0,150}?clearHandled\(sessionId\);/,
+      'orphan cleanup must clear only its own handled id',
+    );
+    assert.match(
+      SOURCE,
+      /if \(!accepted\?\.isSvelteComponent\) \{[\s\S]{0,100}?watchForHandledRuntimeWrapper\(accepted\?\.id, recoveryRevision\);/,
+      'accept cleanup should watch for a carbonize wrapper mounted by a delayed framework refresh',
+    );
+    assert.match(
+      recovery,
+      /function watchForHandledRuntimeWrapper\(sessionId, recoveryRevision = liveInteractionRevision\)[\s\S]*?handledRuntimeWrapperWatchers\.get\(sessionId\)[\s\S]*?observer\.observe\(document\.body, \{ childList: true, subtree: true \}\)[\s\S]*?handledRuntimeWrapperWatchers\.set\(sessionId, \{ observer, timer \}\);/,
+      'late handled-wrapper recovery should remain bounded while covering slow HMR updates',
+    );
+    assert.match(
+      SOURCE,
+      /const handledRuntimeWrapperWatchers = new Map\(\);[\s\S]*?handledRuntimeWrapperWatchers\.delete\(sessionId\);/,
+      'overlapping handled-wrapper scouts must retain independent observer state per session',
+    );
+  });
+
+  it('keeps watching for a framework wrapper when session restore wins the hydration race', () => {
+    assert.match(
+      SOURCE,
+      /const resumed = resumeSession\(\);[\s\S]{0,1200}?if \(!resumed \|\| !document\.querySelector\('\[data-impeccable-variants\],\[data-impeccable-carbonize\]'\)\) \{[\s\S]{0,500}?const scout = new MutationObserver/,
+      'restoring durable session state before hydration must still install the deferred-wrapper scout',
+    );
+    assert.match(
+      SOURCE,
+      /const deferredResumeRevision = liveInteractionRevision;[\s\S]{0,350}?const scout = new MutationObserver[\s\S]{0,400}?resumeSession\(deferredResumeRevision, \{ reason: 'browser_resumed_deferred_wrapper' \}\)/,
+      'the deferred-wrapper scout must retain its originating interaction revision and name itself in the journal',
+    );
+  });
+
+  it('finishes the cycling transition when the resume is the arrival (#719)', () => {
+    // The server's generation preflight runs live-wrap with
+    // --defer-source-write, so the wrapper and every variant reach the DOM in
+    // one HMR batch. The deferred-wrapper scout is constructed at init, the
+    // variant MutationObserver at Go, and observer callbacks run in
+    // construction order, so on that batch the scout resumes first and
+    // resumeSession IS the transition into CYCLING. It has to finish the same
+    // transition the observer would have: leaving the generating shader up
+    // paints a frozen capture of the original over a DOM that already holds
+    // the variants, which is the stuck loader from issue #719.
+    const resumeStart = SOURCE.indexOf('function resumeSession(');
+    const resumeEnd = SOURCE.indexOf('\n  //', resumeStart);
+    const resume = SOURCE.slice(resumeStart, resumeEnd);
+    assert.match(
+      resume,
+      /if \(state === 'CYCLING'\) \{[\s\S]{0,200}?hideShaderOverlay\(\);/,
+      'a resume into CYCLING must take the generating shader down',
+    );
+    assert.match(
+      resume,
+      /if \(state === 'CYCLING'\) \{[\s\S]{0,700}?refreshParamsPanel\(\);/,
+      'a resume into CYCLING must still rebuild the params panel',
+    );
+    // Only variants_progress|variants_ready count as publication progress, so
+    // a resume that already holds every variant has to report one of them or
+    // the server never learns the generation was published.
+    assert.match(
+      resume,
+      /queueCheckpoint\(resumeReason\);[\s\S]{0,500}?sendCheckpoint\('variants_ready'\)/,
+      'a complete resume must report variants_ready, not only browser_resumed',
+    );
+  });
+
+  it('unwinds every wrapper a discard hid, not just the first (#719)', () => {
+    // Bugbot on #720: the non-restoreOriginal discard hides every matching
+    // wrapper, so the delayed fallback has to release the same set. Releasing
+    // the first match left the other mapped items at display:none with their
+    // original content never restored, on exactly the static and missed-HMR
+    // flows the fallback exists for. The e2e fixtures cannot cover this:
+    // hasFrameworkHmrOwnership is true for every React, Vue, and Svelte
+    // fixture, so they all take the watcher path instead.
+    const cleanupAt = SOURCE.indexOf('function cleanup(options)');
+    assert.ok(cleanupAt > 0, 'cleanup must exist');
+    const cleanup = SOURCE.slice(cleanupAt, SOURCE.indexOf('\n  //', cleanupAt));
+
+    assert.match(
+      cleanup,
+      /const discardWrappers = discardedWrappers\(cleanupSessionId\);[\s\S]{0,260}?for \(const discardWrapper of discardWrappers\) discardWrapper\.style\.display = 'none';/,
+      'the hide must cover every wrapper for the session',
+    );
+    assert.match(
+      cleanup,
+      /const lateWrappers = discardedWrappers\(cleanupSessionId\);[\s\S]{0,120}?if \(lateWrappers\.length === 0\)/,
+      'the fallback must look at the same set the hide covered',
+    );
+    assert.doesNotMatch(
+      cleanup,
+      /releaseDiscardedStaticWrapper\(/,
+      'cleanup must go through the plural release so every hidden wrapper is unwound',
+    );
+    for (const call of [...cleanup.matchAll(/releaseDiscardedStaticWrappers\([^)]*\)/g)].map((m) => m[0])) {
+      assert.match(call, /lateWrappers/, `${call} must release the captured set`);
+    }
+    assert.ok(
+      [...cleanup.matchAll(/releaseDiscardedStaticWrappers\(/g)].length === 2,
+      'both the superseded and the plain static branch must release',
+    );
+
+    const pluralAt = SOURCE.indexOf('function releaseDiscardedStaticWrappers(sessionId, wrappers)');
+    assert.ok(pluralAt > 0, 'releaseDiscardedStaticWrappers must exist');
+    const plural = SOURCE.slice(pluralAt, SOURCE.indexOf('\n  }', pluralAt));
+    assert.match(plural, /removeDiscardStateStylesheet\(sessionId\);/, 'the stylesheet comes down once');
+    assert.match(
+      plural,
+      /for \(const wrapper of set\) releaseDiscardedStaticWrapper\(wrapper\);/,
+      'every wrapper in the set is released',
+    );
+
+    // Intent of main's original guard, kept: discard must not blank the
+    // original, and must not animate stale chrome while waiting for HMR.
+    assert.match(
+      cleanup,
+      /if \(restoreOriginal\) showOriginalDuringDiscard\(cleanupSessionId\);/,
+      'only non-discard cleanup may blank the wrapper while waiting for HMR',
+    );
+  });
+
+  it('never leaves a shader behind when the teardown races its construction (#719)', () => {
+    // showShaderOverlay appends its canvas, then awaits createImageBitmap and
+    // the GL setup before it publishes shaderState. A teardown inside that
+    // window found shaderState null, returned, and then watched the
+    // construction publish itself over a session that had already reached
+    // CYCLING, with no teardown left to run. On a slow runner that is the
+    // generating loader frozen over a page that already cycles.
+    const hideStart = SOURCE.indexOf('function hideShaderOverlay()');
+    const hide = SOURCE.slice(hideStart, SOURCE.indexOf('\n  function ', hideStart + 10));
+    assert.match(
+      hide,
+      /shaderEpoch \+= 1;[\s\S]{0,120}?if \(!shaderState\) \{/,
+      'the epoch must be bumped before the no-state early return, or an in-flight construction never hears about the teardown',
+    );
+    assert.match(hide, /removeStrayShaderNode\(\);/, 'a teardown must also drop a shader node no state owns');
+
+    const showStart = SOURCE.indexOf('async function showShaderOverlay(');
+    const show = SOURCE.slice(showStart, SOURCE.indexOf('\n  async function handleAccept', showStart));
+    assert.match(show, /const epoch = shaderEpoch;/, 'the construction must pin the epoch it owns');
+    assert.match(
+      show,
+      /const abandoned = \(node, gl\) => \{[\s\S]{0,80}?if \(epoch === shaderEpoch\) return false;[\s\S]{0,200}?return true;/,
+      'abandoning must remove the canvas and release the GL context',
+    );
+    assert.match(
+      show,
+      /if \(abandoned\(canvas, gl\)\) return;\n    shaderState = \{ canvas, gl, program, texture,/,
+      'the publish must be guarded by the epoch it pinned',
+    );
+    const awaitIdx = show.indexOf('await createImageBitmap(blob)');
+    assert.ok(awaitIdx > 0, 'createImageBitmap is the await this guards');
+    assert.ok(
+      show.indexOf('if (abandoned(canvas, gl))', awaitIdx) > awaitIdx,
+      'the bitmap await must be followed by an abandonment check',
+    );
+    for (const call of ['showShaderBitmapFallback(canvas, blob);']) {
+      let at = show.indexOf(call);
+      assert.ok(at > 0, call);
+      while (at > 0) {
+        const before = show.slice(Math.max(0, at - 220), at);
+        assert.match(before, /abandoned\(canvas, (?:gl|null)\)/, 'every fallback publish must be epoch guarded');
+        at = show.indexOf(call, at + 1);
+      }
+    }
+  });
+
+  it('lowers the shader on every route that sets CYCLING (#719)', () => {
+    // resumeSession reaches CYCLING through setLiveState(resumedState), which
+    // its own block covers; every literal site has to lower the loader too.
+    const sites = [...SOURCE.matchAll(/setLiveState\('CYCLING'\);/g)].map((m) => m.index);
+    assert.ok(sites.length >= 8, `expected the known CYCLING sites, saw ${sites.length}`);
+    for (const at of sites) {
+      const after = SOURCE.slice(at, at + 260);
+      assert.match(
+        after,
+        /hideShaderOverlay\(\);/,
+        `a setLiveState('CYCLING') at offset ${at} does not lower the generating shader`,
+      );
+    }
+  });
+
+  it('prefers the wrapper that actually holds variants over the first match (#719)', () => {
+    // A target inside a `.map()` renders one wrapper per item, and an agent
+    // that relocates the wrapper out of the shared primitive live-wrap
+    // scaffolded leaves an empty one behind. First match can then pin a
+    // scaffold with no variants and strand the session at 0/N.
+    const start = SOURCE.indexOf('function pickPopulatedVariantsWrapper(selector)');
+    assert.ok(start > 0, 'pickPopulatedVariantsWrapper must exist');
+    const helper = SOURCE.slice(start, SOURCE.indexOf('\n  function startVariantObserver(', start));
+    assert.match(helper, /if \(matches\.length < 2\) return matches\[0\] \|\| null;/);
+    assert.match(
+      helper,
+      /candidate\.querySelector\('\[data-impeccable-variant\]:not\(\[data-impeccable-variant="original"\]\)'\)[\s\S]{0,80}?return candidate;/,
+      'the preferred wrapper is the one holding non-original variants',
+    );
+    assert.match(helper, /return matches\[0\];/, 'with no populated wrapper the old first match still wins');
+    assert.match(
+      helper,
+      /function findVariantsWrapper\(sessionId\) \{\n    if \(!sessionId\) return null;/,
+      'a missing id must not silently widen the lookup to any session',
+    );
+    assert.match(
+      helper,
+      /function findAnyVariantsWrapper\(\) \{[\s\S]{0,120}?'\[data-impeccable-variants\]'/,
+      'the resume paths that have no id yet need their own entry point',
+    );
+  });
+
+  it('routes every active-session wrapper lookup through the resolver (#719)', () => {
+    // Bugbot on #720: findVariantsWrapper alone is not enough while the bar
+    // anchor, the visible-variant element, the params count, and accept still
+    // take the first match, because in the relocated-wrapper case Tune never
+    // binds and the bar keeps anchoring to the empty scaffold.
+    for (const fn of [
+      'function resolveBarAnchor()',
+      'function isInsertGeneratingSession()',
+      'function ensureInsertPlaceholder()',
+      'function mountedParameterCount()',
+      'function readVisibleVariantFromDOM(sessionId)',
+      'function snapshotAcceptedVariantDom(sessionId, variantId)',
+      'function commitAcceptedVariantToDom(sessionId, variantId)',
+    ]) {
+      const at = SOURCE.indexOf(fn);
+      assert.ok(at > 0, `${fn} should exist`);
+      const body = SOURCE.slice(at, SOURCE.indexOf('\n  }', at));
+      assert.doesNotMatch(
+        body,
+        /document\.querySelector\('\[data-impeccable-variants="'/,
+        `${fn} must resolve the session wrapper through findVariantsWrapper`,
+      );
+    }
+
+    // Anything still taking a raw first match is a deliberate existence check
+    // or a cleanup sweep. Pinning the exact set means a new raw lookup has to
+    // justify itself here rather than quietly reintroducing the bug.
+    const rawSites = [...SOURCE.matchAll(
+      /(?:const (\w+) = (?:!!)?|(if) \()[^\n]{0,40}?document\.querySelector\('\[data-impeccable-variants="' \+ [\w.?]+ \+ '"\]'\)/g,
+    )].map((m) => m[1] || m[2]);
+    assert.deepEqual(
+      [...rawSites].sort(),
+      [
+        // existence only, inside the variant-anchor retry observer
+        'wrapperLanded',
+        // svelte component republish: an identity check next to
+        // svelteComponentSession, and a component wrapper holds no variants
+        'existingWrapper',
+        // orphan removal in abortSvelteComponentInjection
+        'orphan',
+        // orphan removal in resetSvelteComponentSession
+        'orphan',
+        // pendingAcceptedSession existence guard
+        'if',
+      ].sort(),
+      'a new raw [data-impeccable-variants=...] first-match lookup appeared; route it through findVariantsWrapper, or add it here with the reason it may take the first match',
+    );
+    assert.equal(
+      rawSites.length,
+      SOURCE.split(`document.querySelector('[data-impeccable-variants="'`).length - 1,
+      'every raw session-wrapper lookup must be shaped so this guard can see it',
+    );
+  });
+
+  it('invalidates nullable deferred recovery as soon as a replacement edit starts configuring', () => {
+    assert.match(
+      SOURCE,
+      /function beginNewLiveConfiguration\(\) \{[\s\S]{0,100}?liveInteractionRevision \+= 1;[\s\S]{0,80}?setLiveState\('CONFIGURING'\);/,
+    );
+    assert.equal(
+      SOURCE.match(/beginNewLiveConfiguration\(\);/g)?.length || 0,
+      3,
+      'mouse replace, mouse insert, and keyboard configuration must all supersede older recovery timers',
+    );
+    assert.match(
+      SOURCE,
+      /function deferredRecoverySuperseded\(sessionId, recoveryRevision\) \{[\s\S]{0,160}?liveInteractionRevision !== recoveryRevision[\s\S]{0,100}?currentSessionId !== sessionId/,
+      'recovery must be fenced before a replacement configuration has a non-null session id',
+    );
+    assert.match(
+      SOURCE,
+      /function scheduleAcceptCleanup\(accepted\) \{[\s\S]{0,100}?const recoveryRevision = liveInteractionRevision;[\s\S]*?watchForHandledRuntimeWrapper\(accepted\?\.id, recoveryRevision\)/,
+      'accept and handled-wrapper recovery must share the originating interaction revision',
+    );
+  });
+
+  it('never DOMParser-injects JSX source (#454)', () => {
+    const isJsxStart = SOURCE.indexOf('function isJsxSourceFile(');
+    const isJsxEnd = SOURCE.indexOf('function sourceHasSessionWrapper(', isJsxStart);
+    const isJsxSourceFile = new Function(
+      SOURCE.slice(isJsxStart, isJsxEnd) + '\nreturn isJsxSourceFile;',
+    )();
+
+    assert.equal(isJsxSourceFile('src/App.jsx'), true);
+    assert.equal(isJsxSourceFile('panel/src/Widget.tsx'), true);
+    assert.equal(isJsxSourceFile('index.html'), false);
+    assert.equal(isJsxSourceFile('Card.vue'), false);
+
+    const injectStart = SOURCE.indexOf('function injectVariantsFromSource(');
+    const injectEnd = SOURCE.indexOf('function buildSvelteExpressionTextMap', injectStart);
+    const injectFn = SOURCE.slice(injectStart, injectEnd);
+    const jsxGateIdx = injectFn.indexOf('if (isJsxSourceFile(filePath))');
+    const htmlFetchIdx = injectFn.indexOf("const url = 'http://localhost:'");
+    assert.ok(jsxGateIdx !== -1 && htmlFetchIdx > jsxGateIdx, 'JSX must return before /source fetch');
+    const jsxGate = injectFn.slice(jsxGateIdx, htmlFetchIdx);
+    assert.doesNotMatch(
+      jsxGate,
+      /replaceChild/,
+      'the JSX gate must not replaceChild a React tree',
+    );
+    assert.doesNotMatch(
+      jsxGate,
+      /discardOrphanedSession/,
+      'a missing JSX wrap must not discard from the DOM alone; only the source probe may decide',
+    );
+    assert.match(
+      jsxGate,
+      /if \(opts\.orphanDiscard && !liveWrapper && sessionId === currentSessionId\) \{\s*probeJsxWrapperForOrphan\(filePath, sessionId, opts\);/,
+      'a resumed CYCLING session with no mounted JSX wrapper must run the source orphan probe (#439)',
+    );
+    assert.match(
+      jsxGate,
+      /if \(!liveWrapper\) \{[\s\S]*?showToast\([\s\S]*?return;[\s\S]*?if \(liveWrapper\.dataset\.impeccableMode !== 'insert'\) \{[\s\S]*?recoverEmptyCycling\('source-fallback-empty'\)/,
+      'missing wrap waits; empty replace wrap recovers after retries; insert scaffolds stay',
+    );
+    assert.doesNotMatch(SOURCE, /function normalizeSourceFallbackBlock/);
+    assert.doesNotMatch(SOURCE, /function jsxStyleObjectToCss/);
+    assert.match(
+      injectFn,
+      /parser\.parseFromString\(block, 'text\/html'\)/,
+      'HTML fallback should parse the extracted marker block as HTML',
+    );
+    assert.match(
+      injectFn,
+      /const startMark = '<!-- impeccable-variants-start ' \+ sessionId \+ ' -->'/,
+      'HTML fallback should still scan HTML comment markers',
     );
     assert.doesNotMatch(
       SOURCE,
       /querySelectorAll\(tag \+ '\\.' \+ cls\.split/,
       'source fallback should not construct unsafe selectors from JSX-ish class strings',
     );
+  });
+
+  it('self-discards a JSX session whose wrapper left the source file (#439)', () => {
+    const probeStart = SOURCE.indexOf('function probeJsxWrapperForOrphan(');
+    assert.ok(probeStart !== -1, 'the JSX orphan probe must exist');
+    const probeEnd = SOURCE.indexOf('function completeSourceInjection', probeStart);
+    const probe = SOURCE.slice(probeStart, probeEnd);
+
+    // #454 stands: the probe reads the file as text and never builds a DOM
+    // from it, so raw JSX can never reach the page through this path.
+    for (const forbidden of ['DOMParser', 'parseFromString', 'replaceChild', 'innerHTML']) {
+      assert.ok(!probe.includes(forbidden), 'the orphan probe must not ' + forbidden + ' JSX source');
+    }
+    assert.match(probe, /\.then\(r => \{ if \(!r\.ok\) throw new Error\('source read failed: ' \+ r\.status\); return r\.text\(\); \}\)/);
     assert.match(
-      SOURCE,
-      /function jsxStyleObjectToCss\(body\)/,
-      'source fallback should translate simple JSX style objects such as display:none',
+      probe,
+      /if \(sourceHasSessionWrapper\(text, sessionId\)\) return;/,
+      'a wrapper still in source is an unmounted component, not an orphan',
     );
+    assert.match(
+      probe,
+      /const onNoWrapper = \(reason\) => \{[\s\S]*?if \(attempt < COMPLETED_SOURCE_FALLBACK_RETRIES\) \{ retryLater\(\); return; \}\s*discardOrphanedSession\(reason\);/,
+      'the probe must exhaust the shared retry budget before discarding',
+    );
+    assert.match(
+      probe,
+      /onNoWrapper\('variant wrapper missing from source'\)/,
+      'a read without the marker retries on the budget, then discards',
+    );
+    // A read that cannot answer must not strand the session (no empty catch),
+    // and only evidence that the wrapper is gone may discard: a 404 (the file
+    // renamed or deleted) counts, a transient failure does not.
+    assert.doesNotMatch(probe, /\.catch\(\(\) => \{\}\)/, 'the probe must not swallow source read failures');
+    assert.match(
+      probe,
+      /source read failed: 404\$\/\.test\(detail\)\) \{\s*onNoWrapper\('source file missing \(404\)/,
+      'a 404 is evidence the file is gone: retry on the budget, then discard',
+    );
+    assert.match(
+      probe,
+      /const onUnreadable = \(detail\) => \{[\s\S]*?retryLater\(\); return; \}[\s\S]*?showToast\(/,
+      'a transient failure retries on the budget and then keeps the session, telling the user',
+    );
+    assert.doesNotMatch(
+      probe.slice(probe.indexOf('const onUnreadable')),
+      /discardOrphanedSession/,
+      'a transient failure must never discard a session',
+    );
+
+    const matchStart = SOURCE.indexOf('function sourceHasSessionWrapper(');
+    const sourceHasSessionWrapper = new Function(
+      SOURCE.slice(matchStart, probeStart) + '\nreturn sourceHasSessionWrapper;',
+    )();
+    assert.equal(sourceHasSessionWrapper('<div data-impeccable-variants="ab12cd34">', 'ab12cd34'), true);
+    assert.equal(sourceHasSessionWrapper("<div data-impeccable-variants='ab12cd34'>", 'ab12cd34'), true);
+    assert.equal(sourceHasSessionWrapper('{/* impeccable-variants-start ab12cd34 */}', 'ab12cd34'), true);
+    assert.equal(sourceHasSessionWrapper('<div data-impeccable-variants="99887766">', 'ab12cd34'), false);
+    assert.equal(sourceHasSessionWrapper('', 'ab12cd34'), false);
   });
 
   it('does not source-inject per variant_progress checkpoint (HMR owns mid-generation reconciliation)', () => {

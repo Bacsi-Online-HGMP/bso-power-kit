@@ -21,6 +21,11 @@ the topic diverges from the site's primary corpus. Three signals:
 
 The output is **advisory**: the scanner cannot determine the actual
 contractual relationship between the site and the content producer.
+Enforcement differs by searcher region since 2026-08-28: outside the EEA a
+violation may draw a manual action; for users within the EEA the section may be
+categorized as separate from the main domain instead. The scanner reports the
+risk regardless of region.
+
 But it identifies the patterns Google's policy targets so the
 audit user can investigate.
 
@@ -51,7 +56,6 @@ _SCRIPTS_DIR = os.path.dirname(os.path.abspath(__file__))
 if _SCRIPTS_DIR not in sys.path:
     sys.path.insert(0, _SCRIPTS_DIR)
 from url_safety import URLSafetyError, safe_requests_get  # noqa: E402
-
 
 # Indicators of third-party authored content. Each adds 1 hit per page.
 _THIRD_PARTY_BYLINE_PATTERNS = (

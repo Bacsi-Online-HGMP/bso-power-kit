@@ -17,7 +17,7 @@ use super::super::command_executor::FailureStrategy;
 use super::super::commit::{CommitGenerator, CommitOutcome, HookGate, StageMode};
 use super::super::context::CommandEnv;
 use super::super::hooks::{HookAnnouncer, execute_hook};
-use super::super::repository_ext::RepositoryCliExt;
+use super::super::repository_ext::warn_about_untracked_files;
 use super::super::template_vars::TemplateVars;
 use super::shared::print_dry_run;
 
@@ -160,7 +160,7 @@ pub fn handle_squash(
 
     // Auto-stage changes before running pre-commit hooks so both beta and merge paths behave identically
     if stage_mode == StageMode::All {
-        repo.warn_if_auto_staging_untracked()?;
+        warn_about_untracked_files(&wt)?;
     }
     wt.stage(stage_mode)?;
 
@@ -226,9 +226,9 @@ pub fn handle_squash(
 
     // Get total stats (commits + any working tree changes)
     let total_stats = if has_staged {
-        repo.diff_stats_summary(&["diff", "--shortstat", &merge_base, "--cached"])
+        wt.prepare_staged_diff(&merge_base).stats_summary()
     } else {
-        repo.diff_stats_summary(&["diff", "--shortstat", &range])
+        wt.prepare_commit_diff(&merge_base, "HEAD").stats_summary()
     };
 
     let with_changes = if has_staged {
@@ -280,15 +280,18 @@ pub fn handle_squash(
         .and_then(|n| n.to_str())
         .unwrap_or("repo");
 
-    let commit_message = crate::llm::generate_squash_message(
-        &span_target,
-        &merge_base,
-        &commit_details,
-        &current_branch,
+    let commit_message = crate::llm::SquashInputs {
+        target_branch: &span_target,
+        merge_base: &merge_base,
+        commit_details: &commit_details,
+        current_branch: &current_branch,
         repo_name,
-        &resolved.commit_generation,
-        project_append.as_deref(),
-    )?;
+        config: &resolved.commit_generation,
+        project_append: project_append.as_deref(),
+        // `wt.stage` above already put everything in the real index.
+        staging_index: None,
+    }
+    .generate_message()?;
 
     // Display the generated commit message
     let formatted_message = generator.format_message_for_display(&commit_message);
@@ -345,24 +348,36 @@ pub fn handle_squash(
 /// Handle `wt step squash --show-prompt`
 ///
 /// Builds and outputs the squash prompt without running the LLM or squashing.
-pub fn step_show_squash_prompt(target: Option<&str>) -> anyhow::Result<()> {
+pub fn step_show_squash_prompt(
+    target: Option<&str>,
+    stage: Option<StageMode>,
+) -> anyhow::Result<()> {
     // `--show-prompt` never invokes the LLM, so the `yes` flag is irrelevant
     // — pass false; the guidance gate inside `preview_squash` is dry-run only.
-    preview_squash(target, false, false)
+    preview_squash(target, stage, false, false)
 }
 
 /// Handle `wt step squash --dry-run`
 ///
 /// Renders the squash prompt, prints the LLM command, generates the message, and prints
 /// it without resetting, running hooks, or committing.
-pub fn step_dry_run_squash(target: Option<&str>, yes: bool) -> anyhow::Result<()> {
-    preview_squash(target, true, yes)
+pub fn step_dry_run_squash(
+    target: Option<&str>,
+    stage: Option<StageMode>,
+    yes: bool,
+) -> anyhow::Result<()> {
+    preview_squash(target, stage, true, yes)
 }
 
 /// Shared implementation for `--show-prompt` and `--dry-run` on squash. `--show-prompt`
 /// (`dry_run = false`) outputs only the rendered prompt; `--dry-run` additionally calls
 /// the LLM and prints the command and the generated message.
-fn preview_squash(target: Option<&str>, dry_run: bool, yes: bool) -> anyhow::Result<()> {
+fn preview_squash(
+    target: Option<&str>,
+    stage: Option<StageMode>,
+    dry_run: bool,
+    yes: bool,
+) -> anyhow::Result<()> {
     let repo = Repository::current()?;
     let config = UserConfig::load().context("Failed to load config")?;
     let project_id = repo.project_identifier().ok();
@@ -398,27 +413,37 @@ fn preview_squash(target: Option<&str>, dry_run: bool, yes: bool) -> anyhow::Res
     let ctx = env.context(yes);
     let project_append = resolve_template_for_preview(&ctx, &commit_config, dry_run)?;
 
-    let prompt = crate::llm::build_squash_prompt(
-        &span_target,
-        &merge_base,
-        &commit_details,
-        &current_branch,
+    // `--dry-run` stages into a copy of the index so the previewed prompt spans
+    // what a real squash would commit: `handle_squash` stages before generating
+    // the message, and the prompt's diff is read from the index. `--show-prompt`
+    // skips it, the cheap "what's already staged" path — the same split
+    // `preview_commit` makes for `wt step commit`.
+    let stage_mode = stage.unwrap_or(env.resolved().commit.stage());
+    let temp_index = if dry_run && stage_mode != StageMode::None {
+        let temp = wt.temp_index()?;
+        temp.stage(stage_mode)?;
+        Some(temp)
+    } else {
+        None
+    };
+    let staging_index = temp_index.as_ref();
+
+    let inputs = crate::llm::SquashInputs {
+        target_branch: &span_target,
+        merge_base: &merge_base,
+        commit_details: &commit_details,
+        current_branch: &current_branch,
         repo_name,
-        &commit_config,
-        project_append.as_deref(),
-    )?;
+        config: &commit_config,
+        project_append: project_append.as_deref(),
+        staging_index,
+    };
+
+    let prompt = inputs.prompt()?;
     if !dry_run {
         println!("{}", prompt);
         return Ok(());
     }
-    let message = crate::llm::generate_squash_message(
-        &span_target,
-        &merge_base,
-        &commit_details,
-        &current_branch,
-        repo_name,
-        &commit_config,
-        project_append.as_deref(),
-    )?;
+    let message = inputs.generate_message()?;
     print_dry_run(&prompt, &commit_config, &message)
 }

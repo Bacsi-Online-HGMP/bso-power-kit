@@ -9,6 +9,7 @@ ROOT = Path(__file__).resolve().parents[1]
 CONTRIBUTORS = ROOT / "CONTRIBUTORS.md"
 
 EXPECTED_HANDLES = {
+    "DreaminginAI",
     "wonsukchoi",
     "powehi-ai",
     "maticyorg",

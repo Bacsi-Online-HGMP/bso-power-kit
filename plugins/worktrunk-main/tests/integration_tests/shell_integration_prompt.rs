@@ -10,7 +10,6 @@
 use crate::common::{TestRepo, repo};
 use rstest::rstest;
 use std::fs;
-use worktrunk::config::UserConfig;
 
 ///
 /// When WORKTRUNK_DIRECTIVE_CD_FILE is set (shell integration active), we should:
@@ -33,12 +32,9 @@ fn test_switch_with_active_shell_integration_no_prompt(repo: TestRepo) {
     // Now switch with shell integration "active" (CD directive file set)
     // The file must exist (shell wrapper creates it before calling wt)
     let cd_file = repo.root_path().join("directive_cd.txt");
-    let exec_file = repo.root_path().join("directive_exec.txt");
     fs::write(&cd_file, "").unwrap();
-    fs::write(&exec_file, "").unwrap();
     let mut cmd = repo.wt_command();
     cmd.env("WORKTRUNK_DIRECTIVE_CD_FILE", &cd_file);
-    cmd.env("WORKTRUNK_DIRECTIVE_EXEC_FILE", &exec_file);
 
     let output = cmd.args(["switch", "feature"]).output().unwrap();
 
@@ -66,12 +62,11 @@ fn test_switch_with_active_shell_integration_no_prompt(repo: TestRepo) {
 #[rstest]
 fn test_switch_with_skip_prompt_flag(repo: TestRepo) {
     // Set the skip flag in config
-    let config_path = repo.test_config_path();
-    let config = UserConfig {
-        skip_shell_integration_prompt: true,
-        ..Default::default()
-    };
-    config.save_to(config_path).unwrap();
+    std::fs::write(
+        repo.test_config_path(),
+        "skip-shell-integration-prompt = true\n",
+    )
+    .unwrap();
 
     let output = repo
         .wt_command()
@@ -305,7 +300,9 @@ fn test_process_tree_unsupported_shell_overrides_shell_env(repo: TestRepo) {
 #[cfg(all(unix, feature = "shell-integration-tests"))]
 mod pty_tests {
     use super::*;
-    use crate::common::pty::{build_pty_command, exec_cmd_in_pty, exec_cmd_in_pty_prompted};
+    use crate::common::pty::{
+        build_pty_command, exec_cmd_in_pty, exec_cmd_in_pty_prompted, exec_cmd_in_pty_prompted_with,
+    };
     use crate::common::{add_pty_filters, setup_snapshot_settings, wt_bin};
     use insta::assert_snapshot;
     use std::path::Path;
@@ -493,6 +490,34 @@ mod pty_tests {
         });
     }
 
+    #[rstest]
+    fn test_first_run_preserves_completion_created_after_preview(repo: TestRepo) {
+        let temp_home = TempDir::new().unwrap();
+        fs::write(temp_home.path().join(".bashrc"), "# empty bashrc\n").unwrap();
+        fs::create_dir_all(temp_home.path().join(".config/fish/functions")).unwrap();
+
+        let mut env_vars = repo.test_env_vars();
+        env_vars.push(("SHELL".to_string(), "/bin/bash".to_string()));
+        let cmd = build_pty_command(
+            wt_bin().to_str().unwrap(),
+            &["switch", "--create", "feature"],
+            repo.root_path(),
+            &env_vars,
+            Some(temp_home.path()),
+        );
+        let completion = temp_home.path().join(".config/fish/completions/wt.fish");
+        let callback_path = completion.clone();
+        let user_content = b"# user completion\r\n";
+
+        let (output, exit_code) = exec_cmd_in_pty_prompted_with(cmd, &["y\n"], "[y/N", move |_| {
+            fs::create_dir_all(callback_path.parent().unwrap()).unwrap();
+            fs::write(&callback_path, user_content).unwrap();
+        });
+
+        assert_eq!(exit_code, 0, "switch should still succeed:\n{output}");
+        assert_eq!(fs::read(completion).unwrap(), user_content);
+    }
+
     /// Test: User requests preview with ? then declines
     #[rstest]
     fn test_user_requests_preview_then_declines(repo: TestRepo) {
@@ -606,6 +631,10 @@ mod pty_tests {
             output.contains("Will remove") && output.contains("conf.d/wt.fish"),
             "First-run offer preview must name the legacy fish removal: {output}"
         );
+        assert!(
+            output.contains("Will create completions") && output.contains("completions/wt.fish"),
+            "First-run offer preview must name the fish completion write: {output}"
+        );
 
         // Declining leaves the legacy file in place — the preview did not delete it.
         assert!(
@@ -689,8 +718,10 @@ mod commit_generation_prompt_tests {
         repo.run_git(&["add", "test.txt"]);
 
         let mut env_vars = repo.test_env_vars();
-        // Use minimal PATH to ensure claude/codex aren't found
-        env_vars.push(("PATH".to_string(), "/usr/bin:/bin".to_string()));
+        // Use minimal PATH to ensure claude/codex aren't found while retaining
+        // the supported Git selected by the test runner.
+        let path = crate::common::setup_minimal_path_with_git(&temp_home.path().join("bin"));
+        env_vars.push(("PATH".to_string(), path));
 
         let cmd = build_pty_command(
             wt_bin().to_str().unwrap(),
@@ -725,7 +756,7 @@ mod commit_generation_prompt_tests {
 
         let mut env_vars = repo.test_env_vars();
         // Add our fake claude to PATH
-        let path = format!("{}:/usr/bin:/bin", bin_dir.display());
+        let path = crate::common::setup_minimal_path_with_git(&bin_dir);
         env_vars.push(("PATH".to_string(), path));
 
         let cmd = build_pty_command(
@@ -765,7 +796,7 @@ mod commit_generation_prompt_tests {
         repo.run_git(&["add", "test.txt"]);
 
         let mut env_vars = repo.test_env_vars();
-        let path = format!("{}:/usr/bin:/bin", bin_dir.display());
+        let path = crate::common::setup_minimal_path_with_git(&bin_dir);
         env_vars.push(("PATH".to_string(), path));
 
         let cmd = build_pty_command(
@@ -806,7 +837,7 @@ mod commit_generation_prompt_tests {
         repo.run_git(&["add", "test.txt"]);
 
         let mut env_vars = repo.test_env_vars();
-        let path = format!("{}:/usr/bin:/bin", bin_dir.display());
+        let path = crate::common::setup_minimal_path_with_git(&bin_dir);
         env_vars.push(("PATH".to_string(), path));
 
         let cmd = build_pty_command(
@@ -850,7 +881,7 @@ mod commit_generation_prompt_tests {
         let unwritable_config = blocker.join("config.toml");
 
         let mut env_vars = repo.test_env_vars();
-        let path = format!("{}:/usr/bin:/bin", bin_dir.display());
+        let path = crate::common::setup_minimal_path_with_git(&bin_dir);
         env_vars.push(("PATH".to_string(), path));
         // Overrides the WORKTRUNK_CONFIG_PATH from test_env_vars (last wins).
         env_vars.push((

@@ -8,7 +8,10 @@ on-topic posts rank first and pure zero-overlap posts are dropped when anything
 relevant remains.
 """
 
+import math
 from unittest import mock
+
+import pytest
 
 from lib import reddit, reddit_keyless
 
@@ -35,6 +38,25 @@ class TestRelevanceRankKey:
         on_topic = {"relevance": 0.3, "engagement": {"score": 10, "num_comments": 5}}
         off_topic = {"relevance": 0.0, "engagement": {"score": 99999, "num_comments": 4000}}
         assert reddit_keyless._relevance_rank_key(on_topic) > reddit_keyless._relevance_rank_key(off_topic)
+
+    @pytest.mark.parametrize("key", [reddit._relevance_rank_key, reddit_keyless._relevance_rank_key])
+    def test_negative_engagement_scores_the_floor(self, key):
+        # Downvoted posts report a negative score; log10 of a non-positive total
+        # must not raise, and the bonus bottoms out at zero.
+        zero_total = {"relevance": 0.3, "engagement": {"score": -1, "num_comments": 0}}
+        negative_total = {"relevance": 0.3, "engagement": {"score": -10, "num_comments": 3}}
+        assert key(zero_total) == pytest.approx(0.3)
+        assert key(negative_total) == pytest.approx(0.3)
+
+    @pytest.mark.parametrize("key", [reddit._relevance_rank_key, reddit_keyless._relevance_rank_key])
+    def test_zero_engagement_adds_no_bonus(self, key):
+        item = {"relevance": 0.3, "engagement": {"score": 0, "num_comments": 0}}
+        assert key(item) == pytest.approx(0.3)
+
+    @pytest.mark.parametrize("key", [reddit._relevance_rank_key, reddit_keyless._relevance_rank_key])
+    def test_non_negative_engagement_bonus_unchanged(self, key):
+        item = {"relevance": 0.3, "engagement": {"score": 5, "num_comments": 2}}
+        assert key(item) == pytest.approx(0.3 + math.log10(8) / 20.0)
 
 
 # --------------------------------------------------------------------------- #

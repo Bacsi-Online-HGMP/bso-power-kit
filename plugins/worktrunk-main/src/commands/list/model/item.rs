@@ -3,11 +3,12 @@
 //! This module contains the main data structures used to represent
 //! worktrees and branches in `wt list` output.
 
-use std::path::PathBuf;
+use std::path::Path;
 
 use color_print::cformat;
 use worktrunk::git::{
-    InProgressOperation, IntegrationReason, IntegrationSignals, LineDiff, check_integration,
+    BranchRef, GitItemId, InProgressOperation, IntegrationReason, IntegrationSignals, LineDiff,
+    WorktreeRef, check_integration,
 };
 
 use super::state::{Divergence, MainState, OperationState, WorktreeState};
@@ -21,17 +22,25 @@ use crate::commands::list::layout::{LinkStyle, format_url_cell};
 ///
 /// Used by `refresh_status_symbols` to resolve the worktree-state position
 /// (Gate 2) from metadata alone. The decision priority is:
-/// `prunable` > `locked` > `duplicate_branch` > `branch_worktree_mismatch` >
-/// `None` — the yellow actionable states outrank the informational (dim
-/// yellow) `⚑`. The last two both render `⚑`, so their order decides only
-/// which cause the JSON `worktree.state` names; a duplicate wins because a
-/// force-added worktree lands off-template as a side effect of being
-/// force-added, not as the fact worth reporting.
-fn metadata_worktree_state(data: &WorktreeData) -> WorktreeState {
+/// `prunable` > `locked` > detached > `duplicate_branch` >
+/// `branch_worktree_mismatch` > `None` — the yellow actionable states outrank
+/// the informational (dim yellow) `⊘` and `⚑`. The last two both render `⚑`,
+/// so their order decides only which cause the JSON `worktree.state` names; a
+/// duplicate wins because a force-added worktree lands off-template as a side
+/// effect of being force-added, not as the fact worth reporting.
+///
+/// `has_branch` is the row's own answer, not `data.detached`: git reports a
+/// worktree mid-rebase as detached while worktree parsing still recovers its
+/// branch name, and such a row is on a branch as far as every other cell is
+/// concerned. A row with no branch is exactly the one whose Branch cell shows
+/// a hash.
+fn metadata_worktree_state(data: &WorktreeData, has_branch: bool) -> WorktreeState {
     if data.is_prunable() {
         WorktreeState::Prunable
     } else if data.locked.is_some() {
         WorktreeState::Locked
+    } else if !has_branch {
+        WorktreeState::Detached
     } else if data.duplicate_branch {
         WorktreeState::DuplicateBranch
     } else if data.branch_worktree_mismatch {
@@ -44,7 +53,9 @@ fn metadata_worktree_state(data: &WorktreeData) -> WorktreeState {
 /// Type-specific data for worktrees
 #[derive(Clone, Default)]
 pub struct WorktreeData {
-    pub path: PathBuf,
+    /// Whether Git reports a detached HEAD. This is not equivalent to a
+    /// missing branch: during a rebase, worktree parsing recovers the branch
+    /// name while Git still reports the checkout as detached.
     pub detached: bool,
     pub locked: Option<String>,
     pub prunable: Option<String>,
@@ -57,8 +68,9 @@ pub struct WorktreeData {
     pub has_conflicts: Option<bool>,
     /// Result of `WorkingTreeConflicts` task (`--full` mode only). Outer `None`
     /// = task hasn't run yet. Outer `Some(None)` = task ran but working tree
-    /// was clean, so fall back to the committed-HEAD merge-tree check.
-    /// Outer `Some(Some(b))` = dirty working tree, `b` is the conflict result.
+    /// had no tracked result, so fall back to the committed-HEAD merge-tree
+    /// check. Outer `Some(Some(b))` = tracked working tree state was probed,
+    /// `b` is the conflict result.
     pub has_working_tree_conflicts: Option<Option<bool>>,
     /// Git operation in progress. Outer `None` = not yet loaded;
     /// `Some(None)` = loaded, no operation in progress.
@@ -107,8 +119,7 @@ impl WorktreeData {
         is_previous: bool,
     ) -> Self {
         Self {
-            // Identity fields (known immediately from worktree list)
-            path: wt.path.clone(),
+            // Metadata known immediately from the worktree list.
             detached: wt.detached,
             locked: wt.locked.clone(),
             prunable: wt.prunable.clone(),
@@ -124,9 +135,8 @@ impl WorktreeData {
 
 /// Discriminator for item type (worktree vs branch)
 ///
-/// WorktreeData is boxed to reduce the size of ItemKind enum (304 bytes → 24 bytes).
-/// This reduces stack pressure when passing ListItem by value and improves cache locality
-/// in `Vec<ListItem>` by keeping the discriminant and common fields together.
+/// WorktreeData is boxed to keep the common `ListItem` fields compact and
+/// reduce stack pressure when passing items by value.
 #[derive(Clone)]
 pub enum ItemKind {
     Worktree(Box<WorktreeData>),
@@ -229,8 +239,11 @@ impl BranchScope {
 /// or `Option<PrStatus>` (CI may not exist).
 #[derive(Clone)]
 pub struct ListItem {
-    // Common fields (present for both worktrees and branches)
-    pub head: String,
+    /// Canonical Git subject captured when the row kind is established. It is
+    /// the source of truth for identity, HEAD, branch, and worktree path.
+    /// List tasks and picker caches share this snapshot instead of rebuilding
+    /// any of those facts downstream.
+    branch_ref: BranchRef,
     /// Abbreviated form of `head`, honoring `core.abbrev` and auto-extending
     /// for ambiguous prefixes. Always populated when there is a HEAD commit
     /// to abbreviate (the `git log` batch in `collect()` emits `%h` for every
@@ -245,8 +258,6 @@ pub struct ListItem {
     /// `%ct` — so those cells paint with the skeleton rather than filling in
     /// late, and the Commit/Branch columns size to the width git chose.
     pub short_sha: String,
-    /// Branch name - None for detached worktrees
-    pub branch: Option<String>,
     pub commit: Option<CommitDetails>,
 
     pub counts: Option<AheadBehind>,
@@ -323,8 +334,8 @@ pub struct ListItem {
     /// null (undetermined) instead of presenting a seed as a determined fact.
     pub seeded: SeededFacts,
 
-    // Type-specific data (worktree vs branch)
-    pub kind: ItemKind,
+    // Kept private so classification cannot drift from `branch_ref`.
+    kind: ItemKind,
 }
 
 /// Per-fact-family record of seeded (not computed) values on a [`ListItem`].
@@ -359,11 +370,10 @@ pub struct ListData {
     pub collected: Collected,
 }
 
-/// Fact families whose collection is gated (`--full`, `[list] summary`,
-/// a listed `ci`/`summary` column). Ungated families (working tree, counts,
-/// diffs) are always requested. Serialized as-is into the schema-2 JSON
-/// envelope's `collected` field, disambiguating "absent because not
-/// requested".
+/// Fact families whose collection is gated (`--full`, `[list] summary`).
+/// Ungated families (working tree, counts, diffs) are always requested.
+/// Serialized as-is into the schema-2 JSON envelope's `collected` field,
+/// disambiguating "absent because not requested".
 #[derive(Debug, Clone, Copy, Default, serde::Serialize, schemars::JsonSchema)]
 pub struct Collected {
     /// Forge CI/PR data was fetched.
@@ -384,10 +394,25 @@ impl ListItem {
     }
 
     fn new_branch_with_scope(head: String, branch: String, scope: BranchScope) -> Self {
+        let branch_ref = match scope {
+            BranchScope::Local => BranchRef::local_branch(&branch, &head),
+            BranchScope::Remote => BranchRef::remote_branch(&branch, &head),
+        };
+        Self::new(branch_ref, ItemKind::Branch(scope))
+    }
+
+    /// Create a row for a registered worktree.
+    pub(crate) fn new_worktree(worktree_ref: WorktreeRef, data: WorktreeData) -> Self {
+        Self::new(
+            worktree_ref.into_branch_ref(),
+            ItemKind::Worktree(Box::new(data)),
+        )
+    }
+
+    fn new(branch_ref: BranchRef, kind: ItemKind) -> Self {
         Self {
-            head,
+            branch_ref,
             short_sha: String::new(),
-            branch: Some(branch),
             commit: None,
             counts: None,
             branch_diff: None,
@@ -408,12 +433,49 @@ impl ListItem {
             statusline: None,
             custom_values: Vec::new(),
             seeded: SeededFacts::default(),
-            kind: ItemKind::Branch(scope),
+            kind,
         }
     }
 
     pub fn branch_name(&self) -> &str {
-        self.branch.as_deref().unwrap_or("(detached)")
+        self.branch().unwrap_or("(detached)")
+    }
+
+    /// Stable identity for this row's Git item.
+    ///
+    /// Kept separate from [`Self::branch_name`] and [`Self::display_name`]:
+    /// both are presentation fallbacks and can collapse distinct rows. The
+    /// identity follows [`GitItemId`]'s canonical rules — worktree path for a
+    /// worktree, full ref for a branch-only row. It is captured when the row
+    /// kind is established, so this accessor performs no filesystem work.
+    pub fn id(&self) -> &GitItemId {
+        self.branch_ref.id()
+    }
+
+    /// Git snapshot shared with list tasks.
+    pub(crate) fn branch_ref(&self) -> &BranchRef {
+        &self.branch_ref
+    }
+
+    pub(crate) fn kind(&self) -> &ItemKind {
+        &self.kind
+    }
+
+    /// Replace this row's kind and branch while preserving the identity
+    /// invariant. The picker's removal morph reclassifies a throwaway clone
+    /// (`build_morph_branch_row`), so the live row's `PickerRowId` is
+    /// unaffected: a morphed row's previews stay under its worktree key.
+    pub(crate) fn reclassify_as_branch(&mut self, scope: BranchScope, branch: String) {
+        let head = self.head().to_string();
+        self.branch_ref = match scope {
+            BranchScope::Local => BranchRef::local_branch(&branch, &head),
+            BranchScope::Remote => BranchRef::remote_branch(&branch, &head),
+        };
+        self.kind = ItemKind::Branch(scope);
+    }
+
+    pub fn branch(&self) -> Option<&str> {
+        self.branch_ref.short_name()
     }
 
     /// Short display name for this item — the branch if present, otherwise
@@ -425,15 +487,31 @@ impl ListItem {
     /// there, so the column shows this instead (styled `DETACHED`, since a SHA
     /// is a legal branch name too).
     pub fn display_name(&self) -> &str {
-        self.branch.as_deref().unwrap_or(&self.short_sha)
+        self.branch().unwrap_or(&self.short_sha)
     }
 
     pub fn is_main(&self) -> bool {
         matches!(&self.kind, ItemKind::Worktree(data) if data.is_main)
     }
 
+    /// The glyph this row's unresolved cells render, given the render's
+    /// current one.
+    ///
+    /// A prunable worktree's directory is gone, so `work_items_for_worktree`
+    /// spawns nothing for it and no cell a task would fill will ever arrive.
+    /// The loading dot would promise data that isn't coming — for the life of
+    /// the row, not for a tick — so those cells stay blank and the `⊟` in
+    /// Status is the row's whole story.
+    pub(crate) fn placeholder<'a>(&self, rendering: &'a str) -> &'a str {
+        if self.worktree_data().is_some_and(|data| data.is_prunable()) {
+            crate::commands::list::render::PLACEHOLDER_BLANK
+        } else {
+            rendering
+        }
+    }
+
     pub fn head(&self) -> &str {
-        &self.head
+        &self.branch_ref.commit_sha
     }
 
     pub fn branch_diff(&self) -> Option<&BranchDiffTotals> {
@@ -454,8 +532,8 @@ impl ListItem {
         }
     }
 
-    pub fn worktree_path(&self) -> Option<&PathBuf> {
-        self.worktree_data().map(|data| &data.path)
+    pub fn worktree_path(&self) -> Option<&Path> {
+        self.branch_ref.worktree_path()
     }
 
     /// Determine if the item contains no unique work and can likely be removed.
@@ -629,8 +707,9 @@ impl ListItem {
         // line, `status_symbols.worktree_state` is always `Some`.
         // (Prunable worktrees are pre-seeded at spawn time and have
         // `worktree_state = Some(Prunable)` by the time this runs.)
+        let has_branch = self.branch().is_some();
         let metadata_state = match &self.kind {
-            ItemKind::Worktree(data) => metadata_worktree_state(data),
+            ItemKind::Worktree(data) => metadata_worktree_state(data, has_branch),
             ItemKind::Branch(_) => WorktreeState::Branch,
         };
         if self.status_symbols.worktree_state.is_none() {
@@ -881,17 +960,19 @@ mod tests {
     use super::*;
 
     /// The yellow actionable states outrank the informational (dim yellow)
-    /// `⚑`, so a demoted flag can never mask `⊟` or `⊞`. A force-added
+    /// `⊘` and `⚑`, so a demoted flag can never mask `⊟` or `⊞`. A force-added
     /// duplicate lands off-template too, so the two `⚑` states routinely
     /// co-occur and their order picks the cause the JSON reports.
     #[test]
     fn test_metadata_worktree_state_priority() {
+        const ON_BRANCH: bool = true;
+
         let mismatched = WorktreeData {
             branch_worktree_mismatch: true,
             ..Default::default()
         };
         assert_eq!(
-            metadata_worktree_state(&mismatched),
+            metadata_worktree_state(&mismatched, ON_BRANCH),
             WorktreeState::BranchWorktreeMismatch
         );
 
@@ -900,7 +981,7 @@ mod tests {
             ..mismatched.clone()
         };
         assert_eq!(
-            metadata_worktree_state(&duplicate),
+            metadata_worktree_state(&duplicate, ON_BRANCH),
             WorktreeState::DuplicateBranch
         );
 
@@ -908,13 +989,30 @@ mod tests {
             prunable: Some("gone".to_string()),
             ..duplicate.clone()
         };
-        assert_eq!(metadata_worktree_state(&prunable), WorktreeState::Prunable);
+        assert_eq!(
+            metadata_worktree_state(&prunable, ON_BRANCH),
+            WorktreeState::Prunable
+        );
 
         let locked = WorktreeData {
             locked: Some("pinned".to_string()),
             ..duplicate.clone()
         };
-        assert_eq!(metadata_worktree_state(&locked), WorktreeState::Locked);
+        assert_eq!(
+            metadata_worktree_state(&locked, ON_BRANCH),
+            WorktreeState::Locked
+        );
+
+        // Off a branch, `⊘` outranks both `⚑` states — nothing else in the
+        // row says the Branch cell is a hash — but still yields to `⊟`/`⊞`.
+        assert_eq!(
+            metadata_worktree_state(&duplicate, false),
+            WorktreeState::Detached
+        );
+        assert_eq!(
+            metadata_worktree_state(&locked, false),
+            WorktreeState::Locked
+        );
     }
 
     #[test]
@@ -922,8 +1020,13 @@ mod tests {
         let item = ListItem::new_branch("abc123".to_string(), "feature".to_string());
         assert_eq!(item.branch_name(), "feature");
 
-        let mut item = ListItem::new_branch("abc123".to_string(), "feature".to_string());
-        item.branch = None; // Simulate detached
+        let item = ListItem::new_worktree(
+            WorktreeRef::new("detached", None, "abc123"),
+            WorktreeData {
+                detached: true,
+                ..Default::default()
+            },
+        );
         assert_eq!(item.branch_name(), "(detached)");
     }
 
@@ -934,12 +1037,19 @@ mod tests {
     #[test]
     fn test_list_item_display_name_falls_back_to_short_sha() {
         let head = "abc123def456abc123def456abc123def456abcd";
-        let mut item = ListItem::new_branch(head.to_string(), "feature".to_string());
-        item.short_sha = "abc123d".to_string();
-        assert_eq!(item.display_name(), "feature");
+        let mut branch = ListItem::new_branch(head.to_string(), "feature".to_string());
+        branch.short_sha = "abc123d".to_string();
+        assert_eq!(branch.display_name(), "feature");
 
-        item.branch = None; // Simulate detached
-        assert_eq!(item.display_name(), "abc123d");
+        let mut detached = ListItem::new_worktree(
+            WorktreeRef::new("detached", None, head),
+            WorktreeData {
+                detached: true,
+                ..Default::default()
+            },
+        );
+        detached.short_sha = "abc123d".to_string();
+        assert_eq!(detached.display_name(), "abc123d");
     }
 
     #[test]
@@ -1063,6 +1173,21 @@ mod tests {
         let counts = item.counts.unwrap();
         assert_eq!(counts.ahead, 5);
         assert_eq!(counts.behind, 3);
+    }
+
+    #[test]
+    fn construction_and_reclassification_update_list_item_identity() {
+        let root = tempfile::tempdir().unwrap();
+        let worktree_ref = WorktreeRef::new(root.path(), Some("feature"), "abc123");
+        let worktree_id = worktree_ref.clone().into_branch_ref().id().clone();
+        let mut item = ListItem::new_worktree(worktree_ref, WorktreeData::default());
+        assert_eq!(item.id(), &worktree_id);
+
+        item.reclassify_as_branch(BranchScope::Remote, "feature".into());
+        assert_eq!(
+            item.id(),
+            BranchRef::remote_branch("feature", "abc123").id()
+        );
     }
 
     #[test]
@@ -1228,7 +1353,7 @@ mod tests {
         assert_eq!(item.status_symbols.working_tree, None);
 
         // Set working_tree_status → gate 1 resolves on next refresh.
-        if let ItemKind::Worktree(ref mut data) = item.kind {
+        if let Some(data) = item.worktree_data_mut() {
             data.working_tree_status =
                 Some(WorkingTreeStatus::new(true, false, false, false, false));
         }
@@ -1243,7 +1368,7 @@ mod tests {
         // `has_conflicts = Some(true)` fires the gate immediately without
         // waiting for `git_operation`.
         let mut item = make_worktree_item();
-        if let ItemKind::Worktree(ref mut data) = item.kind {
+        if let Some(data) = item.worktree_data_mut() {
             data.has_conflicts = Some(true);
             // git_operation deliberately left None
         }
@@ -1259,7 +1384,7 @@ mod tests {
         // `has_conflicts = Some(false)` but `git_operation = None` →
         // gate stays Loading (an operation could still report).
         let mut item = make_worktree_item();
-        if let ItemKind::Worktree(ref mut data) = item.kind {
+        if let Some(data) = item.worktree_data_mut() {
             data.has_conflicts = Some(false);
             data.git_operation = None;
         }
@@ -1267,7 +1392,7 @@ mod tests {
         assert_eq!(item.status_symbols.operation_state, None);
 
         // Set git_operation → gate resolves.
-        if let ItemKind::Worktree(ref mut data) = item.kind {
+        if let Some(data) = item.worktree_data_mut() {
             data.git_operation = Some(Some(InProgressOperation::Rebase));
         }
         item.refresh_status_symbols(None);
@@ -1313,7 +1438,7 @@ mod tests {
     fn mark_working_tree_clean(item: &mut ListItem) {
         use super::super::super::model::WorkingTreeStatus;
         use worktrunk::git::LineDiff;
-        if let ItemKind::Worktree(ref mut data) = item.kind {
+        if let Some(data) = item.worktree_data_mut() {
             data.working_tree_diff = Some(LineDiff::default());
             data.working_tree_status = Some(WorkingTreeStatus::default());
             data.has_working_tree_conflicts = Some(None); // clean: defer to HEAD probe
@@ -1348,7 +1473,7 @@ mod tests {
         let mut item = make_worktree_item();
         item.is_orphan = Some(false);
         item.has_merge_tree_conflicts = Some(false);
-        if let ItemKind::Worktree(ref mut data) = item.kind {
+        if let Some(data) = item.worktree_data_mut() {
             data.has_working_tree_conflicts = Some(None);
         }
         // counts set but is_clean inputs missing → the gate can't even

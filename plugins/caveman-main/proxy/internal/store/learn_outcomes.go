@@ -26,21 +26,30 @@ type AppliedFixRecord struct {
 	BeforeEvidence      map[string]any `json:"before_evidence,omitempty"`
 	BeforeSource        string         `json:"before_source"`
 	Note                string         `json:"note,omitempty"`
+	// Target is the artifact this fix edited, fingerprinted immediately after
+	// the edit. It is what lets a later scan prove the change is still in
+	// place rather than assuming it. Nil for fixes with no file target.
+	Target *fixTarget `json:"target,omitempty"`
 }
 
 // LearnConfirmed is an inferred longitudinal comparison. After is omitted when
 // no like-for-like quantity exists; zero remains visible when zero was measured.
 type LearnConfirmed struct {
-	SinkID                   string   `json:"sink_id"`
-	FixKind                  string   `json:"fix_kind"`
-	AppliedAt                string   `json:"applied_at"`
-	Before                   float64  `json:"before"`
-	After                    *float64 `json:"after,omitempty"`
-	Unit                     string   `json:"unit"`
-	SessionsAfter            int      `json:"sessions_after"`
-	Verdict                  string   `json:"verdict"`
-	SupportingPrefixTokens   *int     `json:"supporting_prefix_tokens,omitempty"`
-	SupportingPrefixSessions int      `json:"supporting_prefix_sessions,omitempty"`
+	SinkID     string `json:"sink_id"`
+	PracticeID string `json:"practice_id,omitempty"`
+	FixKind    string `json:"fix_kind"`
+	AppliedAt  string `json:"applied_at"`
+	// Attribution names how the after-value was obtained and what that method
+	// cannot rule out. It is required reading next to any saving: the same
+	// number means very different things at different rungs.
+	Attribution              LearnAttribution `json:"attribution"`
+	Before                   float64          `json:"before"`
+	After                    *float64         `json:"after,omitempty"`
+	Unit                     string           `json:"unit"`
+	SessionsAfter            int              `json:"sessions_after"`
+	Verdict                  string           `json:"verdict"`
+	SupportingPrefixTokens   *int             `json:"supporting_prefix_tokens,omitempty"`
+	SupportingPrefixSessions int              `json:"supporting_prefix_sessions,omitempty"`
 	id                       int64
 }
 
@@ -83,9 +92,20 @@ func (s *Store) RecordAppliedFix(plan LearnPlan, sinkID, fixKind, note string) (
 	if err != nil {
 		return AppliedFixRecord{}, fmt.Errorf("encode before evidence: %w", err)
 	}
+	// Fingerprint the edited artifact as it stands NOW — which at
+	// `caveman learn applied` time is immediately after the approved edit. This
+	// is the provenance anchor: a later scan re-hashes the same path and can
+	// state whether the change we proposed is still the change that is there.
+	target := fingerprintFixTarget(*sink)
+	targetJSON := ""
+	if target != nil {
+		if encoded, encodeErr := json.Marshal(target); encodeErr == nil {
+			targetJSON = string(encoded)
+		}
+	}
 	result, err := s.db.Exec(`INSERT INTO applied_fixes
-		(sink_id, practice_id, fix_kind, applied_at, before_tokens_per_turn, before_evidence_json, note)
-		VALUES (?, ?, ?, ?, ?, ?, ?)`, sink.SinkID, sink.PracticeID, fixKind, appliedAt, sink.TokensPerTurn, string(evidence), note)
+		(sink_id, practice_id, fix_kind, applied_at, before_tokens_per_turn, before_evidence_json, note, target_json)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?)`, sink.SinkID, sink.PracticeID, fixKind, appliedAt, sink.TokensPerTurn, string(evidence), note, targetJSON)
 	if err != nil {
 		return AppliedFixRecord{}, fmt.Errorf("record applied fix: %w", err)
 	}
@@ -97,6 +117,7 @@ func (s *Store) RecordAppliedFix(plan LearnPlan, sinkID, fixKind, note string) (
 		Recorded: true, ID: id, SinkID: sink.SinkID, PracticeID: sink.PracticeID,
 		FixKind: fixKind, AppliedAt: appliedAt, BeforeTokensPerTurn: sink.TokensPerTurn,
 		BeforeEvidence: beforeEvidence, BeforeSource: beforeSource, Note: note,
+		Target: target,
 	}, nil
 }
 
@@ -202,7 +223,8 @@ func addSectionConfigPaths(sinks []Sink, cfg configScan) {
 
 func (s *Store) appliedFixes() ([]AppliedFixRecord, error) {
 	rows, err := s.db.Query(`SELECT id, sink_id, COALESCE(practice_id,''), fix_kind, applied_at,
-		COALESCE(before_tokens_per_turn,0), COALESCE(before_evidence_json,'{}'), COALESCE(note,'')
+		COALESCE(before_tokens_per_turn,0), COALESCE(before_evidence_json,'{}'), COALESCE(note,''),
+		COALESCE(target_json,'')
 		FROM applied_fixes ORDER BY applied_at, id`)
 	if err != nil {
 		return nil, err
@@ -211,12 +233,18 @@ func (s *Store) appliedFixes() ([]AppliedFixRecord, error) {
 	var records []AppliedFixRecord
 	for rows.Next() {
 		var record AppliedFixRecord
-		var evidence string
+		var evidence, targetJSON string
 		if err := rows.Scan(&record.ID, &record.SinkID, &record.PracticeID, &record.FixKind, &record.AppliedAt,
-			&record.BeforeTokensPerTurn, &evidence, &record.Note); err != nil {
+			&record.BeforeTokensPerTurn, &evidence, &record.Note, &targetJSON); err != nil {
 			return nil, err
 		}
 		_ = json.Unmarshal([]byte(evidence), &record.BeforeEvidence)
+		if strings.TrimSpace(targetJSON) != "" {
+			var target fixTarget
+			if json.Unmarshal([]byte(targetJSON), &target) == nil && target.Path != "" {
+				record.Target = &target
+			}
+		}
 		record.BeforeSource, _ = record.BeforeEvidence["before_source"].(string)
 		records = append(records, record)
 	}
@@ -365,7 +393,40 @@ func scanConfirmedFixMetrics(sourceSet map[string]bool, records []AppliedFixReco
 	return out, timeBoxed
 }
 
+// confirmAppliedFix measures the outcome and then attaches its attribution:
+// which method produced the after-value, whether the artifact we fingerprinted
+// at apply time is still intact, and what that method cannot rule out. The
+// measurement and the attribution are separated on purpose — the number is the
+// same either way, but what it is allowed to claim is not.
 func confirmAppliedFix(record AppliedFixRecord, cfg configScan, metrics []learnSessionMetric) LearnConfirmed {
+	row := measureAppliedFix(record, cfg, metrics)
+	row.PracticeID = record.PracticeID
+	provenance, _, _ := checkFixProvenance(record.Target)
+	method := attrNone
+	switch row.Unit {
+	case "config_tokens_per_turn":
+		// The after-value is a re-count of the very file the fix edited.
+		method = attrDeterministic
+	case "recurrence_present", "turns_over_half_window_pct":
+		// The after-value comes from sessions that ran after the fix, with no
+		// control arm. Exactly the rung interrupted time series names.
+		method = attrTimeSeries
+	}
+	if row.Verdict == "insufficient_data" || row.After == nil {
+		method = attrNone
+	}
+	row.Attribution = buildAttribution(method, provenance, targetPathOf(record))
+	return row
+}
+
+func targetPathOf(record AppliedFixRecord) string {
+	if record.Target == nil {
+		return ""
+	}
+	return record.Target.Path
+}
+
+func measureAppliedFix(record AppliedFixRecord, cfg configScan, metrics []learnSessionMetric) LearnConfirmed {
 	row := LearnConfirmed{
 		SinkID: record.SinkID, FixKind: record.FixKind, AppliedAt: record.AppliedAt,
 		Before: float64(record.BeforeTokensPerTurn), Unit: "unavailable",

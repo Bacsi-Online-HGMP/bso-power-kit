@@ -12,6 +12,9 @@ call the canonical `hooks/wt.sh` below.
 worktrunk/                          ← repo root = marketplace root
 ├── .claude-plugin/marketplace.json ← Claude pointer  (source → ./plugins/worktrunk)
 ├── .agents/plugins/marketplace.json← Codex pointer   (source → ./plugins/worktrunk)
+├── .claude/skills/                 ← authored repo-local maintainer skills
+├── .agents/skills → ../.claude/skills
+│                                     Codex repo-skill pointer
 ├── gemini-extension.json           ← Gemini manifest (extensionPath = repo root)
 ├── hooks/hooks.json                ← Gemini activity hooks (call the wt.sh below)
 ├── skills/                         ← real dir; Gemini reads ${extensionPath}/skills directly
@@ -28,6 +31,8 @@ worktrunk/                          ← repo root = marketplace root
     │                                  $CLAUDE_PLUGIN_ROOT, Codex via $PLUGIN_ROOT,
     │                                  Gemini via
     │                                  ${extensionPath}/plugins/worktrunk/hooks/wt.sh
+    ├── hooks/wt.cmd                ← finds Git Bash for cmd.exe, which is what runs
+    │                                  a Codex `commandWindows`, then runs wt.sh (#4007)
     ├── skills/                      ← generated real-file mirror of repo-root
     │                                  skills/ (test_docs_are_in_sync; never
     │                                  hand-edit) — real files because Codex's
@@ -36,6 +41,13 @@ worktrunk/                          ← repo root = marketplace root
     └── (Codex activity hooks live *inline* in .codex-plugin/plugin.json's
         `hooks` key — see Known Limitations below)
 ```
+
+The repo-local maintainer skills are separate from the distributed plugin
+skills. `.claude/skills/` is their authored home, and the relative
+`.agents/skills` symlink lets Codex discover the same files. On Windows
+checkouts with `core.symlinks=false`, Git materializes the link as a plain file
+and Codex loads none of these repo-local skills. This limitation is accepted;
+installed plugins use the real-file mirror below and are unaffected.
 
 Path resolution differs by tool, all verified end-to-end against the real CLIs:
 
@@ -96,8 +108,8 @@ end-to-end against codex-cli 0.144.1 (scratch marketplaces through
   that handles only regular files and directories, silently skipping symlink
   entries (`copy_dir_recursive` in `codex-rs/core-plugins/src/store.rs`), and
   sessions load from that cache copy. A symlink anywhere in the tree — a
-  top-level `skills` link or a nested one like `reference/README.md` — ships
-  no content. No manifest value can bridge it: manifest paths must stay within
+  top-level `skills` link or one nested under `reference/` — ships no
+  content. No manifest value can bridge it: manifest paths must stay within
   the plugin root (`..` and absolute paths are rejected,
   `resolve_manifest_path` in `codex-rs/core-plugins/src/manifest.rs`).
 - Codex's convention scan (`default_skill_roots`, the empty-`skills` branch of
@@ -113,12 +125,18 @@ end-to-end against codex-cli 0.144.1 (scratch marketplaces through
 
 ## Known Limitations
 
+### Status stays on the launch worktree (Claude)
+
+Claude marker hooks resolve through `-C "$CLAUDE_PROJECT_DIR"`. `EnterWorktree` does not change that directory, so the marker stays on the launch worktree for the session. Sessions launched outside a repository have no activity marker.
+
 ### Status persists after user interrupt (Claude)
 
 The Claude hooks track activity via git config (`worktrunk.state.{branch}.marker`):
 - `UserPromptSubmit` → 🤖 (working)
 - `Notification`, `PreToolUse`(`AskUserQuestion`), `PermissionRequest`, `Stop` → 💬 (waiting for input)
 - `SessionEnd` → clears status
+
+An `EnterWorktree` that `wt config plugins claude approve-enter-worktree` approves shows no dialog, so it leaves the marker alone; the approval and the marker share one `PermissionRequest` command because Claude Code runs matching hooks in parallel (skills/wt-switch-create/rationale.md, "The confirmation hook").
 
 The 💬 transitions overlap deliberately: `Notification` covers the documented permission/idle path, but on platforms where it doesn't fire (VS Code extension, Windows CLI) `PermissionRequest` and `Stop` still mark the wait; `PreToolUse`(`AskUserQuestion`) catches the built-in question picker, which fires no `Notification` on any platform ([claude-code#13024](https://github.com/anthropics/claude-code/issues/13024)). There is currently no transition back to 🤖 once a turn-end/permission marker is set except a fresh `UserPromptSubmit`, so 💬 can persist into resumed work after a permission grant (the original symptom in [#2916](https://github.com/max-sixty/worktrunk/issues/2916)).
 
@@ -133,12 +151,16 @@ Claude's hooks live in the standalone `hooks/hooks.json` its loader discovers by
 - **Why inline for Codex, not a path or an absent key.** Claude and Codex share one payload dir, and Codex *also* auto-discovers `hooks/hooks.json` at the plugin root by convention (`DEFAULT_HOOKS_CONFIG_FILE`, the `None` branch of `load_plugin_hooks`) — which once surfaced Worktrunk's *Claude* events in a Codex session ([#3362](https://github.com/max-sixty/worktrunk/issues/3362)). The Codex manifest carries its own hooks **inline**, taking Codex's `Some(Inline)` branch (`resolve_manifest_hooks` in `codex-rs/core-plugins/src/manifest.rs`), which **overrides** convention discovery. The inline object is both the functional definition of the Codex-native events and the thing that keeps Codex off the shared `hooks/hooks.json`, so the two toolchains coexist on one file: Claude discovers it, Codex ignores it. (Scoping via the filename instead — `hooks/claude-hooks.json` — breaks Claude's discovery, [#3417](https://github.com/max-sixty/worktrunk/issues/3417); the inline override makes it unnecessary.)
 - **Why `$PLUGIN_ROOT`, not `$CLAUDE_PLUGIN_ROOT`.** Codex exports both to hook commands (`PLUGIN_ROOT` native, `CLAUDE_PLUGIN_ROOT` as an OOTB-compat alias — `codex-rs/hooks/src/engine/discovery.rs`). The Codex file uses the native `$PLUGIN_ROOT` so nothing Claude-branded appears in a Codex session.
 
+- **Why every hook also carries `commandWindows`.** Codex runs a hook `command` through the platform shell — `/bin/sh -lc` on Unix, `cmd.exe /C` on Windows (`default_shell_command` in `codex-rs/hooks/src/engine/command_runner.rs`). Under `cmd.exe` the leading bare `bash` resolves through the Windows PATH to `System32\bash.exe`, the WSL launcher rather than Git Bash, which in a sandboxed session fails outright (`Bash/Service/CreateInstance/E_ACCESSDENIED`) and turns every prompt, permission, stop, and session-end event into a "Hook failed" banner ([#4007](https://github.com/max-sixty/worktrunk/issues/4007)). Only the bare *name* is the problem — Git for Windows is a requirement either way — so the per-handler `commandWindows` key, which **replaces** `command` on Windows (`command_windows.unwrap_or(command)` in `codex-rs/hooks/src/engine/discovery.rs`), calls `hooks/wt.cmd`: a shim that resolves `bash.exe` by path the way `find_git_bash` does in `src/shell_exec.rs` (derived from `where git.exe`, then the system-wide and per-user install defaults, `Git\bin\bash.exe` before `Git\usr\bin\bash.exe` because the former is the wrapper that puts `uname` and friends on PATH for a caller outside Git Bash) and then runs the same `wt.sh` every other integration goes through, so worktrunk's own resolution order lives in one script rather than in two languages. The `git.exe` lookup uses `where`'s `$PATH:` prefix and runs the absolute path it returns: an unscoped `where`, like cmd's own bare-name lookup, searches the current directory first, which for a hook is the user's project — so a `git.exe` committed to a repo would choose the bash every event runs (`test_shim_ignores_a_git_in_the_current_directory`). `where` itself is spelled `%SystemRoot%\System32\where.exe` for the same reason — it is `System32\where.exe` rather than a cmd built-in, so cmd resolves that bare name from the current directory too (`test_shim_ignores_a_where_in_the_current_directory`). Both of those see only the *wrong* bash; a lookup that finds nothing falls through to `%ProgramFiles%\Git`, which resolves on any Windows box, so `test_shim_derives_bash_from_the_git_on_path` points both install-default variables at an empty directory and leaves the derive branch as the only route to a bash. The Windows commands brace the plugin root as `${PLUGIN_ROOT}`, which Codex substitutes textually before the shell runs (`source.env` fold in `discovery.rs`); the unbraced `$PLUGIN_ROOT` the Unix commands use survives to the shell, and `cmd.exe` would pass it through literally. `|| exit /b 0` is the cmd.exe spelling of the Unix `|| true` — a marker is decoration, and a nonzero exit is what raises the banner. `test_codex_windows_hook_commands_set_the_marker` runs the real commands the way Codex spawns them, on the Windows leg of CI. `SessionEnd` carries `timeout: 3` because that is Codex's ceiling for the event (`SESSION_END_MAX_TIMEOUT_SEC` in `codex-rs/hooks/src/events/session_end.rs`; omitting the key takes the 1s default, and a larger value is clamped with a warning), and a hook that exceeds it is reported as an error — the same "Hook failed" banner — so the longer Windows chain has no more budget to ask for.
+
 The events (Codex's `HookEventsToml` vocabulary, verified against `codex-rs/config/src/hook_config.rs`):
 - `UserPromptSubmit` → 🤖 (working)
 - `PermissionRequest`, `Stop` → 💬 (waiting for input)
 - `SessionEnd` → clears the marker
 
 `Stop` fires at turn-end, so 🤖 returns to 💬 when a turn completes. `SessionEnd` clears the marker when the main thread ends.
+
+Codex and Gemini marker commands still resolve from the hook process's cwd. When either harness exposes a stable session project directory, pass that directory to Worktrunk with global `-C`, as Claude does with `$CLAUDE_PROJECT_DIR`.
 
 ### Accepted tradeoff: shared `skills/` exposes `wt-switch-create`
 

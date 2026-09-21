@@ -22,7 +22,7 @@ func TestCacheChurnFloorSumsOnlyPostFirstTurnSpikes(t *testing.T) {
 		makeSession(20_000, 12_000, 13_000, 14_000),
 		makeSession(10_000, 15_000, 16_000, 17_000),
 	}
-	sinks := cacheChurnSink(sessions)
+	sinks := cacheChurnSink(sessions, nil)
 	if len(sinks) != 1 {
 		t.Fatalf("cache churn sinks = %d, want 1", len(sinks))
 	}
@@ -34,7 +34,7 @@ func TestCacheChurnFloorSumsOnlyPostFirstTurnSpikes(t *testing.T) {
 	if sink.Evidence["sessions_affected"] != 2 || sink.Evidence["spike_turns_total"] != 6 || sink.Evidence["median_spike_tokens"] != 15_000 {
 		t.Fatalf("cache churn evidence = %+v", sink.Evidence)
 	}
-	if got := cacheChurnSink(sessions[:1]); len(got) != 0 {
+	if got := cacheChurnSink(sessions[:1], nil); len(got) != 0 {
 		t.Fatalf("one churned session emitted sink: %+v", got)
 	}
 

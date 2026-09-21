@@ -17,11 +17,9 @@ Usage:
 """
 
 import argparse
-import csv
-import gzip
-import io
 import json
 import os
+import re
 import sys
 import time
 from typing import Optional
@@ -35,7 +33,7 @@ except ImportError:
 _SCRIPTS_DIR = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, _SCRIPTS_DIR)
 try:
-    from backlinks_auth import get_cache_dir, load_config
+    from backlinks_auth import get_cache_dir
     from google_auth import validate_url
 except ImportError:
     print("Error: backlinks_auth.py and google_auth.py required in scripts/", file=sys.stderr)
@@ -96,11 +94,47 @@ def _get_latest_release() -> Optional[str]:
     return None
 
 
+_CACHE_COMPONENT_RE = re.compile(r"[^A-Za-z0-9._-]")
+
+# A Common Crawl release id, e.g. cc-main-2026-jan-feb-mar. Anchored, and no
+# '..' anywhere, because this value lands in a filesystem path and a URL path.
+_RELEASE_RE = re.compile(r"^(?!.*\.\.)[A-Za-z0-9._-]+$")
+
+
+def _safe_cache_component(value: str) -> str:
+    """Reduce one path component to a conservative charset.
+
+    Everything outside [A-Za-z0-9._-] becomes '_', then any run of dots is
+    collapsed so '..' can never survive. Both halves matter: stripping
+    separators alone still lets '..' through on a caller that joins
+    differently, and collapsing dots alone still lets a separator through.
+    """
+    cleaned = _CACHE_COMPONENT_RE.sub("_", value)
+    while ".." in cleaned:
+        cleaned = cleaned.replace("..", "_")
+    return cleaned.strip("._") or "_"
+
+
 def _get_cache_path(domain: str, release: str, data_type: str) -> str:
-    """Get the cache file path for a domain's data."""
+    """Get the cache file path for a domain's data.
+
+    Both `domain` and `release` reach this from the CLI. `release` used to be
+    interpolated raw, so `--release ../../../../tmp/x` escaped the cache
+    directory and `_save_cache`'s open(..., "w") wrote outside it. Every
+    component is now sanitised, and the joined result is asserted to stay
+    inside the cache directory as defence in depth.
+    """
     cache_dir = get_cache_dir()
-    safe_domain = domain.replace("/", "_").replace(":", "_")
-    return os.path.join(cache_dir, f"{safe_domain}-{release}-{data_type}.json")
+    safe_domain = _safe_cache_component(domain)
+    safe_release = _safe_cache_component(release)
+    safe_type = _safe_cache_component(data_type)
+    path = os.path.join(cache_dir, f"{safe_domain}-{safe_release}-{safe_type}.json")
+
+    resolved = os.path.realpath(path)
+    root = os.path.realpath(cache_dir)
+    if not (resolved == root or resolved.startswith(root + os.sep)):
+        raise ValueError(f"refusing to build a cache path outside {root}")
+    return path
 
 
 def _is_cached(domain: str, release: str) -> Optional[dict]:
@@ -125,24 +159,6 @@ def _save_cache(domain: str, release: str, data: dict) -> None:
     data.setdefault("metadata", {})["cached_at"] = time.time()
     with open(cache_path, "w") as f:
         json.dump(data, f, indent=2)
-
-
-def _stream_gz_lines(url: str, timeout: int = 120):
-    """
-    Stream and decompress a gzipped text file line by line.
-
-    Downloads the file in chunks and decompresses on the fly to avoid
-    loading multi-GiB files into memory.
-
-    Yields:
-        Decoded text lines.
-    """
-    resp = requests.get(url, stream=True, timeout=timeout)
-    resp.raise_for_status()
-
-    decompressor = gzip.GzipFile(fileobj=io.BytesIO(resp.content))
-    for line in io.TextIOWrapper(decompressor, encoding="utf-8"):
-        yield line.rstrip("\n")
 
 
 def _stream_gz_chunked(url: str, target_domain: str, timeout: int = 120,
@@ -421,7 +437,7 @@ def main():
             print(json.dumps(result, indent=2))
         else:
             data = result["data"]
-            print(f"Common Crawl Web Graph Info")
+            print("Common Crawl Web Graph Info")
             print(f"  Latest release: {data.get('latest_release', 'unknown')}")
             print(f"  Known releases: {', '.join(data.get('known_releases', []))}")
             print(f"  Cache dir:      {data.get('cache_dir', 'N/A')}")
@@ -430,6 +446,19 @@ def main():
 
     if not args.domain:
         print("Error: domain argument required (or use --info)", file=sys.stderr)
+        sys.exit(1)
+
+    # Reject a malformed release rather than silently sanitising it. The value
+    # is interpolated into both a cache filename and a download URL
+    # (_graph_file_url), so quietly rewriting it for one and not the other
+    # would make the cache key disagree with what was actually fetched.
+    if args.release is not None and not _RELEASE_RE.match(args.release):
+        print(
+            f"Error: invalid --release {args.release!r}. Expected a release id "
+            "such as cc-main-2026-jan-feb-mar (letters, digits, dot, dash, "
+            "underscore only).",
+            file=sys.stderr,
+        )
         sys.exit(1)
 
     result = get_domain_metrics(

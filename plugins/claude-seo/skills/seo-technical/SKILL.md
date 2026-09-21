@@ -10,7 +10,7 @@ argument-hint: "[url]"
 license: MIT
 metadata:
   author: AgriciDaniel
-  version: "2.2.4"
+  version: "2.3.1"
   category: seo
 ---
 
@@ -20,7 +20,7 @@ metadata:
 
 ### 1. Crawlability
 - robots.txt: exists, valid, not blocking important resources
-- XML sitemap: run `claude-seo run sitemap_discovery.py <url> --json`; require a
+- XML sitemap: run `"${CLAUDE_PLUGIN_ROOT}/scripts/claude-seo" run sitemap_discovery.py <url> --json`; require a
   valid entry in `found`, and report stale or unsafe robots.txt declarations
   separately from working fallback locations
 - Noindex tags: intentional vs accidental
@@ -30,6 +30,10 @@ metadata:
 - Googlebot **fetch limits**: Googlebot fetches the first **2MB of HTML** and first **64MB of a PDF** (uncompressed; 15MB is the broader crawler-infra default). Long-standing, not a 2026 change, but inline base64 images, oversized inline CSS/JS, or bloated nav can push critical content/JSON-LD past the cap and out of the index. Keep key content + structured data within the first 2MB.
 - Crawl rate **auto-adjusts** (backs off on 5xx/slow responses); there is **no manual crawl-rate control** (the legacy Search Console setting was removed Jan 2024). Influence crawling via sitemaps, server responsiveness, and robots controls.
 - Google's canonical crawling/robots reference moved to **developers.google.com/crawling** (migrated 2025-11-20); IP-range files relocated to `/crawling/ipranges/` and `googlebot.json` was renamed `common-crawlers.json`.
+- AMP has no separate ranking advantage. Since 2026-07-01, Google Search sends
+  users directly to publisher-hosted AMP URLs, so do not recommend AMP Cache,
+  AMP Viewer, or signed exchange maintenance. Audit AMP against the same content,
+  action-parity, and quality requirements as other pages.
 
 #### AI Crawler Management
 
@@ -39,17 +43,32 @@ As of 2025-2026, AI companies actively crawl the web to train models and power A
 
 | Crawler | Company | robots.txt token | Purpose |
 |---------|---------|-----------------|---------|
-| GPTBot | OpenAI | `GPTBot` | Model training |
-| ChatGPT-User | OpenAI | `ChatGPT-User` | Real-time browsing |
-| ClaudeBot | Anthropic | `ClaudeBot` | Model training |
+| GPTBot | OpenAI | `GPTBot` | Model training (NOT ChatGPT Search) |
+| OAI-SearchBot | OpenAI | `OAI-SearchBot` | ChatGPT Search citability |
+| ChatGPT-User | OpenAI | `ChatGPT-User` | Real-time browsing (user-triggered) |
+| ClaudeBot | Anthropic | `ClaudeBot` | Model training (NOT Claude search citability) |
+| Claude-SearchBot | Anthropic | `Claude-SearchBot` | Claude search-result citability |
 | PerplexityBot | Perplexity | `PerplexityBot` | Search index + training |
 | Bytespider | ByteDance | `Bytespider` | Model training |
 | Google-Extended | Google | `Google-Extended` | Gemini training (NOT search) |
+| Applebot-Extended | Apple | `Applebot-Extended` | Apple Intelligence training opt-out (NOT Siri/Spotlight/Safari) |
 | CCBot | Common Crawl | `CCBot` | Open dataset |
 
 **Key distinctions:**
 - Blocking `Google-Extended` prevents Gemini training use but does NOT affect Google Search indexing or AI Overviews (those use `Googlebot`)
-- Blocking `GPTBot` prevents OpenAI training but does NOT prevent ChatGPT from citing your content via browsing (`ChatGPT-User`)
+- Blocking `GPTBot` prevents OpenAI training but does NOT affect ChatGPT Search
+  citability, which is governed by `OAI-SearchBot`, nor user-triggered browsing
+  (`ChatGPT-User`). Check `OAI-SearchBot` for any citability claim; `GPTBot`
+  status is evidence about training use only
+- Blocking `ClaudeBot` prevents Anthropic model training but does NOT affect
+  citability in Claude's own search features, which is governed by
+  `Claude-SearchBot` (per Anthropic's crawler support article). Check
+  `Claude-SearchBot` for any Claude-search citability claim; `ClaudeBot` status
+  is evidence about training use only
+- Blocking `Applebot-Extended` opts out of Apple Intelligence / generative-model
+  training use but does NOT affect discoverability via Siri, Spotlight, or Safari,
+  which follows `Applebot` (per Apple's support article); `Applebot-Extended` does
+  not itself crawl
 - ~3-5% of websites now use AI-specific robots.txt rules
 
 **Example, selective AI crawler blocking:**
@@ -76,6 +95,10 @@ Allow: /
 ### 2. Indexability
 - Canonical tags: self-referencing, no conflicts with noindex
 - Duplicate content: near-duplicates, parameter URLs, www vs non-www
+- Canonicalization fixes can take time: Google may retain corrected pages in a
+  duplicate cluster for **up to two weeks** while re-evaluating them. Do not
+  interpret an unchanged canonical immediately after a fix as proof that the
+  fix failed.
 - Thin content: pages below minimum word counts per type
 - Pagination: rel=next/prev or load-more pattern
 - Hreflang: correct for multi-language/multi-region sites
@@ -128,7 +151,20 @@ Allow: /
 - Check if content visible in initial HTML vs requires JS
 - Identify client-side rendered (CSR) vs server-side rendered (SSR)
 - Flag SPA frameworks (React, Vue, Angular) that may cause indexing issues
-- Verify dynamic rendering setup if applicable
+- If dynamic rendering is detected, flag it as technical debt rather than a valid setup.
+  Google documents it as "a workaround and not a recommended solution" because of the added
+  complexity and resource cost.
+  See https://developers.google.com/search/docs/crawling-indexing/javascript/dynamic-rendering
+
+**Recommended rendering strategy:**
+
+| Strategy | Use Case |
+|----------|----------|
+| **SSR** | Public SEO content, dynamic pages |
+| **SSG** | Static content, blogs, docs |
+| **CSR** | Authenticated / behind-login content only |
+
+**Preferred frameworks:** Next.js, Astro, React Router v7 (Remix), SvelteKit
 
 #### JavaScript SEO: Canonical & Indexing Guidance (December 2025)
 
@@ -159,15 +195,16 @@ Google now ships a Lighthouse **Agentic Browsing** category (default-on since
 Lighthouse 13.3.0, Chrome 150+; buckets: agent-centric accessibility, CLS +
 llms.txt, three WebMCP audits). It reports a **fractional pass-ratio (X of N),
 not a 0-100 score**, keep that distinct from this skill's own Agent-UX 0-100
-heuristic below. The PSI REST API does not expose it; run via Lighthouse CLI
-`--only-categories=agentic-browsing`, DevTools, or the PSI web UI. See
+heuristic below. Lighthouse 13.4.1 re-enabled the category through the PSI API.
+It is also available through Lighthouse CLI with
+`--only-categories=agentic-browsing`, DevTools, and the PSI web UI. See
 `references/agent-friendly-pages.md`.
 
 ### Audit command
 
 ```bash
 # Render with Playwright + capture accessibility tree, then score
-claude-seo run agent_ux_check.py https://example.com --json
+"${CLAUDE_PLUGIN_ROOT}/scripts/claude-seo" run agent_ux_check.py https://example.com --json
 ```
 
 The scanner outputs an Agent-UX score (0-100) plus itemized issues:
@@ -176,9 +213,10 @@ The scanner outputs an Agent-UX score (0-100) plus itemized issues:
 - Accessibility tree findings: total nodes, interactive nodes, unnamed
   interactive elements, `role="generic"` ratio
 
-The accessibility-tree snapshot uses Playwright's
-`page.accessibility.snapshot(interesting_only=False)`. To capture the tree
-without scoring, use `claude-seo run render_page.py <url> --a11y-tree --json`.
+The accessibility-tree snapshot uses Chromium's
+`Accessibility.getFullAXTree` CDP command through Playwright. To capture the
+tree without scoring, use
+`"${CLAUDE_PLUGIN_ROOT}/scripts/claude-seo" run render_page.py <url> --a11y-tree --json`.
 
 Surface findings as **opportunities**, not failures; don't gate audits on a
 sub-100 Agent-UX score. WebMCP origin-trial/sign-up status needs verification,
@@ -212,7 +250,31 @@ If DataForSEO MCP tools are available, use `on_page_instant_pages` for real page
 
 ## Google API Integration (Optional)
 
-If Google API credentials are configured, use `claude-seo run pagespeed_check.py <url> --json` for real PSI + CrUX field data (replaces lab-only CWV estimates), `claude-seo run crux_history.py <url> --json` for 25-week CWV trends, and `claude-seo run gsc_inspect.py <url> --json` for real indexation status per URL.
+If Google API credentials are configured, use `"${CLAUDE_PLUGIN_ROOT}/scripts/claude-seo" run pagespeed_check.py <url> --json` for real PSI + CrUX field data (replaces lab-only CWV estimates), `"${CLAUDE_PLUGIN_ROOT}/scripts/claude-seo" run crux_history.py <url> --json` for 25-week CWV trends, and `"${CLAUDE_PLUGIN_ROOT}/scripts/claude-seo" run gsc_inspect.py <url> --json` for real indexation status per URL.
+
+## Auditing a Local or Private Host
+
+`url_safety` refuses loopback and private addresses by default, so `http://localhost:3000` and a staging host on Tailscale fail with "Blocked hostname" or "Blocked IP literal". That default is deliberate: these scripts follow URLs found on the pages they crawl.
+
+To audit a pre-deployment host, the operator names it in `CLAUDE_SEO_LOCAL_TARGETS`, a comma-separated list of `host` or `host:port` entries:
+
+```bash
+CLAUDE_SEO_LOCAL_TARGETS="localhost:3000,127.0.0.1:8080,100.101.102.103" \
+  "${CLAUDE_PLUGIN_ROOT}/scripts/claude-seo" run fetch_page.py http://localhost:3000/
+```
+
+What it does and does not cover:
+
+| Behaviour | Allowlisted host |
+|-----------|------------------|
+| First, top-level URL over raw HTTP | Allowed |
+| Redirect target reached from that URL | Refused |
+| Subresource fetched by a rendered page | Refused |
+| Playwright renders (`--render`, screenshots) | Refused; use the raw-HTTP path |
+| A host not named in the variable | Refused |
+| Cloud metadata endpoints, even when listed | Refused |
+
+`host:port` matches that port only; a bare `host` matches any port. With the variable unset the policy is unchanged. Never suggest setting it for a host the user does not control. See SECURITY.md.
 
 ## Error Handling
 

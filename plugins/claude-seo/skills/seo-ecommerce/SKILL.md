@@ -14,7 +14,7 @@ compatibility: "Enhanced with DataForSEO Merchant API (optional)"
 metadata:
   author: AgriciDaniel
   original_author: "Matej Marjanovic (Pro Hub Challenge)"
-  version: "2.2.4"
+  version: "2.3.1"
   category: seo
 ---
 
@@ -42,8 +42,8 @@ Fetch and parse any product page for on-page SEO quality.
 ### Workflow
 
 ```
-1. claude-seo run render_page.py <url> --mode auto → raw/rendered HTML
-2. claude-seo run parse_html.py --url <url>   → SEO elements
+1. "${CLAUDE_PLUGIN_ROOT}/scripts/claude-seo" run render_page.py <url> --mode auto → raw/rendered HTML
+2. "${CLAUDE_PLUGIN_ROOT}/scripts/claude-seo" run parse_html.py --url <url>   → SEO elements
 3. Analyze product-specific signals (below)
 ```
 
@@ -107,7 +107,7 @@ Live competitive analysis from Google Shopping results.
 
 Before EVERY Merchant API call:
 ```bash
-claude-seo run dataforseo_costs.py check merchant_google_products_search
+"${CLAUDE_PLUGIN_ROOT}/scripts/claude-seo" run dataforseo_costs.py check merchant_google_products_search
 ```
 
 - `"status": "approved"` -- proceed
@@ -116,20 +116,20 @@ claude-seo run dataforseo_costs.py check merchant_google_products_search
 
 After each call:
 ```bash
-claude-seo run dataforseo_costs.py log merchant_google_products_search <cost>
+"${CLAUDE_PLUGIN_ROOT}/scripts/claude-seo" run dataforseo_costs.py log merchant_google_products_search <cost>
 ```
 
 ### Workflow
 
 ```bash
 # Product search: who sells what at what price
-claude-seo run dataforseo_merchant.py search "<keyword>" --marketplace google
+"${CLAUDE_PLUGIN_ROOT}/scripts/claude-seo" run dataforseo_merchant.py search "<keyword>" --marketplace google
 
 # Seller analysis: merchant ratings and dominance
-claude-seo run dataforseo_merchant.py sellers "<keyword>"
+"${CLAUDE_PLUGIN_ROOT}/scripts/claude-seo" run dataforseo_merchant.py sellers "<keyword>"
 
 # Normalize results for analysis
-claude-seo run dataforseo_normalize.py results.json --module merchant
+"${CLAUDE_PLUGIN_ROOT}/scripts/claude-seo" run dataforseo_normalize.py results.json --module merchant
 ```
 
 ### Analysis Outputs
@@ -163,7 +163,7 @@ Cross-marketplace intelligence comparing Google Shopping and Amazon.
 ### Cost Guardrail (MANDATORY)
 
 ```bash
-claude-seo run dataforseo_costs.py check merchant_amazon_products_search
+"${CLAUDE_PLUGIN_ROOT}/scripts/claude-seo" run dataforseo_costs.py check merchant_amazon_products_search
 ```
 
 Amazon endpoints are in the `warn_endpoints` set -- always requires user approval.
@@ -172,10 +172,10 @@ Amazon endpoints are in the `warn_endpoints` set -- always requires user approva
 
 ```bash
 # Amazon product search
-claude-seo run dataforseo_merchant.py search "<keyword>" --marketplace amazon
+"${CLAUDE_PLUGIN_ROOT}/scripts/claude-seo" run dataforseo_merchant.py search "<keyword>" --marketplace amazon
 
 # Cross-marketplace comparison
-claude-seo run dataforseo_merchant.py compare "<keyword>"
+"${CLAUDE_PLUGIN_ROOT}/scripts/claude-seo" run dataforseo_merchant.py compare "<keyword>"
 ```
 
 ### Cross-Marketplace Report
@@ -262,6 +262,9 @@ Confirmed required fields are `name`, `image`, and `offers`; use `Offer`, not `A
 - `shippingDetails` -- ShippingDetails with rate and delivery time (merchant-level shipping via `ShippingService` is also supported; shipping/returns can be set in Search Console without a Merchant Center account)
 - `hasMerchantReturnPolicy` -- MerchantReturnPolicy with type and days
 - `hasAdultConsideration` -- **required for adult-oriented products** (added 2026-05-20 to Product variant / Merchant listing); Google Search supports only the value `https://schema.org/SexualContentConsideration`
+- `category` -- `Text`, `CategoryCode`, or an array mixing both. Use custom
+  text for merchant-defined product types and `CategoryCode` with Google's
+  taxonomy URL plus `codeValue` for Google Product Categories.
 
 ### Validation Rules
 
@@ -270,8 +273,11 @@ Confirmed required fields are `name`, `image`, and `offers`; use `Offer`, not `A
 3. `image` should be array with >= 1 high-res image URL
 4. `priceCurrency` must be ISO 4217 (USD, EUR, GBP)
 5. If `brand` is present, `brand.name` must not be empty or "N/A"
-6. Dates in `priceValidUntil` must be ISO 8601
+6. Sale periods use `validFrom` plus either `validThrough` or
+   `priceValidUntil`, in ISO 8601 format. Include time and timezone when known.
 7. If `aggregateRating` present: `ratingValue` and `reviewCount` required
+8. Do not include fake reviews or undisclosed incentivized reviews in visible
+   content or structured data. Clearly and prominently disclose incentives.
 
 ### Schema Scoring
 
@@ -295,6 +301,7 @@ Confirmed required fields are `name`, `image`, and `offers`; use `Offer`, not `A
 | **seo-content** | Product description E-E-A-T and uniqueness analysis |
 | **seo-dataforseo** | Organic keyword rankings for gap analysis |
 | **seo-technical** | Core Web Vitals for product pages (LCP on hero image) |
+| **seo-hreflang** | Region-specific result units: product queries in the EEA, South Africa, and Turkiye can show supplier units and carousels with their own eligibility rules (documented 2026-09-08) |
 | **seo-google** | GSC indexation + Performance data for product URLs (NOT Merchant Center feed validation, that is done in Merchant Center / the **Merchant API**; the legacy Content API for Shopping sunsets 2026-08-18) |
 
 ## UCP: Universal Commerce Protocol (live)
@@ -321,10 +328,10 @@ capability examples, and the relationship to AP2 (Agent Payments Protocol).
 
 ```bash
 # Discover and validate the UCP profile
-claude-seo run ucp_check.py https://store.example.com --json
+"${CLAUDE_PLUGIN_ROOT}/scripts/claude-seo" run ucp_check.py https://store.example.com --json
 
 # With endpoint reachability probes (HEAD each declared capability)
-claude-seo run ucp_check.py https://store.example.com --probe-endpoints --json
+"${CLAUDE_PLUGIN_ROOT}/scripts/claude-seo" run ucp_check.py https://store.example.com --probe-endpoints --json
 ```
 
 The script returns: profile presence, version, declared capabilities,

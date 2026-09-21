@@ -8,6 +8,7 @@ pub use worktrunk::testing::mock_commands;
 pub use worktrunk::testing::*;
 
 pub mod list_snapshots;
+pub mod source_scan;
 // Progressive output tests use PTY and are Unix-only for now
 #[cfg(unix)]
 pub mod progressive_output;
@@ -493,6 +494,16 @@ pub fn configure_pty_command(cmd: &mut portable_pty::CommandBuilder) {
     // Pass through LLVM coverage profiling environment for subprocess coverage.
     // Without this, spawned binaries can't write coverage data.
     pass_coverage_env_to_pty_cmd(cmd);
+}
+
+/// Build a minimal PATH that keeps the test process's Git while excluding
+/// user-installed tools such as `wt`, `claude`, and `codex`.
+#[cfg(unix)]
+pub fn setup_minimal_path_with_git(bin_dir: &Path) -> String {
+    std::fs::create_dir_all(bin_dir).unwrap();
+    let git = which::which("git").expect("git must be installed to run tests");
+    std::os::unix::fs::symlink(git, bin_dir.join("git")).unwrap();
+    format!("{}:/usr/bin:/bin", bin_dir.display())
 }
 
 /// Pass through LLVM coverage profiling environment to a portable_pty::CommandBuilder.
@@ -1275,9 +1286,9 @@ pub fn setup_temp_snapshot_settings(temp_path: &std::path::Path) -> insta::Setti
 /// total is sensitive to the temp-dir prefix (macOS `/var/folders/...` vs
 /// Linux `/tmp/...` vs Windows). The literal `(...files · X UNIT)` shape is
 /// unique enough to leave the deterministic copy-ignored summary
-/// (`Copied N files · X B` — no surrounding parens) untouched, so the regex
-/// doesn't depend on ANSI styling and works in both colored and `NO_COLOR`
-/// test environments.
+/// (`Copied N files · X B`, whose own parenthetical carries the reflink split
+/// rather than a byte count) untouched, so the regex doesn't depend on ANSI
+/// styling and works in both colored and `NO_COLOR` test environments.
 fn add_remove_stats_byte_filter(settings: &mut insta::Settings) {
     settings.add_filter(
         r"(\(\d+ files? · )\d+(?:\.\d+)? (B|KiB|MiB|GiB|TiB)",
@@ -1314,6 +1325,31 @@ pub fn add_pty_filters(settings: &mut insta::Settings) {
     // macOS PTYs emit ^D (literal caret-D) followed by backspaces (0x08)
     // when EOF is signaled. Linux PTYs don't. Strip these for consistency.
     settings.add_filter(r"\^D\x08+", "");
+
+    // An interactive shell puts each child it forks into its own process
+    // group, and reports a failed `setpgid` on its own stderr:
+    //
+    //     bash: child setpgid (42242 to 42242): Operation not permitted
+    //
+    // Whether that call loses its race with the child's own `setpgid`/exec is
+    // up to host scheduling, so the line appears in a handful of runs and in
+    // none of the others (observed once on macOS CI, actions/runs/35065804093).
+    // It is the shell describing its own job-control bookkeeping, not anything
+    // `wt` wrote, and the bash arm of the wrapper harness folds stderr into
+    // stdout (`exec 2>&1`) so that leaked job-control *notifications* are
+    // visible to tests — those stay visible, since `assert_no_job_control_messages`
+    // matches the `[1] 12345` / `[1]+ Done` shape this filter does not touch.
+    //
+    // The shell writes the line whenever the race resolves, so it need not
+    // start a line: it has also landed straight after the capture's trailing
+    // `\x1b[0m`, with no newline between (macOS CI, actions/runs/35132033122).
+    // The pattern therefore starts at a line start or right after an SGR
+    // escape, and keeps the escape. A bare unanchored `\w+` would instead eat
+    // the tail of whatever word preceded the shell's name.
+    settings.add_filter(
+        r"(?m)(^|\x1b\[[0-9;]*m)\w+: child setpgid \(\d+ to \d+\): [^\n]*\n?",
+        "$1",
+    );
 }
 
 /// Add filters for binary paths (target/debug/wt) in PTY output.
@@ -1341,11 +1377,41 @@ pub fn add_pty_binary_path_filters(settings: &mut insta::Settings) {
 // Tests
 // =============================================================================
 
+/// PTY capture carrying a shell's failed-`setpgid` diagnostic alongside the
+/// job-control notifications the wrapper tests assert on — once at a line
+/// start, and once appended to the capture's trailing SGR reset.
+#[cfg(test)]
+const SETPGID_NOISE_SAMPLE: &str = "bash: child setpgid (42242 to 42242): Operation not permitted
+[1] 42243
+Switched to worktree for feature-api
+[1]+ Done                    wt hook post-start
+\x1b[0mbash: child setpgid (64019 to 64019): Operation not permitted
+";
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use insta::assert_snapshot;
     use rstest::rstest;
+
+    /// A shell's own failed-`setpgid` diagnostic is host scheduling noise that
+    /// lands in the middle of a PTY snapshot, while the job-control
+    /// *notifications* the wrapper tests watch for must survive the filters.
+    #[test]
+    fn pty_filters_drop_the_setpgid_diagnostic_but_keep_job_control_notices() {
+        let mut settings = insta::Settings::clone_current();
+        add_pty_filters(&mut settings);
+        // Runs after the PTY filters, so it shows the reset they must keep.
+        settings.add_filter(r"\x1b\[0m", "[RESET]");
+        settings.bind(|| {
+            assert_snapshot!(SETPGID_NOISE_SAMPLE, @r"
+            [1] 42243
+            Switched to worktree for feature-api
+            [1]+ Done                    wt hook post-start
+            [RESET]
+            ");
+        });
+    }
 
     /// The uplifted `target/debug/wt` is removed and recreated by any
     /// concurrent `cargo build`, so the suite spawns a pinned hardlink
@@ -1419,8 +1485,19 @@ mod tests {
         let needle = ["CARGO_BIN_EXE_", "wt\""].concat();
         let root = Path::new(env!("CARGO_MANIFEST_DIR"));
         let mut offenders = Vec::new();
+        // Counted per root rather than in aggregate: the sole offender lives
+        // under `src`, so the equality below is satisfied by that root alone
+        // and would pass unchanged if `tests` or `benches` stopped yielding
+        // `.rs` files — the absence claim silently narrowing to one third of
+        // what it names. See "Guards that scan source text" in
+        // `tests/CLAUDE.md`.
         for dir in ["src", "tests", "benches"] {
-            scan_for_needle(&root.join(dir), &needle, root, &mut offenders);
+            let seen = scan_for_needle(&root.join(dir), &needle, root, &mut offenders);
+            assert!(
+                seen > 0,
+                "{dir}/ holds no .rs files — this guard asserts absence, so it \
+                 would now be passing over nothing there"
+            );
         }
         assert_eq!(
             offenders,
@@ -1431,17 +1508,21 @@ mod tests {
         );
     }
 
-    fn scan_for_needle(dir: &Path, needle: &str, root: &Path, offenders: &mut Vec<PathBuf>) {
-        for entry in std::fs::read_dir(dir).unwrap().flatten() {
-            let path = entry.path();
-            if path.is_dir() {
-                scan_for_needle(&path, needle, root, offenders);
-            } else if path.extension().and_then(|s| s.to_str()) == Some("rs")
-                && std::fs::read_to_string(&path).unwrap().contains(needle)
-            {
+    /// Collect files under `dir` containing `needle`, returning how many `.rs`
+    /// files were read. `#[must_use]` for the same reason `visit_files` is:
+    /// the caller asserts absence, so it has to answer for coverage.
+    #[must_use]
+    fn scan_for_needle(
+        dir: &Path,
+        needle: &str,
+        root: &Path,
+        offenders: &mut Vec<PathBuf>,
+    ) -> usize {
+        super::source_scan::visit_files(dir, "rs", "spawn-pin scan", &mut |path, contents| {
+            if contents.contains(needle) {
                 offenders.push(path.strip_prefix(root).unwrap().to_path_buf());
             }
-        }
+        })
     }
 
     /// Every PTY spawn routes through [`configure_pty_command`] (directly or

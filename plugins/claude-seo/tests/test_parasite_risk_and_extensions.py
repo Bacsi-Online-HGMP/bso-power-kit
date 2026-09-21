@@ -19,8 +19,8 @@ _SCRIPTS = _REPO_ROOT / "scripts"
 if str(_SCRIPTS) not in sys.path:
     sys.path.insert(0, str(_SCRIPTS))
 
+pytest.importorskip("requests")
 import parasite_risk  # noqa: E402
-
 
 # ---------------------------------------------------------------------------
 # parasite_risk
@@ -124,6 +124,12 @@ def test_extension_has_install_skill_and_docs(name: str, skill_dir: str) -> None
     )
 
 
+_POSIX_ONLY = pytest.mark.skipif(
+    os.name != "posix", reason="the executable bit is a POSIX mode bit; Windows has none"
+)
+
+
+@_POSIX_ONLY
 @pytest.mark.parametrize(
     "name", ["ahrefs", "seranking", "profound", "bing-webmaster", "unlighthouse"],
 )
@@ -133,6 +139,7 @@ def test_extension_install_script_is_executable(name: str) -> None:
     assert mode & stat.S_IXUSR, f"{name}/install.sh must be executable for chmod"
 
 
+@_POSIX_ONLY
 def test_every_extension_install_and_uninstall_is_executable() -> None:
     """All extensions ship executable install.sh + uninstall.sh — including v1 ones."""
     ext_root = _REPO_ROOT / "extensions"

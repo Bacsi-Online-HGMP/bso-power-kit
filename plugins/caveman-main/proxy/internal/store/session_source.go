@@ -48,20 +48,27 @@ type turnEvent struct {
 	CacheReadInputTokens     int
 	CacheCreationInputTokens int
 	CacheUsagePresent        bool
-	UsageMessageID           string
-	Model                    string
-	ProviderKey              string
-	ToolCalls                []turnToolCall
-	TextPayloads             []string
-	TaskSpawns               int
-	SkillUses                []string
-	SkillHaystack            string
-	Compaction               bool
-	JSONLLine                int
-	RelPath                  string
-	Repo                     string
-	Side                     bool
-	sessionStart             bool
+	// Billing buckets are DISJOINT and provider-counted, normalized per adapter
+	// because sources disagree on whether input_tokens already includes the
+	// cached share (claude/opencode: disjoint sum; codex/gemini: inclusive).
+	// InputFreshTokens is uncached input only. A source that cannot state a
+	// bucket leaves BillingUsagePresent false rather than guessing a zero.
+	InputFreshTokens    int
+	OutputTokens        int
+	BillingUsagePresent bool
+	UsageMessageID      string
+	Model               string
+	ProviderKey         string
+	ToolCalls           []turnToolCall
+	TextPayloads        []string
+	TaskSpawns          int
+	SkillUses           []string
+	Compaction          bool
+	JSONLLine           int
+	RelPath             string
+	Repo                string
+	Side                bool
+	sessionStart        bool
 }
 
 type sessionEventConsumer struct {
@@ -79,6 +86,10 @@ type sessionEventConsumer struct {
 	toolCalls      []learnToolCall
 	cacheHygiene   cacheHygieneTracker
 	readActivity   readActivityTracker
+	toolPortfolio  toolPortfolioTracker
+	subagentSpend  subagentSpendTracker
+	procedures     procedureMiner
+	outcome        sessionOutcome
 	textPayload    strings.Builder
 	captureText    bool
 	metric         learnSessionMetric
@@ -96,7 +107,7 @@ func newSessionEventConsumer(sourceID string, ref sessionRef, slugs []string, be
 	return &sessionEventConsumer{
 		sourceID: sourceID, ref: ref, slugs: slugs, knownSlugs: knownSkillSlugs(slugs),
 		behavior: behavior, miner: miner, seenUsage: map[string]bool{}, seenSlugs: map[string]bool{},
-		readActivity: newReadActivityTracker(), repo: ref.repo,
+		readActivity: newReadActivityTracker(), toolPortfolio: newToolPortfolioTracker(), repo: ref.repo,
 		metric:      learnSessionMetric{Repo: ref.repo, Source: sourceID},
 		captureText: true,
 	}
@@ -133,8 +144,22 @@ func (c *sessionEventConsumer) consume(event turnEvent) {
 		c.metric.Observed = true
 	}
 
+	if event.Compaction {
+		c.outcome.Compactions++
+	}
+	for _, call := range event.ToolCalls {
+		if call.IsError {
+			c.outcome.ErrorTurns++
+		}
+	}
 	ts := ""
 	if !event.Timestamp.IsZero() {
+		if c.outcome.Start.IsZero() || event.Timestamp.Before(c.outcome.Start) {
+			c.outcome.Start = event.Timestamp.UTC()
+		}
+		if event.Timestamp.After(c.outcome.End) {
+			c.outcome.End = event.Timestamp.UTC()
+		}
 		ts = event.Timestamp.UTC().Format(time.RFC3339)
 		if c.behavior.From == "" || ts < c.behavior.From {
 			c.behavior.From = ts
@@ -160,6 +185,10 @@ func (c *sessionEventConsumer) consume(event turnEvent) {
 		})
 		c.behavior.Turns++
 		c.behavior.Contexts = append(c.behavior.Contexts, ctx)
+		c.behavior.Spend.observe(event)
+		c.outcome.Turns++
+		c.outcome.Tokens += int64(max(0, ctx))
+		c.subagentSpend.observeTurn(ctx, event.Side)
 		if !c.prefixRecorded {
 			c.behavior.recordPrefix(c.sourceID, ctx)
 			c.prefixRecorded = true
@@ -196,17 +225,15 @@ func (c *sessionEventConsumer) consume(event turnEvent) {
 			c.seenSlugs[slug] = true
 		}
 	}
-	for _, slug := range c.slugs {
-		if slug != "" && !c.seenSlugs[slug] && strings.Contains(event.SkillHaystack, slug) {
-			c.seenSlugs[slug] = true
-		}
-	}
 	c.sessionTasks += event.TaskSpawns
 	for _, call := range event.ToolCalls {
-		c.toolCalls = append(c.toolCalls, learnToolCall{
+		observed := learnToolCall{
 			Name: call.Name, Input: call.InputSummary, IsError: call.IsError,
 			OutputTokens: estimateTokens(call.OutputText), Position: event.JSONLLine,
-		})
+		}
+		c.toolCalls = append(c.toolCalls, observed)
+		c.toolPortfolio.observe(observed)
+		c.subagentSpend.observeSpawn(call.Name, call.InputSummary)
 	}
 }
 
@@ -227,6 +254,8 @@ func (c *sessionEventConsumer) finish() {
 	sessionSum := sha256.Sum256([]byte(c.ref.relPath))
 	sessionID := hex.EncodeToString(sessionSum[:8])
 	c.behavior.LearningLoops = append(c.behavior.LearningLoops, detectLearningLoops(c.toolCalls, sessionID)...)
+	c.procedures.observeSession(sessionID, c.toolCalls)
+	c.behavior.Procedures.merge(c.procedures)
 	if observation, ok := c.cacheHygiene.observation(); ok {
 		c.behavior.CacheHygieneSessions = append(c.behavior.CacheHygieneSessions, observation)
 	}
@@ -243,6 +272,18 @@ func (c *sessionEventConsumer) finish() {
 	}
 	if c.metric.Turns > 0 && strings.TrimSpace(c.metric.Repo) != "" {
 		c.behavior.SessionMetrics = append(c.behavior.SessionMetrics, c.metric)
+	}
+	c.behavior.ToolPortfolio.merge(c.toolPortfolio)
+	if c.subagentSpend.SideTurns > 0 || c.subagentSpend.MainTurns > 0 {
+		c.subagentSpend.sessions = 1
+	}
+	c.behavior.SubagentSpend.merge(c.subagentSpend)
+	// Outcome rows need a repository AND a real time window; a session missing
+	// either cannot be joined to commit history and is dropped rather than
+	// counted as commitless.
+	if c.outcome.Turns > 0 && c.outcome.Tokens > 0 && !c.outcome.Start.IsZero() && strings.TrimSpace(c.repo) != "" {
+		c.outcome.Repo = c.repo
+		c.behavior.SessionOutcomes = append(c.behavior.SessionOutcomes, c.outcome)
 	}
 }
 

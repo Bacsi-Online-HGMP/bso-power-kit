@@ -14,7 +14,7 @@ cargo test --test integration --features shell-integration-tests   # + shell tes
 
 Every binary the suite spawns is `wt` itself — the mock commands are the same binary linked under other names, dispatching on argv[0] (`testing::mock_stub`) — so no run can spawn missing or stale code: cargo rebuilds a package's own binaries whenever its integration tests build, under every runner and filter, and `wt_bin()` resolves `CARGO_BIN_EXE_wt` — naming that just-built binary — into a hardlink pinned under `target/debug/wt-test-bin/`, which a concurrent `cargo build`'s uplift can't unlink mid-run (see No Retries); outside a cargo runner the suite panics ("CARGO_BIN_EXE_wt not set") rather than guessing a path. `cargo build --bin wt` recompiling right after a test run is the bin-only build being a separate cached unit (a different feature graph), not evidence the tests ran stale code.
 
-**Claude Code web:** `task setup-web` installs zsh, fish, `jq`, PowerShell, `gh`, and dev tools, and checks that nushell is already there. Install `task` first if needed: `sh -c "$(curl --location https://taskfile.dev/install.sh)" -- -d -b ~/bin` then `export PATH="$HOME/bin:$PATH"`. The permission tests (`test_permission_error_prevents_save`, `test_approval_prompt_permission_error`) skip automatically when running as root.
+**Claude Code web:** `task setup-web` installs zsh, fish, Nushell, PowerShell, `jq`, `lsof`, `gh`, pre-commit, and the Cargo dev tools. Install `task` first if needed: `sh -c "$(curl --location https://taskfile.dev/install.sh)" -- -d -b ~/bin` then `export PATH="$HOME/bin:$PATH"`. Tests that need an unprivileged uid skip automatically when running as root, which both this environment and Codex Cloud do; that covers the permission tests and the `wt remove` stuck-directory pair, the only automated coverage of that path.
 
 **Shell/PTY tests** (`shell-integration-tests` feature): approval prompts, picker, progressive rendering, shell wrappers.
 
@@ -48,8 +48,10 @@ When `codecov/patch` fails, investigate before declaring ready (the merge gate i
 
 ```bash
 task coverage
-cargo llvm-cov report --show-missing-lines | grep <file>   # authoritative miss list; matches codecov line-for-line
+cargo llvm-cov report --show-missing-lines | grep <file>   # authoritative miss list; same lines codecov counts
 ```
+
+Since cargo-llvm-cov 0.9.0 that column collapses consecutive misses into ranges (`12-18`, not `12, 13, …`), so expand a range before comparing it against a codecov line list.
 
 For each uncovered function, either write a test (integration tests via `assert_cmd_snapshot!` do capture subprocess coverage) or document why it's intentionally untested.
 
@@ -59,17 +61,17 @@ For each uncovered function, either write a test (integration tests via `assert_
 API=https://api.codecov.io/api/v2/github/max-sixty/repos/worktrunk
 # Full SHAs throughout; an abbreviation 404s. `?pullid=N` compares the PR's
 # *current* head, so name both SHAs to ask about an earlier commit.
-curl -sL "$API/compare/?base=<base-sha>&head=<head-sha>" > /tmp/codecov.json
+curl -sL "$API/compare/?base=<base-sha>&head=<head-sha>" > "${TMPDIR:-/tmp}/codecov.json"
 
 # Patch coverage per file. `.name` is an object, and the files carrying patch
 # lines are the ones with `has_diff`:
-jq '.files[] | select(.has_diff) | {name: .name.head, patch: .totals.patch}' /tmp/codecov.json
+jq '.files[] | select(.has_diff) | {name: .name.head, patch: .totals.patch}' "${TMPDIR:-/tmp}/codecov.json"
 
 # The missed patch lines in one file. `.coverage.head` is a LineType enum
 # (0=hit, 1=miss, 2=partial), and `.added` keeps context lines inside a hunk
 # from reading as patch misses:
 jq '.files[] | select(.name.head == "<path>") | .lines[]
-    | select(.is_diff and .added and .coverage.head == 1) | {line: .number.head, code: .value}' /tmp/codecov.json
+    | select(.is_diff and .added and .coverage.head == 1) | {line: .number.head, code: .value}' "${TMPDIR:-/tmp}/codecov.json"
 
 # Whole-file line coverage at one commit. No trailing slash after the path —
 # the route swallows it and answers 404 "coverage info not found":
@@ -205,11 +207,11 @@ What the hole cost before this: any key in the developer's config applied to fix
 in-process unit test that calls library functions directly gets no such
 isolation: it runs in the test process, which inherits the real environment.
 
-The `Approvals` and `UserConfig` mutation methods take an explicit `&Path`, so
-a unit test passes a tempdir-backed path and the write stays isolated. The
-global resolvers do not isolate: `Approvals::load()`, `approvals_path()`,
-`config_path()`, and `system_config_path()` all fall back to the real
-`~/.config/worktrunk/`.
+`Approvals::approve_commands` and the `UserConfig` mutation methods take an
+explicit `&Path`, so a unit test passes a tempdir-backed path and the write stays
+isolated. The global resolvers do not isolate: `Approvals::load()`,
+`approvals_path()`, `config_path()`, and `system_config_path()` all fall back to
+the real `~/.config/worktrunk/`.
 
 <example>
 <bad reason="Approvals::load() reads the real ~/.config/worktrunk/approvals.toml">
@@ -218,7 +220,7 @@ Bad:
 
 ```rust
 let mut approvals = Approvals::load().unwrap();
-approvals.approve_command(project, command, &approvals_path).unwrap();
+approvals.approve_commands(project, vec![command], &approvals_path).unwrap();
 ```
 
 </bad>
@@ -230,7 +232,7 @@ Good:
 let temp_dir = tempfile::tempdir().unwrap();
 let approvals_path = temp_dir.path().join("approvals.toml");
 let mut approvals = Approvals::default();
-approvals.approve_command(project, command, &approvals_path).unwrap();
+approvals.approve_commands(project, vec![command], &approvals_path).unwrap();
 ```
 
 </good>
@@ -268,9 +270,8 @@ that forbids it. Nothing exercises that today — no bin-crate test creates a
 config under a scratch `$HOME` — so it's a live requirement on new tests, not a
 known leak.
 
-`system_config_path()` is deliberately unguarded: it resolves a machine-wide
-file rather than the developer's own, and `config::deprecation`'s
-`PendingDefault` rules need the lookup.
+`system_config_path()` is deliberately unguarded because it resolves a
+machine-wide file rather than the developer's own.
 
 ## Timing Tests: Polling and Absence Windows
 
@@ -391,7 +392,7 @@ Tests run once. Worktrunk configures no nextest `retries`, and no test re-runs i
 - A kill at the 180s slow-timeout is a duration symptom with two causes, told apart by the durations around it: many stretched durations alongside high machine load is CPU starvation, usually a sibling worktree's concurrent build; one test pinned at the timeout in an otherwise-normal run is a blocked call inside it, usually network. Starvation's only lever here would be nextest `threads-required` bounds on the heavy PTY tests, deliberately unset while these stay rare one-offs: the bound taxes every healthy run, and can't see the sibling build that caused the starvation.
 - A shared channel with more than one producer is an attribution bug. Counting events drained from a channel between steps only measures the step that produced them if nothing *else* can produce them: a background task's event landing after its step's drain is charged to the next step, so the assertion that fails names the wrong step and the wrong cause. The events are usually indistinguishable (skim's `Event::RunPreview` carries no payload), so identity assertions aren't available — quiesce the other producers instead, before the step sequence arms whatever they'd match. `on_update_pokes_run_preview_only_when_the_visible_pane_changes` is the worked example: `PreviewOrchestrator::wait_for_idle()` before each `note_awaiting`, so the skeleton precompute lands while no key matches it.
 - A spawn that fails `NotFound` is a concurrent-build bug. Cargo uplifts `target/debug/wt` by removing the path and recreating it, so a second `cargo` against the same target directory leaves the binary absent for a fraction of a millisecond per rebuild, failing whatever spawn is in flight with `Os { code: 2, kind: NotFound }` — anywhere: an `insta_cmd` snapshot, a PTY wrapper's `wt config shell init`, a hook whose marker file then never appears — and passing on re-run, which is the signature. `wt_bin()` closes the window by spawning a hardlink pinned under `target/debug/wt-test-bin/` instead of the uplifted path (`testing::pin_test_binary`), so route every `wt` spawn through it or a helper that does; `test_wt_spawns_are_pinned` makes a direct `CARGO_BIN_EXE_wt` spawn fail the suite.
-- A shared namespace is a collision bug. **Never `NamedTempFile::new()`** for a file a test needs by name: `tempfile` retries a name collision only when it surfaces as `AlreadyExists`, and on Windows `create_new` against a name already held by a *directory* — or by a file in delete-pending state — comes back `PermissionDenied`, which it hands straight back to the caller. A full suite run leaves the temp directory full of `.tmpXXXXXX` entries (every `TestRepo` makes one), and under that load the call fails ~1% of the time with `Access is denied.` — a panic that has nothing to do with what the test asserts. Take a `TempDir` and give the files fixed names inside it (`worktrunk::testing::directive_files` is the pattern); a directory collision surfaces as `AlreadyExists`, which tempfile retries.
+- A shared namespace is a collision bug. **Never `NamedTempFile::new()`** for a file a test needs by name: `tempfile` retries a name collision only when it surfaces as `AlreadyExists`, and on Windows `create_new` against a name already held by a *directory* — or by a file in delete-pending state — comes back `PermissionDenied`, which it hands straight back to the caller. A full suite run leaves the temp directory full of `.tmpXXXXXX` entries (every `TestRepo` makes one), and under that load the call fails ~1% of the time with `Access is denied.` — a panic that has nothing to do with what the test asserts. Take a `TempDir` and give the files fixed names inside it (`worktrunk::testing::directive_file` is the pattern); a directory collision surfaces as `AlreadyExists`, which tempfile retries.
 
 A bounded poll that rides out one identified `ErrorKind` whose window is understood is itself a root fix, and the doctrine leaves it alone: `pin_test_binary` polls `NotFound` across cargo's uplift window, and `forward_with_etxtbsy_retry` (`src/completion.rs`) polls `ExecutableFileBusy` while a concurrently-forked child holds the just-written script's write fd open. Both fail immediately on any other error, which is what keeps a poll from drifting into a retry.
 
@@ -558,6 +559,41 @@ Assert semantics through state, structured values, and exit status; snapshot
 the pragmatic user experience when the complete rendering is the contract. A
 custom verifier must fail for every violation it claims to check—diagnostic
 `println!` output is not an oracle.
+
+### Guards that scan source text
+
+Several guards read `src/`, or the snapshot corpus, as text rather than
+compiling it: no stray `println!` outside the allowlist, no `eprintln!` that
+resolves to std's macro instead of anstream's, no bare `env!("VERGEN_…")`, no
+`include_str!` of a path the package won't ship, no host path in a `.snap`, no
+plumbing diff built outside `PlumbingDiff::args`, and nothing but
+`src/testing/mod.rs` spawning `wt` through `CARGO_BIN_EXE_wt`.
+Each one asserts *absence* over what its walk handed it.
+
+That polarity is what makes the failure mode silent. A file that drops out of
+the walk is indistinguishable from a file with nothing wrong in it: the
+violation it carried is never looked for, `violations` stays empty, and the
+test passes green over less than it claims.
+
+So that walk lives once, in `tests/common/source_scan.rs`, and panics on every
+read rather than skipping; its module docstring carries the rest. Other tests
+recurse through directories for their own reasons, and this is about the ones
+whose assertion is absence. A read that returns early is the shape to look
+for. `Err(_) => return` and `let Ok(..) else { return }` are the obvious two,
+and `entries.flatten()` is the one that hides, because it drops a per-entry
+`io::Error` without looking like a `return` at all.
+
+Each guard also proves its walk reached something, since a walk that reads
+cleanly and yields nothing passes just as green. `visit_files` returns the
+number of files it visited and is `#[must_use]`, so forgetting to answer for
+coverage is a compile error rather than a rule someone has to remember — which
+is what the swallowed reads it replaced had going for them. A guard that
+already asserts something an empty walk cannot satisfy discards the count with
+`let _ =`, and that discard is the claim: its proof is the assertion below it,
+and a count beside it would be a second mechanism for one guarantee.
+
+A guard walking several roots counts per root. A layout change moves one root
+and leaves the others, and an aggregate count survives that.
 
 ### Snapshot env drift: cosmetic vs. a leak
 

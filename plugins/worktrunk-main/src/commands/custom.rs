@@ -7,7 +7,10 @@
 //! 1. **Alias**: if `foo` is configured as an alias in user/project config,
 //!    run it via the same path as `wt step foo`. User config wins over
 //!    `wt-<name>` PATH binaries — aliases are how users customize wt, so the
-//!    user's intent should take precedence.
+//!    user's intent should take precedence. Outside a repository an alias
+//!    cannot run (execution resolves the current worktree), so dispatch ends
+//!    there with the alias-needs-repository error and the PATH binary never
+//!    sees the name.
 //! 2. **PATH binary**: resolve `wt-<name>` via `which`. If found, run it with
 //!    the remaining args, inheriting stdio, and propagate the exit code.
 //!    Mirrors how `git foo` finds `git-foo`.
@@ -30,7 +33,7 @@ use std::process::Command;
 
 use anyhow::{Context, Result};
 use worktrunk::git::WorktrunkError;
-use worktrunk::shell_exec::RETIRED_DIRECTIVE_FILE_ENV_VAR;
+use worktrunk::shell_exec::{DIRECTIVE_EXEC_FILE_ENV_VAR, RETIRED_DIRECTIVE_FILE_ENV_VAR};
 use worktrunk::trace::CommandTrace;
 
 use crate::cli::build_command;
@@ -132,8 +135,9 @@ fn unrecognized_subcommand_error(name: &str) -> clap::Error {
 fn run_custom(path: &Path, args: &[OsString], working_dir: Option<&Path>) -> Result<()> {
     let mut cmd = Command::new(path);
     cmd.args(args);
-    // Explicitly invoked extensions remain trusted with split CD/EXEC; only
-    // the retired sourceable single-file capability is forbidden.
+    // Preserve the raw CD directive, but never expose a file that an older
+    // parent wrapper will source as shell code after this process exits.
+    cmd.env_remove(DIRECTIVE_EXEC_FILE_ENV_VAR);
     cmd.env_remove(RETIRED_DIRECTIVE_FILE_ENV_VAR);
     if let Some(dir) = working_dir {
         cmd.current_dir(dir);
@@ -220,12 +224,22 @@ mod tests {
     }
 
     #[test]
-    fn similar_subcommands_dedupes_alias_matching_builtin() {
-        // An alias whose name shadows a built-in (e.g. `list`) should appear
-        // only once in suggestions, not duplicated.
+    fn similar_subcommands_never_suggests_the_input_itself() {
+        // An exact match — e.g. a user-config alias named like the input — is
+        // never a "similar" suggestion: dispatch paths that reach the error
+        // with the input in the candidate pool (alias outside a repository,
+        // alias skipped as non-UTF-8) must not tip the typed name back.
         let cmd = build_command();
         let aliases = vec!["list".to_string()];
         let suggestions = similar_subcommands("list", &cmd, &aliases);
+        assert!(
+            !suggestions.contains(&"list".to_string()),
+            "got: {suggestions:?}"
+        );
+
+        // A near match reachable from both pools (built-in + alias of the same
+        // name) still appears once — the dedupe set survives the filter.
+        let suggestions = similar_subcommands("lst", &cmd, &aliases);
         let count = suggestions.iter().filter(|n| *n == "list").count();
         assert_eq!(count, 1, "got: {suggestions:?}");
     }

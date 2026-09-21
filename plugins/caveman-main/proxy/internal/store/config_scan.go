@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
@@ -26,16 +27,21 @@ type skillInfo struct {
 
 // configScan is the measured config-tax picture used by the detectors.
 type configScan struct {
-	Snapshots       []ConfigSnapshot
-	ClaudeMDUser    *ConfigSnapshot
-	ClaudeMDProject *ConfigSnapshot
-	CodexAgents     *ConfigSnapshot
-	Skills          []skillInfo
-	SkillDescTokens int // per-turn skill catalog tax (name+description only)
-	TokenBasis      string
-	HookCount       int
-	PluginCount     int
-	MCPScopes       []mcpScopeScan
+	Snapshots        []ConfigSnapshot
+	ClaudeMDUser     *ConfigSnapshot
+	ClaudeMDProject  *ConfigSnapshot
+	ClaudeMDProjects []*ConfigSnapshot
+	CodexAgents      *ConfigSnapshot
+	Skills           []skillInfo
+	SkillDescTokens  int // per-turn skill catalog tax (name+description only)
+	TokenBasis       string
+	HookCount        int
+	// PerTurnHooks labels hooks configured on events that fire every turn. They
+	// are cache-churn CANDIDATES, not identified causes: config is visible here,
+	// hook output is not.
+	PerTurnHooks []string
+	PluginCount  int
+	MCPScopes    []mcpScopeScan
 }
 
 type mcpScopeScan struct {
@@ -149,7 +155,7 @@ func scanConfig(cwd string) configScan {
 				Lines: len(sc.Skills), Tokens: sc.SkillDescTokens,
 				MetadataJSON: compactMeta(map[string]any{"skill_count": len(sc.Skills)})})
 		}
-		sc.HookCount = countHooks(filepath.Join(croot, "settings.json"))
+		sc.HookCount, sc.PerTurnHooks = scanHooks(filepath.Join(croot, "settings.json"))
 		if sc.HookCount > 0 {
 			add(&ConfigSnapshot{Scope: "hooks", Path: filepath.Join(croot, "settings.json"), Kind: "hooks",
 				Lines: sc.HookCount, Tokens: 0,
@@ -164,8 +170,19 @@ func scanConfig(cwd string) configScan {
 	}
 
 	if cwd != "" {
-		sc.ClaudeMDProject = readMarkdownConfig("project", filepath.Join(cwd, "CLAUDE.md"), "claude_md")
-		add(sc.ClaudeMDProject)
+		for dir := filepath.Clean(cwd); ; dir = filepath.Dir(dir) {
+			if snap := readMarkdownConfig("project", filepath.Join(dir, "CLAUDE.md"), "claude_md"); snap != nil {
+				sc.ClaudeMDProjects = append(sc.ClaudeMDProjects, snap)
+				if sc.ClaudeMDProject == nil {
+					sc.ClaudeMDProject = snap
+				}
+				add(snap)
+			}
+			parent := filepath.Dir(dir)
+			if parent == dir {
+				break
+			}
+		}
 	}
 
 	croot2 := codexRoot()
@@ -253,15 +270,20 @@ func parseMCPServerNames(raw []byte, cwd string, includeProject bool) []string {
 	return out
 }
 
-// configTaxPerTurn is the token tax loaded on every turn: CLAUDE.md (user +
-// project) + the skill catalog. Hooks/plugins are reported as counts, not folded
-// into the token figure, because their context cost can't be measured statically.
+// configTaxPerTurn is the statically measured token tax loaded on every turn:
+// CLAUDE.md (user + project) + the user skill catalog. Hooks/plugins are
+// reported as counts, not folded into the token figure, because this scanner
+// does not resolve their effective context contribution.
 func (sc configScan) configTaxPerTurn() int {
 	total := sc.SkillDescTokens
 	if sc.ClaudeMDUser != nil {
 		total += sc.ClaudeMDUser.Tokens
 	}
-	if sc.ClaudeMDProject != nil {
+	if len(sc.ClaudeMDProjects) > 0 {
+		for _, snap := range sc.ClaudeMDProjects {
+			total += snap.Tokens
+		}
+	} else if sc.ClaudeMDProject != nil {
 		total += sc.ClaudeMDProject.Tokens
 	}
 	return total
@@ -298,6 +320,10 @@ func scanSkills(skillsDir string) []skillInfo {
 			continue
 		}
 		path := filepath.Join(skillsDir, e.Name(), "SKILL.md")
+		info, err := os.Stat(path)
+		if err != nil || !info.Mode().IsRegular() {
+			continue
+		}
 		name, desc := readSkillFrontmatter(path)
 		if name == "" {
 			name = e.Name()
@@ -362,28 +388,102 @@ func readSkillFrontmatter(path string) (name, desc string) {
 }
 
 func countHooks(settingsPath string) int {
+	count, _ := scanHooks(settingsPath)
+	return count
+}
+
+// perTurnHookEvents fire on every turn, so anything they print lands in the
+// prompt on every turn. They are the first place to look when a prompt cache is
+// being re-written repeatedly. SessionStart is excluded: it runs once.
+var perTurnHookEvents = map[string]bool{
+	"UserPromptSubmit": true,
+	"PreToolUse":       true,
+	"PostToolUse":      true,
+	"PreCompact":       true,
+	"Stop":             true,
+	"SubagentStop":     true,
+}
+
+// scanHooks returns the total hook count plus the matcher/command labels of the
+// hooks configured on PER-TURN events. The labels are candidates for a cache
+// investigation, never an accusation: this function reads configuration, and
+// cannot see what any hook actually printed.
+func scanHooks(settingsPath string) (int, []string) {
 	raw, err := os.ReadFile(settingsPath)
 	if err != nil {
-		return 0
+		return 0, nil
 	}
 	var obj map[string]any
 	if json.Unmarshal(raw, &obj) != nil {
-		return 0
+		return 0, nil
 	}
 	hooks, ok := obj["hooks"].(map[string]any)
 	if !ok {
-		return 0
+		return 0, nil
 	}
 	count := 0
-	for _, v := range hooks {
+	var perTurn []string
+	for event, v := range hooks {
 		switch x := v.(type) {
 		case []any:
 			count += len(x)
+			if perTurnHookEvents[event] {
+				perTurn = append(perTurn, hookCommandLabels(event, x)...)
+			}
 		case map[string]any:
 			count += len(x)
 		}
 	}
-	return count
+	sort.Strings(perTurn)
+	return count, perTurn
+}
+
+// hookCommandLabels extracts "<event>: <command basename>" for each configured
+// hook. The full command line is deliberately not kept: it can carry paths and
+// arguments that are none of the report's business.
+func hookCommandLabels(event string, entries []any) []string {
+	var out []string
+	for _, entry := range entries {
+		group, ok := entry.(map[string]any)
+		if !ok {
+			continue
+		}
+		inner, ok := group["hooks"].([]any)
+		if !ok {
+			continue
+		}
+		for _, rawHook := range inner {
+			hook, ok := rawHook.(map[string]any)
+			if !ok {
+				continue
+			}
+			command := strings.TrimSpace(fmt.Sprint(hook["command"]))
+			if command == "" || command == "<nil>" {
+				continue
+			}
+			out = append(out, event+": "+hookCommandBasename(command))
+		}
+	}
+	return out
+}
+
+// hookCommandBasename reduces a hook command to something namable without
+// leaking the user's filesystem layout: the basename of its first token.
+func hookCommandBasename(command string) string {
+	fields := strings.Fields(command)
+	if len(fields) == 0 {
+		return "hook"
+	}
+	base := filepath.Base(fields[0])
+	if base == "node" || base == "python" || base == "python3" || base == "sh" || base == "bash" {
+		for _, field := range fields[1:] {
+			if strings.HasPrefix(field, "-") {
+				continue
+			}
+			return base + " " + filepath.Base(field)
+		}
+	}
+	return base
 }
 
 func countPlugins(pluginsPath string) int {

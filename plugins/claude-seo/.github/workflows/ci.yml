@@ -53,6 +53,9 @@ jobs:
         run: pip install -r requirements.txt pytest
 
       - name: Run pytest
+        env:
+          CLAUDE_SEO_NETWORK_TESTS: "1"
+          GH_TOKEN: ${{ github.token }}
         run: pytest tests/ -v
 
   secret-scan:
@@ -78,3 +81,57 @@ jobs:
             exit 1
           fi
           echo "Secret scan clean: no credentials detected in tracked files."
+
+  portability:
+    name: Portability (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      # Report both legs independently; a failure on one platform should not
+      # hide the result on the other.
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up Python 3.10
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.10"
+
+      - name: Install runtime + test deps
+        run: pip install -r requirements.txt pytest
+
+      - name: Run pytest
+        # The whole suite, not a hand-picked subset. The tests that assert
+        # POSIX mode bits (the executable bit, chmod 0o600/0o644) skip on
+        # Windows via os.name; everything else must hold on every platform.
+        env:
+          CLAUDE_SEO_NETWORK_TESTS: "1"
+          GH_TOKEN: ${{ github.token }}
+        run: pytest tests/ -v
+
+  dep-audit:
+    name: Dependency audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up Python 3.10
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.10"
+
+      - name: Install pip-audit
+        run: pip install pip-audit
+
+      - name: Audit requirements.txt against the PyPI advisory database
+        # requirements.txt documents CVE floors per dependency in comments, but
+        # nothing verified them; this closes that loop. Because the pins are
+        # bounded ranges rather than exact versions, pip-audit resolves the
+        # newest allowed release, so a newly published advisory can turn this
+        # job red without a commit to the repo. That is the intended signal:
+        # it means a floor in requirements.txt needs raising. To land an
+        # unavoidable advisory in the meantime, add
+        # `--ignore-vuln GHSA-xxxx-xxxx-xxxx` with a comment naming the reason.
+        run: pip-audit -r requirements.txt --progress-spinner off

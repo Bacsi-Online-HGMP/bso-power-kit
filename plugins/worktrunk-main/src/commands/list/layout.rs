@@ -7,29 +7,33 @@
 //!
 //! ## Unified Position Grid
 //!
-//! All status indicators use position-based alignment with selective rendering.
+//! All status indicators use position-based alignment.
 //! See [`super::model::StatusSymbols`] for the complete symbol list and categories.
 //!
-//! Only positions used by at least one row are included (position mask):
-//! - Within those positions, symbols align vertically for scannability
-//! - Empty positions render as single space for grid alignment
+//! Every row allocates every position ([`super::model::PositionMask::FULL`] is
+//! the only mask anything constructs):
+//! - Symbols align vertically at their position for scannability
+//! - Empty positions render as whitespace padded to the position's width
 //! - No leading spaces before the first symbol
 //!
-//! Example with working_tree, main_state, and user_marker used:
+//! Example with working_tree, main_state, and user_marker carrying data. Every
+//! row is the same eight columns wide, one per allocated position:
 //! ```text
-//! Row 1: "   _🤖"   (working=space, main=_, user=🤖)
-//! Row 2: "?! _  "   (working=?!, main=_, user=space)
-//! Row 3: "    💬"   (working=space, main=space, user=💬)
+//! Row 1: "    _ 🤖"   (working=clean, main=_, user=🤖)
+//! Row 2: " !? _   "   (working=!?, main=_, user=none)
+//! Row 3: "      💬"   (working=clean, main=none, user=💬)
 //! ```
 //!
 //! ## Width Calculation
 //!
 //! ```text
-//! status_width = max(rendered_width_across_all_items)
+//! status_width = max(header_width, PositionMask::FULL.total_width())
 //! ```
 //!
-//! The width is calculated by rendering each item's status with the position
-//! mask and taking the maximum width.
+//! The width is not measured across items: the column's geometry is chosen at
+//! skeleton time, before any task result exists, and progressive and final
+//! renders have to agree on it. So the layout budgets the mask's total width
+//! and every render draws exactly that.
 //!
 //! ## Why This Design?
 //!
@@ -37,13 +41,9 @@
 //! - One alignment mechanism for all status indicators
 //! - User marker treated consistently with git symbols
 //!
-//! **Eliminates wasted space:**
-//! - Position mask removes columns for symbols that appear in zero rows
-//! - User marker only takes space when present
-//!
 //! **Maintains alignment:**
 //! - All symbols align vertically at their positions (vertical scannability)
-//! - Grid adapts to minimize width based on active positions
+//! - The grid never shifts as results arrive
 //!
 //! # Priority System Design
 //!
@@ -62,17 +62,24 @@
 //! - 5-12: Context (CI, branch diff, path, upstream, URL, summary, commit, time)
 //! - 13: Message (nice-to-have, space-hungry)
 //!
-//! **Empty penalty**: +10 if column has no data (only header)
-//! - Empty working_diff: 3 + 10 = priority 13
-//! - Empty ahead/behind: 4 + 10 = priority 14
+//! **Empty penalty**: +14 if column has no data (only header)
+//! - Empty working_diff: 3 + 14 = priority 17
+//! - Empty ahead/behind: 4 + 14 = priority 18
 //! - etc.
 //!
 //! This creates two effective priority tiers:
 //! - **Tier 1 (priorities 0-13)**: Columns with actual data
-//! - **Tier 2 (priorities 13-23)**: Empty columns (visual consistency)
+//! - **Tier 2 (priorities 14-27)**: Empty columns (visual consistency)
 //!
-//! The empty penalty is large (+10) but not infinite, so empty columns maintain their relative
-//! ordering (empty working_diff still ranks higher than empty ci_status) for visual consistency.
+//! The penalty exceeds the largest base priority, so the tiers can't interleave: an
+//! all-empty column never outranks a populated one. It is not infinite, so empty columns
+//! keep their relative ordering (empty working_diff still ranks higher than empty
+//! ci_status) for visual consistency.
+//!
+//! Priority order alone doesn't finish the job, because the allocation loop keeps going
+//! after a column fails to fit: a narrow blank column would slip into the gap a wider
+//! populated one just failed to fill. So the loop also records whether any populated
+//! column was dropped, and skips every empty column once that happens.
 //!
 //! ## Why This Design?
 //!
@@ -83,8 +90,8 @@
 //! 2. Show nice-to-have data (message, commit hash) when space allows
 //! 3. Maintain visual consistency - empty columns in predictable positions at wide widths
 //!
-//! **Key decision**: Message sits at the boundary (priority 13). Empty columns (priority 13+)
-//! rank below message, so:
+//! **Key decision**: Message sits at the bottom of tier 1 (priority 13). Empty columns
+//! (priority 14+) rank below it, so:
 //! - Narrow terminals: Data columns + message (hide empty columns)
 //! - Wide terminals: Data columns + message + empty columns (visual consistency)
 //!
@@ -94,14 +101,16 @@
 //! computes layout before data arrives. Currently we assume most columns have data (optimistic),
 //! which means empty penalties don't apply in progressive mode.
 //!
-//! Exceptions that we can compute instantly from items:
+//! Exceptions we can settle before any task reports:
 //! - `path`: true only if some worktree's path carries information the branch
 //!   column doesn't — `branch_worktree_mismatch` or `duplicate_branch` (computed
 //!   from items)
-//! - `branch_diff`/`ci_status`: false if their required task is skipped
+//! - `branch_diff`/`ci_status`/`url`: false if their required task is skipped
+//! - `upstream`: false when the repo has no remote ([`RepoFacts::has_remote`]),
+//!   because then no branch can track one
 //!
-//! Other columns (status, working_diff, ahead_behind, upstream) require expensive git operations,
-//! so we assume they have data until proven otherwise.
+//! The rest (status, working_diff, ahead_behind) require expensive git operations, so we
+//! assume they have data until proven otherwise.
 //!
 //! ## Special Cases
 //!
@@ -284,6 +293,28 @@ pub struct ColumnWidths {
     pub custom: Vec<usize>,
 }
 
+/// Facts about the repository that the layout needs and the items can't
+/// answer at skeleton time, when no task has reported yet.
+#[derive(Clone, Copy, Debug)]
+pub struct RepoFacts<'a> {
+    /// The repository has at least one remote configured, so a branch can
+    /// have an upstream. With none, `Remote⇅` is blank on every row, and
+    /// saying so here is what makes it drop before a populated column
+    /// instead of surviving one. Read from the bulk config map (O(1), no
+    /// fork) — see [`Repository::primary_remote`].
+    ///
+    /// [`Repository::primary_remote`]: worktrunk::git::Repository::primary_remote
+    pub has_remote: bool,
+
+    /// The project's `list.url` template, which sizes the URL column; `None`
+    /// when none is configured, and then the column renders nothing.
+    pub url_template: Option<&'a str>,
+
+    /// Largest PR/MR number any previous fetch cached, which sizes the CI
+    /// column before this run's fetch reports.
+    pub max_pr_number: Option<u64>,
+}
+
 /// Tracks which columns have actual data (vs just headers)
 #[derive(Clone, Copy, Debug)]
 pub struct ColumnDataFlags {
@@ -305,7 +336,21 @@ pub struct LayoutMetadata {
     pub status_position_mask: super::model::PositionMask,
 }
 
-const EMPTY_PENALTY: u8 = 10;
+/// Added to a column's base priority when it has nothing to show on any row.
+///
+/// Larger than the largest base priority, so an all-empty column ranks below
+/// every populated one — Message (13) survives a blank `Remote⇅`, not the
+/// other way round. Empty columns keep their relative order among themselves,
+/// so a wide terminal still lays them out predictably.
+const EMPTY_PENALTY: u8 = 14;
+
+/// Widest the Branch column grows to fit its longest name.
+///
+/// Without a cap one 58-character branch sizes the column for every row, and
+/// at a narrow width the table degenerates into a branch list with everything
+/// else dropped. Past this the name is elided with `…`, the way Message
+/// already is; `--format=json` keeps the full name either way.
+const MAX_BRANCH: usize = 32;
 
 #[derive(Clone, Copy, Debug)]
 pub struct DiffDisplayConfig {
@@ -526,7 +571,10 @@ pub struct LayoutConfig {
     pub main_worktree_path: PathBuf,
     pub max_message_len: usize,
     pub max_summary_len: usize,
-    pub hidden_column_count: usize,
+    /// Headers of the columns the terminal was too narrow for, in display
+    /// order. The summary footer names them, so a reader can tell what a wider
+    /// terminal (or `--format json`) would add.
+    pub hidden_columns: Vec<String>,
     pub status_position_mask: super::model::PositionMask,
     /// How every cell in this layout presents a reference with a URL behind it.
     /// Set once for the whole render — see [`LinkStyle`].
@@ -630,9 +678,11 @@ pub enum LinkStyle {
     /// An underlined OSC 8 link. A dev-server URL shows as `:3000` with the URL
     /// itself inside the escape.
     Linked,
-    /// The same short text, with neither escape nor underline: the picker feeds
-    /// its rows through skim, whose pipeline mangles OSC 8 into garbage like
-    /// `^[8;;…`. Nothing on those rows is clickable, so nothing is underlined.
+    /// The same short text, with neither escape nor underline: a picker row is
+    /// parsed by `ansi_to_tui` (`items::ansi_to_line`), whose OSC arm reads
+    /// to a BEL, while `osc8` terminates a link with ST — so the parser runs
+    /// off the end of the line and takes the link's own text with it. Nothing
+    /// on those rows is clickable, so nothing is underlined.
     /// The column is sized for the short form either way, so a dev-server URL
     /// still collapses to `:3000`.
     Unlinked,
@@ -661,7 +711,8 @@ impl LinkStyle {
 /// The two travel together because one fact decides both. `wt list` writes to
 /// the terminal, so it gets the full width and its escapes arrive intact. The
 /// picker hands its rows to skim, which grants the list only part of the
-/// terminal — the rest is the preview pane — and mangles OSC 8 on the way.
+/// terminal — the rest is the preview pane — and takes them link-free
+/// ([`LinkStyle::Unlinked`] has the reason).
 #[derive(Clone, Copy, Debug)]
 pub struct Destination {
     pub width: usize,
@@ -748,15 +799,20 @@ fn build_estimated_widths(
     tasks: &HashSet<TaskKind>,
     path_is_informative: bool,
     url_width: usize,
-    max_pr_number: Option<u64>,
     custom_widths: Vec<usize>,
+    facts: RepoFacts<'_>,
 ) -> LayoutMetadata {
     // Fixed widths for slow columns (require expensive git operations)
     // Values exceeding these widths use compact notation (K suffix)
     //
-    // Status column: Must match PositionMask::FULL width for consistent alignment
-    // PositionMask::FULL allocates: 1+1+1+1+1+1+2 = 8 chars (7 positions)
-    let status_fixed = fit_header(ColumnKind::Status.header(), 8);
+    // Status column: every row renders all seven positions of
+    // `PositionMask::FULL`, so the column has to be at least that wide or the
+    // cell overflows it. Read the width off the mask rather than restating its
+    // arithmetic — the two can't drift.
+    let status_fixed = fit_header(
+        ColumnKind::Status.header(),
+        super::model::PositionMask::FULL.total_width(),
+    );
     let working_diff_fixed = fit_header(ColumnKind::WorkingDiff.header(), 9); // "+999 -999"
     let ahead_behind_fixed = fit_header(ColumnKind::AheadBehind.header(), 7); // "↑99 ↓99"
     let branch_diff_fixed = fit_header(ColumnKind::BranchDiff.header(), 9); // "+999 -999"
@@ -769,22 +825,23 @@ fn build_estimated_widths(
     // the ratcheted cache sizes the next invocation correctly.
     let ci_estimate = fit_header(
         ColumnKind::CiStatus.header(),
-        super::ci_status::pr_ref_width(max_pr_number.unwrap_or(9999)),
+        super::ci_status::pr_ref_width(facts.max_pr_number.unwrap_or(9999)),
     );
 
     // Assume columns will have data (better to show and hide than to not show).
     // This is a limitation of progressive mode - we can't know which columns have data
     // before the data arrives, so empty penalties don't apply properly.
     //
-    // Exceptions that we can compute instantly from items:
+    // Exceptions we can settle before any task reports:
     // - path: true only if a worktree is off-template or shares its branch
-    // - branch_diff/ci_status: false if their task isn't in the run plan
+    // - branch_diff/ci_status/url: false if their task isn't in the run plan
+    // - upstream: false when the repo has no remote, so no branch can track one
     let data_flags = ColumnDataFlags {
         status: true,
         working_diff: true,
         ahead_behind: true,
         branch_diff: tasks.contains(&TaskKind::BranchDiff),
-        upstream: true,
+        upstream: facts.has_remote,
         url: tasks.contains(&TaskKind::UrlStatus),
         ci_status: tasks.contains(&TaskKind::CiStatus),
         path: path_is_informative,
@@ -958,9 +1015,21 @@ fn allocate_columns_with_priority(
         true
     };
 
+    // Whether a column that has something to show was left out. Priority order
+    // alone doesn't settle "an all-empty column never outranks a populated
+    // one": the loop keeps going after a column doesn't fit, so a narrow blank
+    // `Remote⇅` would otherwise slip into the gap a wider Message just failed
+    // to fill. Every empty candidate sorts after every populated one
+    // (EMPTY_PENALTY exceeds the largest base priority), so one flag covers it.
+    let mut dropped_populated = false;
+
     // Allocate columns in priority order
     for candidate in candidates {
         let spec = candidate.spec;
+        let is_empty_column = !spec.kind.has_data(&metadata.data_flags);
+        if is_empty_column && dropped_populated {
+            continue;
+        }
 
         // Flexible columns: allocate at minimum, expand post-loop
         if matches!(spec.kind, ColumnKind::Summary | ColumnKind::Message) {
@@ -969,6 +1038,7 @@ fn allocate_columns_with_priority(
                 _ => MIN_MESSAGE,
             };
             let spacing_cost = if needs_spacing(&pending) { spacing } else { 0 };
+            let mut allocated = false;
             if remaining > spacing_cost {
                 let available = remaining - spacing_cost;
                 if available >= min_width {
@@ -979,8 +1049,10 @@ fn allocate_columns_with_priority(
                         width: min_width,
                         format: ColumnFormat::Text,
                     });
+                    allocated = true;
                 }
             }
+            dropped_populated |= !allocated && !is_empty_column;
             continue;
         }
 
@@ -1006,6 +1078,8 @@ fn allocate_columns_with_priority(
                 width: allocated,
                 format,
             });
+        } else if !is_empty_column {
+            dropped_populated = true;
         }
     }
 
@@ -1121,21 +1195,34 @@ fn allocate_columns_with_priority(
         });
     }
 
-    // Count how many columns were hidden (not allocated).
-    // This includes both data columns and empty columns that could show with more width.
+    // Name the columns that were dropped (not allocated), in display order —
+    // the footer reports them, so it says what widening the terminal would add.
+    // This includes both data columns and empty columns that could show with
+    // more width.
     let allocated_kinds: std::collections::HashSet<_> =
         columns.iter().map(|col| col.kind).collect();
-    let hidden_column_count = candidate_kinds
+    let mut hidden_kinds: Vec<_> = candidate_kinds
         .iter()
+        .copied()
         .filter(|kind| !allocated_kinds.contains(kind))
-        .count();
+        .collect();
+    // Display order, which a `[list] columns` selection defines;
+    // `column_display_index` is only the registry order it falls back to.
+    hidden_kinds.sort_by_key(|&kind| display_sort_key(kind, selected));
+    let hidden_columns = hidden_kinds
+        .into_iter()
+        .map(|kind| match kind {
+            ColumnKind::Custom(i) => custom_columns[i as usize].name.clone(),
+            kind => kind.header().to_string(),
+        })
+        .collect();
 
     LayoutConfig {
         columns,
         main_worktree_path,
         max_message_len,
         max_summary_len,
-        hidden_column_count,
+        hidden_columns,
         status_position_mask: metadata.status_position_mask,
         link_style,
     }
@@ -1155,7 +1242,7 @@ fn allocate_columns_with_priority(
 /// - Paths (relative to main worktree)
 ///
 /// Pre-allocated estimates (generous to minimize truncation):
-/// - Status: 8 chars (PositionMask::FULL, 7 positions)
+/// - Status: `PositionMask::FULL.total_width()` (7 positions, 8 chars today)
 /// - Working diff: 9 chars ("+999 -999")
 /// - Ahead/behind: 7 chars ("↑99 ↓99")
 /// - Branch diff: 9 chars ("+999 -999")
@@ -1170,9 +1257,8 @@ pub fn calculate_layout_with_width(
     tasks: &HashSet<TaskKind>,
     destination: Destination,
     main_worktree_path: &Path,
-    url_template: Option<&str>,
-    max_pr_number: Option<u64>,
     columns: ColumnSelection,
+    facts: RepoFacts<'_>,
 ) -> LayoutConfig {
     let link_style = destination.link_style;
     let custom_columns = columns.custom;
@@ -1180,7 +1266,7 @@ pub fn calculate_layout_with_width(
     // Include branch names from both worktrees and standalone branches
     let longest_branch = items
         .iter()
-        .filter_map(|item| item.branch.as_deref())
+        .filter_map(|item| item.branch())
         .max_by_key(|b| b.width());
 
     // A detached row shows its abbreviated HEAD in this column
@@ -1189,7 +1275,7 @@ pub fn calculate_layout_with_width(
     // and stretches further still to disambiguate.
     let detached_width = items
         .iter()
-        .filter(|item| item.branch.is_none())
+        .filter(|item| item.branch().is_none())
         .map(|item| item.short_sha.width())
         .max();
 
@@ -1198,27 +1284,30 @@ pub fn calculate_layout_with_width(
         .into_iter()
         .chain(detached_width)
         .max()
-        .unwrap_or(0);
+        .unwrap_or(0)
+        .min(MAX_BRANCH);
     let max_branch = fit_header(ColumnKind::Branch.header(), max_branch);
 
     let path_data_width = items
         .iter()
         .filter_map(|item| item.worktree_path())
-        .map(|path| shorten_path(path.as_path(), main_worktree_path).width())
+        .map(|path| shorten_path(path, main_worktree_path).width())
         .max()
         .unwrap_or(0);
     let max_path_width = fit_header(ColumnKind::Path.header(), path_data_width);
 
     // The Path column is redundant with Branch unless a path says something the
-    // branch name doesn't: the worktree sits off-template, or two worktrees share
-    // the branch and the path is the only thing telling their rows apart.
-    let path_is_informative = items
-        .iter()
-        .filter_map(|item| item.worktree_data())
-        .any(|data| data.branch_worktree_mismatch || data.duplicate_branch);
+    // branch name doesn't: the worktree sits off-template, two worktrees share
+    // the branch and the path is the only thing telling their rows apart, or a
+    // detached row's Branch cell is a hash, which names no directory at all.
+    let path_is_informative = items.iter().any(|item| {
+        item.worktree_data().is_some_and(|data| {
+            data.branch_worktree_mismatch || data.duplicate_branch || item.branch().is_none()
+        })
+    });
 
     // Estimate URL width from template (heuristic, no expansion needed)
-    let url_width = estimate_url_width(url_template, link_style);
+    let url_width = estimate_url_width(facts.url_template, link_style);
 
     // Custom column widths are measured, not estimated: values were expanded
     // before layout. A column empty on every row stays 0 and is excluded.
@@ -1246,8 +1335,8 @@ pub fn calculate_layout_with_width(
         tasks,
         path_is_informative,
         url_width,
-        max_pr_number,
         custom_widths,
+        facts,
     );
 
     // Sized from the abbreviated SHAs themselves — `%h` is `core.abbrev` wide
@@ -1277,6 +1366,17 @@ mod tests {
     use super::*;
     use worktrunk::git::LineDiff;
     use worktrunk::styling::terminal_width;
+
+    /// The default repository context: a remote exists, with no dev-server URL
+    /// template or cached PR/MR number. Tests that care about one of these
+    /// override it (`RepoFacts { has_remote: false, ..test_facts() }`).
+    fn test_facts() -> RepoFacts<'static> {
+        RepoFacts {
+            has_remote: true,
+            url_template: None,
+            max_pr_number: None,
+        }
+    }
 
     #[test]
     fn test_fit_header() {
@@ -1529,7 +1629,8 @@ mod tests {
         // Full run plan means all tasks are computed (equivalent to --full)
         // path_is_informative=true to test the path flag is passed through
         // url_width=0 since we're not testing URL column here
-        let metadata = build_estimated_widths(20, &full_run_tasks(), true, 0, None, Vec::new());
+        let metadata =
+            build_estimated_widths(20, &full_run_tasks(), true, 0, Vec::new(), test_facts());
         let widths = metadata.widths;
 
         // Line diffs (Signs variant: +/-) allocate 3 digits for 100-999 range
@@ -1599,77 +1700,69 @@ mod tests {
     #[test]
     fn test_ci_column_width_from_max_pr_number() {
         // Cached largest number sizes the column: "#12345" → 6
-        let metadata =
-            build_estimated_widths(20, &full_run_tasks(), false, 0, Some(12345), Vec::new());
+        let metadata = build_estimated_widths(
+            20,
+            &full_run_tasks(),
+            false,
+            0,
+            Vec::new(),
+            RepoFacts {
+                max_pr_number: Some(12345),
+                ..test_facts()
+            },
+        );
         assert_eq!(metadata.widths.ci_status, 6);
 
         // Never below header width ("CI" → 2)
-        let metadata = build_estimated_widths(20, &full_run_tasks(), false, 0, Some(1), Vec::new());
+        let metadata = build_estimated_widths(
+            20,
+            &full_run_tasks(),
+            false,
+            0,
+            Vec::new(),
+            RepoFacts {
+                max_pr_number: Some(1),
+                ..test_facts()
+            },
+        );
         assert_eq!(metadata.widths.ci_status, 2);
     }
 
     #[test]
     fn test_visible_columns_follow_gap_rule() {
         use crate::commands::list::model::{
-            AheadBehind, BranchDiffTotals, CommitDetails, ItemKind, ListItem, StatusSymbols,
-            UpstreamStatus, WorktreeData,
+            AheadBehind, BranchDiffTotals, CommitDetails, ListItem, UpstreamStatus, WorktreeData,
         };
 
         // Create test data with specific widths to verify position calculation
-        let item = ListItem {
-            head: "abc12345".to_string(),
-            short_sha: "abc1234".to_string(),
-            branch: Some("feature".to_string()),
-            commit: Some(CommitDetails {
-                timestamp: 1234567890,
-                commit_message: "Test commit message".to_string(),
-            }),
-            counts: Some(AheadBehind {
-                ahead: 5,
-                behind: 10,
-            }),
-            branch_diff: Some(BranchDiffTotals {
-                diff: LineDiff::from((200, 30)),
-            }),
-            committed_trees_match: Some(false),
-            has_file_changes: Some(true),
-            would_merge_add: None,
-            is_patch_id_match: None,
-            is_ancestor: None,
-            is_orphan: None,
-            upstream: Some(UpstreamStatus {
-                remote: Some("origin".to_string()),
-                ahead: 4,
-                behind: 2,
-                ..Default::default()
-            }),
-            pr_status: None,
-            url: None,
-            url_active: None,
-            summary: None,
-            has_merge_tree_conflicts: None,
-            user_marker: None,
-            status_symbols: StatusSymbols::default(),
-            statusline: None,
-            custom_values: Vec::new(),
-            seeded: Default::default(),
-            kind: ItemKind::Worktree(Box::new(WorktreeData {
-                path: PathBuf::from("/test/path"),
-                detached: false,
-                locked: None,
-                prunable: None,
+        let mut item = ListItem::new_worktree(
+            worktrunk::git::WorktreeRef::new("/test/path", Some("feature"), "abc12345"),
+            WorktreeData {
                 working_tree_diff: Some(LineDiff::from((100, 50))),
-                working_tree_status: None,
-                has_conflicts: None,
-                has_working_tree_conflicts: None,
                 git_operation: Some(None),
-                is_main: false,
-                is_current: false,
-                is_previous: false,
-                branch_worktree_mismatch: false,
-                duplicate_branch: false,
-            })),
-        };
+                ..Default::default()
+            },
+        );
+        item.short_sha = "abc1234".to_string();
+        item.commit = Some(CommitDetails {
+            timestamp: 1234567890,
+            commit_message: "Test commit message".to_string(),
+        });
+        item.counts = Some(AheadBehind {
+            ahead: 5,
+            behind: 10,
+        });
+        item.branch_diff = Some(BranchDiffTotals {
+            diff: LineDiff::from((200, 30)),
+        });
+        item.committed_trees_match = Some(false);
+        item.has_file_changes = Some(true);
+        item.upstream = Some(UpstreamStatus {
+            remote: Some("origin".to_string()),
+            ahead: 4,
+            behind: 2,
+            ..Default::default()
+        });
 
         let items = vec![item];
         let tasks = run_except(&[TaskKind::BranchDiff, TaskKind::CiStatus]);
@@ -1682,12 +1775,11 @@ mod tests {
                 link_style: LinkStyle::Expanded,
             },
             &main_worktree_path,
-            None,
-            None,
             ColumnSelection {
                 custom: &[],
                 selected: None,
             },
+            test_facts(),
         );
 
         assert!(
@@ -1736,60 +1828,34 @@ mod tests {
     #[test]
     fn test_column_positions_with_empty_columns() {
         use crate::commands::list::model::{
-            AheadBehind, BranchDiffTotals, CommitDetails, ItemKind, ListItem, StatusSymbols,
-            UpstreamStatus, WorktreeData,
+            AheadBehind, BranchDiffTotals, CommitDetails, ListItem, UpstreamStatus, WorktreeData,
         };
 
         // Create minimal data - most columns will be empty
-        let item = ListItem {
-            head: "abc12345".to_string(),
-            short_sha: "abc1234".to_string(),
-            branch: Some("main".to_string()),
-            commit: Some(CommitDetails {
-                timestamp: 1234567890,
-                commit_message: "Test".to_string(),
-            }),
-            counts: Some(AheadBehind {
-                ahead: 0,
-                behind: 0,
-            }),
-            branch_diff: Some(BranchDiffTotals {
-                diff: LineDiff::default(),
-            }),
-            committed_trees_match: Some(false),
-            has_file_changes: Some(true),
-            would_merge_add: None,
-            is_patch_id_match: None,
-            is_ancestor: None,
-            is_orphan: None,
-            upstream: Some(UpstreamStatus::default()),
-            pr_status: None,
-            url: None,
-            url_active: None,
-            summary: None,
-            has_merge_tree_conflicts: None,
-            user_marker: None,
-            status_symbols: StatusSymbols::default(),
-            statusline: None,
-            custom_values: Vec::new(),
-            seeded: Default::default(),
-            kind: ItemKind::Worktree(Box::new(WorktreeData {
-                path: PathBuf::from("/test"),
-                detached: false,
-                locked: None,
-                prunable: None,
+        let mut item = ListItem::new_worktree(
+            worktrunk::git::WorktreeRef::new("/test", Some("main"), "abc12345"),
+            WorktreeData {
                 working_tree_diff: Some(LineDiff::default()),
-                working_tree_status: None,
-                has_conflicts: None,
-                has_working_tree_conflicts: None,
                 git_operation: Some(None),
                 is_main: true, // Primary worktree: no ahead/behind shown
-                is_current: false,
-                is_previous: false,
-                branch_worktree_mismatch: false,
-                duplicate_branch: false,
-            })),
-        };
+                ..Default::default()
+            },
+        );
+        item.short_sha = "abc1234".to_string();
+        item.commit = Some(CommitDetails {
+            timestamp: 1234567890,
+            commit_message: "Test".to_string(),
+        });
+        item.counts = Some(AheadBehind {
+            ahead: 0,
+            behind: 0,
+        });
+        item.branch_diff = Some(BranchDiffTotals {
+            diff: LineDiff::default(),
+        });
+        item.committed_trees_match = Some(false);
+        item.has_file_changes = Some(true);
+        item.upstream = Some(UpstreamStatus::default());
 
         let items = vec![item];
         let tasks = run_except(&[TaskKind::BranchDiff, TaskKind::CiStatus]);
@@ -1802,12 +1868,11 @@ mod tests {
                 link_style: LinkStyle::Expanded,
             },
             &main_worktree_path,
-            None,
-            None,
             ColumnSelection {
                 custom: &[],
                 selected: None,
             },
+            test_facts(),
         );
 
         assert!(
@@ -1883,48 +1948,16 @@ mod tests {
 
     /// Helper: create a minimal ListItem for layout tests.
     fn make_test_item(branch: &str) -> super::super::model::ListItem {
-        use crate::commands::list::model::{ItemKind, StatusSymbols, WorktreeData};
-        super::super::model::ListItem {
-            head: "abc12345".to_string(),
-            short_sha: "abc1234".to_string(),
-            branch: Some(branch.to_string()),
-            commit: None,
-            counts: None,
-            branch_diff: None,
-            committed_trees_match: None,
-            has_file_changes: None,
-            would_merge_add: None,
-            is_patch_id_match: None,
-            is_ancestor: None,
-            is_orphan: None,
-            upstream: None,
-            pr_status: None,
-            url: None,
-            url_active: None,
-            summary: None,
-            has_merge_tree_conflicts: None,
-            user_marker: None,
-            status_symbols: StatusSymbols::default(),
-            statusline: None,
-            custom_values: Vec::new(),
-            seeded: Default::default(),
-            kind: ItemKind::Worktree(Box::new(WorktreeData {
-                path: PathBuf::from("/test/wt"),
-                detached: false,
-                locked: None,
-                prunable: None,
-                working_tree_diff: None,
-                working_tree_status: None,
-                has_conflicts: None,
-                has_working_tree_conflicts: None,
+        use crate::commands::list::model::WorktreeData;
+        let mut item = super::super::model::ListItem::new_worktree(
+            worktrunk::git::WorktreeRef::new("/test/wt", Some(branch), "abc12345"),
+            WorktreeData {
                 git_operation: Some(None),
-                is_main: false,
-                is_current: false,
-                is_previous: false,
-                branch_worktree_mismatch: false,
-                duplicate_branch: false,
-            })),
-        }
+                ..Default::default()
+            },
+        );
+        item.short_sha = "abc1234".to_string();
+        item
     }
 
     /// Helper: compute layout with explicit terminal width and run plan.
@@ -1938,12 +1971,11 @@ mod tests {
                 link_style: LinkStyle::Expanded,
             },
             Path::new("/test"),
-            None,
-            None,
             ColumnSelection {
                 custom: &[],
                 selected: None,
             },
+            test_facts(),
         )
     }
 
@@ -1984,12 +2016,11 @@ mod tests {
                 link_style: LinkStyle::Expanded,
             },
             Path::new("/test"),
-            None,
-            None,
             ColumnSelection {
                 custom: &[],
                 selected: Some(&selected),
             },
+            test_facts(),
         );
 
         let kinds: Vec<ColumnKind> = layout.columns.iter().map(|c| c.kind).collect();
@@ -2007,7 +2038,7 @@ mod tests {
         // (they were never candidates).
         assert!(find_column(&layout, ColumnKind::Status).is_none());
         assert!(find_column(&layout, ColumnKind::Message).is_none());
-        assert_eq!(layout.hidden_column_count, 0);
+        assert!(layout.hidden_columns.is_empty());
     }
 
     #[test]
@@ -2046,12 +2077,11 @@ mod tests {
                 link_style: LinkStyle::Expanded,
             },
             Path::new("/test"),
-            None,
-            None,
             ColumnSelection {
                 custom: &custom,
                 selected: Some(&selected),
             },
+            test_facts(),
         );
 
         let kinds: Vec<ColumnKind> = layout.columns.iter().map(|c| c.kind).collect();
@@ -2092,12 +2122,11 @@ mod tests {
                 link_style: LinkStyle::Expanded,
             },
             Path::new("/test"),
-            None,
-            None,
             ColumnSelection {
                 custom: &custom,
                 selected: None,
             },
+            test_facts(),
         );
         assert!(
             find_column(&layout, ColumnKind::Custom(0)).is_some(),
@@ -2112,8 +2141,14 @@ mod tests {
     /// runs.
     #[test]
     fn test_branch_column_fits_a_detached_rows_sha() {
-        let mut detached = make_test_item("main");
-        detached.branch = None;
+        let mut detached = super::super::model::ListItem::new_worktree(
+            worktrunk::git::WorktreeRef::new("/test/detached", None, "abc12345"),
+            super::super::model::WorktreeData {
+                detached: true,
+                ..Default::default()
+            },
+        );
+        detached.short_sha = "abc1234".to_string();
         let items = vec![make_test_item("main"), detached];
 
         let layout = calculate_layout_with_width(
@@ -2124,12 +2159,11 @@ mod tests {
                 link_style: LinkStyle::Expanded,
             },
             Path::new("/test"),
-            None,
-            None,
             ColumnSelection {
                 custom: &[],
                 selected: None,
             },
+            test_facts(),
         );
 
         let branch = find_column(&layout, ColumnKind::Branch).expect("Branch allocated");
@@ -2162,12 +2196,11 @@ mod tests {
                 link_style: LinkStyle::Expanded,
             },
             Path::new("/test"),
-            None,
-            None,
             ColumnSelection {
                 custom: &[],
                 selected: Some(&selected),
             },
+            test_facts(),
         );
         assert!(
             find_column(&unplanned, ColumnKind::CiStatus).is_none(),
@@ -2185,12 +2218,11 @@ mod tests {
                 link_style: LinkStyle::Expanded,
             },
             Path::new("/test"),
-            None,
-            None,
             ColumnSelection {
                 custom: &[],
                 selected: Some(&selected),
             },
+            test_facts(),
         );
         assert!(
             find_column(&planned, ColumnKind::CiStatus).is_some(),
@@ -2213,12 +2245,11 @@ mod tests {
                 link_style: LinkStyle::Expanded,
             },
             Path::new("/test"),
-            None,
-            None,
             ColumnSelection {
                 custom: &[],
                 selected: Some(&selected),
             },
+            test_facts(),
         );
         assert!(
             find_column(&layout, ColumnKind::Branch).is_some(),
@@ -2408,48 +2439,16 @@ mod tests {
 
     /// Helper: create a test item with a specific worktree path and no mismatch.
     fn make_test_item_at(branch: &str, path: &str) -> super::super::model::ListItem {
-        use crate::commands::list::model::{ItemKind, StatusSymbols, WorktreeData};
-        super::super::model::ListItem {
-            head: "abc12345".to_string(),
-            short_sha: "abc1234".to_string(),
-            branch: Some(branch.to_string()),
-            commit: None,
-            counts: None,
-            branch_diff: None,
-            committed_trees_match: None,
-            has_file_changes: None,
-            would_merge_add: None,
-            is_patch_id_match: None,
-            is_ancestor: None,
-            is_orphan: None,
-            upstream: None,
-            pr_status: None,
-            url: None,
-            url_active: None,
-            summary: None,
-            has_merge_tree_conflicts: None,
-            user_marker: None,
-            status_symbols: StatusSymbols::default(),
-            statusline: None,
-            custom_values: Vec::new(),
-            seeded: Default::default(),
-            kind: ItemKind::Worktree(Box::new(WorktreeData {
-                path: PathBuf::from(path),
-                detached: false,
-                locked: None,
-                prunable: None,
-                working_tree_diff: None,
-                working_tree_status: None,
-                has_conflicts: None,
-                has_working_tree_conflicts: None,
+        use crate::commands::list::model::WorktreeData;
+        let mut item = super::super::model::ListItem::new_worktree(
+            worktrunk::git::WorktreeRef::new(path, Some(branch), "abc12345"),
+            WorktreeData {
                 git_operation: Some(None),
-                is_main: false,
-                is_current: false,
-                is_previous: false,
-                branch_worktree_mismatch: false,
-                duplicate_branch: false,
-            })),
-        }
+                ..Default::default()
+            },
+        );
+        item.short_sha = "abc1234".to_string();
+        item
     }
 
     /// When paths are consistent (no mismatch), Path should yield space to Summary.
@@ -2466,7 +2465,7 @@ mod tests {
         let items = vec![
             {
                 let mut item = make_test_item_at("main", "/test/worktrunk");
-                if let super::super::model::ItemKind::Worktree(ref mut data) = item.kind {
+                if let Some(data) = item.worktree_data_mut() {
                     data.is_main = true;
                 }
                 item
@@ -2489,12 +2488,11 @@ mod tests {
                 link_style: LinkStyle::Expanded,
             },
             main_path,
-            None,
-            None,
             ColumnSelection {
                 custom: &[],
                 selected: None,
             },
+            test_facts(),
         );
         assert!(
             find_column(&layout_wide, ColumnKind::Summary).is_some(),
@@ -2516,12 +2514,11 @@ mod tests {
                 link_style: LinkStyle::Expanded,
             },
             main_path,
-            None,
-            None,
             ColumnSelection {
                 custom: &[],
                 selected: None,
             },
+            test_facts(),
         );
         let summary_170 = find_column(&layout_170, ColumnKind::Summary)
             .expect("Summary should be present at 170")
@@ -2538,8 +2535,7 @@ mod tests {
     #[test]
     fn test_snapshot_path_yields_to_summary() {
         use crate::commands::list::model::{
-            AheadBehind, BranchDiffTotals, CommitDetails, ItemKind, StatusSymbols, UpstreamStatus,
-            WorktreeData,
+            AheadBehind, BranchDiffTotals, CommitDetails, UpstreamStatus, WorktreeData,
         };
         use worktrunk::git::LineDiff;
 
@@ -2569,50 +2565,27 @@ mod tests {
                 behind: 0,
                 ..Default::default()
             });
-            super::super::model::ListItem {
-                head: "a620bcfe".to_string(),
-                short_sha: "a620bcf".to_string(),
-                branch: Some(branch.to_string()),
-                commit: Some(CommitDetails {
-                    timestamp: ts,
-                    commit_message: "Some commit message".to_string(),
-                }),
-                counts,
-                branch_diff,
-                committed_trees_match: None,
-                has_file_changes: None,
-                would_merge_add: None,
-                is_patch_id_match: None,
-                is_ancestor: None,
-                is_orphan: None,
-                upstream: upstream_status,
-                pr_status: Some(None), // loaded, no CI
-                url: None,
-                url_active: None,
-                summary: Some(summary.map(|s| s.to_string())),
-                has_merge_tree_conflicts: None,
-                user_marker: None,
-                status_symbols: StatusSymbols::default(),
-                statusline: None,
-                custom_values: Vec::new(),
-                seeded: Default::default(),
-                kind: ItemKind::Worktree(Box::new(WorktreeData {
-                    path: PathBuf::from(path),
-                    detached: false,
-                    locked: None,
-                    prunable: None,
+            let mut item = super::super::model::ListItem::new_worktree(
+                worktrunk::git::WorktreeRef::new(path, Some(branch), "a620bcfe"),
+                WorktreeData {
                     working_tree_diff: Some(LineDiff::default()),
-                    working_tree_status: None,
-                    has_conflicts: None,
-                    has_working_tree_conflicts: None,
                     git_operation: Some(None),
                     is_main,
                     is_current,
-                    is_previous: false,
-                    branch_worktree_mismatch: false,
-                    duplicate_branch: false,
-                })),
-            }
+                    ..Default::default()
+                },
+            );
+            item.short_sha = "a620bcf".to_string();
+            item.commit = Some(CommitDetails {
+                timestamp: ts,
+                commit_message: "Some commit message".to_string(),
+            });
+            item.counts = counts;
+            item.branch_diff = branch_diff;
+            item.upstream = upstream_status;
+            item.pr_status = Some(None); // loaded, no CI
+            item.summary = Some(summary.map(str::to_string));
+            item
         };
 
         let items = vec![
@@ -2672,12 +2645,11 @@ mod tests {
                 link_style: LinkStyle::Expanded,
             },
             main_path,
-            None,
-            None,
             ColumnSelection {
                 custom: &[],
                 selected: None,
             },
+            test_facts(),
         );
 
         let mut lines = Vec::new();
@@ -2713,12 +2685,11 @@ mod tests {
                 link_style: LinkStyle::Expanded,
             },
             main_path,
-            None,
-            None,
             ColumnSelection {
                 custom: &[],
                 selected: None,
             },
+            test_facts(),
         );
         let branch = find_column(&layout, ColumnKind::Branch);
         assert!(
@@ -2740,12 +2711,11 @@ mod tests {
                 link_style: LinkStyle::Expanded,
             },
             main_path,
-            None,
-            None,
             ColumnSelection {
                 custom: &[],
                 selected: None,
             },
+            test_facts(),
         );
         let branch = find_column(&layout, ColumnKind::Branch).unwrap();
         assert!(
@@ -2807,12 +2777,11 @@ mod tests {
                 link_style: LinkStyle::Expanded,
             },
             Path::new("/test"),
-            None,
-            None,
             ColumnSelection {
                 custom: &columns,
                 selected: None,
             },
+            test_facts(),
         );
 
         // Value wider than max_width clamps to it
@@ -2852,18 +2821,17 @@ mod tests {
                 link_style: LinkStyle::Expanded,
             },
             Path::new("/test"),
-            None,
-            None,
             ColumnSelection {
                 custom: &columns,
                 selected: None,
             },
+            test_facts(),
         );
 
         // Values are final before layout, so an all-empty column is excluded
         // entirely — not allocated and not counted as hidden
         assert!(find_column(&layout, ColumnKind::Custom(0)).is_none());
-        assert_eq!(layout.hidden_column_count, 0);
+        assert!(layout.hidden_columns.is_empty());
     }
 
     #[test]
@@ -2881,18 +2849,17 @@ mod tests {
                 link_style: LinkStyle::Expanded,
             },
             Path::new("/test"),
-            None,
-            None,
             ColumnSelection {
                 custom: &columns,
                 selected: None,
             },
+            test_facts(),
         );
 
         // Priority 9 loses to the core columns when space runs out, and the
         // unallocated candidate counts toward the hidden-column footer
         assert!(find_column(&narrow, ColumnKind::Custom(0)).is_none());
         assert!(find_column(&narrow, ColumnKind::Branch).is_some());
-        assert!(narrow.hidden_column_count > 0);
+        assert!(!narrow.hidden_columns.is_empty());
     }
 }

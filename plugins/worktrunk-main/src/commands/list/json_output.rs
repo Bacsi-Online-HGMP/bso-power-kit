@@ -115,6 +115,11 @@ pub struct JsonItem {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub symbols: Option<String>,
 
+    /// Branch marker stored via `wt config state marker`; absent when none is
+    /// set. The same string is the last glyph in `symbols`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub marker: Option<String>,
+
     /// Custom variables stored via `wt config state vars`
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     pub vars: BTreeMap<String, String>,
@@ -279,7 +284,7 @@ impl JsonItem {
         ci_provider_override: Option<&str>,
         custom_columns: &[ResolvedCustomColumn],
     ) -> Self {
-        let (kind_str, worktree_data) = match &item.kind {
+        let (kind_str, worktree_data) = match item.kind() {
             ItemKind::Worktree(data) => ("worktree", Some(data.as_ref())),
             // Local and remote branch rows both serialize as "branch" — the
             // remote-qualified `branch` name (e.g. "origin/feature") already
@@ -297,10 +302,10 @@ impl JsonItem {
         // `core.abbrev` and disambiguates without an extra subprocess. Lives on
         // `ListItem` directly so prunable worktrees still carry it even though
         // their `commit` (timestamp + message) is intentionally left empty.
-        let sha = if item.head == worktrunk::git::NULL_OID {
+        let sha = if item.head() == worktrunk::git::NULL_OID {
             String::new()
         } else {
-            item.head.clone()
+            item.head().to_string()
         };
         let commit = JsonCommit {
             sha,
@@ -362,7 +367,7 @@ impl JsonItem {
         let remote = item
             .upstream
             .as_ref()
-            .and_then(|u| upstream_to_json(u, &item.branch));
+            .and_then(|u| upstream_to_json(u, item.branch()));
 
         // Worktree state
         let worktree = worktree_data.map(|data| {
@@ -375,7 +380,7 @@ impl JsonItem {
         });
 
         // Path
-        let path = worktree_data.map(|d| d.path.clone());
+        let path = item.worktree_path().map(std::path::Path::to_path_buf);
 
         // CI status
         let ci = item
@@ -387,9 +392,10 @@ impl JsonItem {
         // Statusline and symbols (raw, without ANSI codes)
         let statusline = item.statusline.clone();
         let symbols = Some(format_raw_symbols(&item.status_symbols)).filter(|s| !s.is_empty());
+        let marker = item.user_marker.clone().flatten();
 
         // Per-branch vars data (pre-fetched, moved out to avoid cloning)
-        let vars = super::json_v2::take_vars(item.branch.as_deref(), all_vars);
+        let vars = super::json_v2::take_vars(item.branch(), all_vars);
 
         // Summary: flatten Option<Option<String>> → Option<String>
         let summary = item.summary.as_ref().and_then(|s| s.clone());
@@ -398,7 +404,7 @@ impl JsonItem {
         let columns = super::json_v2::columns_map(custom_columns, &item.custom_values);
 
         JsonItem {
-            branch: item.branch.clone(),
+            branch: item.branch().map(str::to_string),
             path,
             kind: kind_str,
             commit,
@@ -420,6 +426,7 @@ impl JsonItem {
             summary,
             statusline,
             symbols,
+            marker,
             vars,
             columns,
         }
@@ -427,13 +434,13 @@ impl JsonItem {
 }
 
 /// Convert UpstreamStatus to JsonRemote
-fn upstream_to_json(upstream: &UpstreamStatus, branch: &Option<String>) -> Option<JsonRemote> {
+fn upstream_to_json(upstream: &UpstreamStatus, branch: Option<&str>) -> Option<JsonRemote> {
     upstream.active().map(|active| {
         // Use local branch name since UpstreamStatus only stores the remote name,
         // not the full tracking refspec. In most cases these match (e.g., feature -> origin/feature).
         JsonRemote {
             name: active.remote.to_string(),
-            branch: branch.clone().unwrap_or_default(),
+            branch: branch.unwrap_or_default().to_string(),
             ahead: active.ahead,
             behind: active.behind,
         }
@@ -451,7 +458,10 @@ fn worktree_state_to_json(
     // (metadata family) hasn't been populated yet; fall through to the
     // direct-field fallback below.
     match status_symbols.worktree_state {
-        None | Some(WorktreeState::None) => {}
+        // `Detached` has no `state` string of its own: the sibling `detached`
+        // field already carries it, and naming it twice would be the only
+        // state this object reports in two places.
+        None | Some(WorktreeState::None | WorktreeState::Detached) => {}
         Some(WorktreeState::Branch) => return (Some("no_worktree"), None),
         Some(WorktreeState::BranchWorktreeMismatch) => {
             return (Some("branch_worktree_mismatch"), None);
@@ -496,7 +506,7 @@ impl JsonCi {
             // they're deliberately not surfaced here — `wt list --json` stays
             // scoped to CI/review status. Add them (with
             // `skip_serializing_if = "Option::is_none"` plus a row in the
-            // docs/content/list.md ci-object table) if a JSON consumer needs them.
+            // docs/src/content/docs/list.md ci-object table) if a JSON consumer needs them.
         }
     }
 }
@@ -771,7 +781,7 @@ mod tests {
             ..Default::default()
         };
         let branch = Some("feature".to_string());
-        let json = upstream_to_json(&upstream, &branch);
+        let json = upstream_to_json(&upstream, branch.as_deref());
         assert!(json.is_some());
         let json = json.unwrap();
         assert_eq!(json.name, "origin");
@@ -789,7 +799,7 @@ mod tests {
             ..Default::default()
         };
         let branch = Some("feature".to_string());
-        let json = upstream_to_json(&upstream, &branch);
+        let json = upstream_to_json(&upstream, branch.as_deref());
         assert!(json.is_none());
     }
 
@@ -802,7 +812,7 @@ mod tests {
             ..Default::default()
         };
         let branch = None;
-        let json = upstream_to_json(&upstream, &branch);
+        let json = upstream_to_json(&upstream, branch);
         assert!(json.is_some());
         let json = json.unwrap();
         assert_eq!(json.branch, ""); // Empty string when branch is None
@@ -814,7 +824,6 @@ mod tests {
 
     fn make_worktree_data() -> WorktreeData {
         WorktreeData {
-            path: PathBuf::from("/test/path"),
             is_main: false,
             is_current: false,
             is_previous: false,

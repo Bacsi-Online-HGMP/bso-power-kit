@@ -337,6 +337,10 @@ Test coverage grew from 39 (v1.9.9) to 410 across the v2 line; the url_safety su
 - **v2.2.2 (July 2026): full-review maintenance.** Corrected GBP Q&A handling, AI Mode model naming, image-model IDs, hook input behavior, and added a strict reference-graph consistency gate.
 - **v2.2.3 (July 2026): prompt-hygiene alignment.** Normalized emphasis and punctuation across the prompt surface without changing behavior, routing, or output contracts.
 - **v2.2.4 (July 2026): community maintenance.** Added the managed cross-platform runtime and safe sitemap discovery, repaired GSC pagination and totals, replaced removed Bing endpoints, fixed extension and Windows portability gaps, and reconciled every open issue and pull request.
+- **v2.2.5 (August 2026): reliability and Google-currency hardening.** Fixed manual-install data packaging and lxml runtime imports, hardened JSON-LD graphs and rendered-page accessibility analysis, enforced managed-runtime command references, and refreshed Google Search and Lighthouse guidance through August 25.
+- **v2.2.6 (September 2026): security and hosted-install patch.** Closed a cache-path traversal and a WHOIS referral SSRF, refused the RFC 6598 range, moved the launcher to `scripts/` so the claude.ai-hosted marketplace accepts the plugin, raised dependency floors past PYSEC-2026-3940, locked the cost ledgers, and added Windows, macOS, and pip-audit CI.
+- **v2.3.0 (September 2026): Google currency and community fixes.** Refreshed Google guidance through 2026-09-10 (EEA site-reputation enforcement, regional aggregator and supplier units, AI Mode travel, CrUX August), added the `CLAUDE_SEO_LOCAL_TARGETS` allowlist and proxy validation, hardened the JSON-LD hook and Unicode watermark stripping, corrected AI crawler guidance, unified `fetch_page --json`, fixed Unlighthouse flags, raised audit agent turn budgets, and landed 12 more community PRs.
+- **v2.3.1 (September 2026): agents on Opus and community follow-ups.** Five judgment-heavy agents run on Opus, Keywords Everywhere joins as a free backlinks fallback, setup failures show the failing stage's output, the remaining extension installers write `~/.claude.json` atomically, and the v2.3.0 templated-metadata script is registered with the launcher.
 
 ## Limitations
 
@@ -347,6 +351,12 @@ Two real boundaries worth being upfront about.
 **Local-only without enrichment.** The free tier makes no third-party API calls by default (audits still fetch the target URLs you point them at). Adding Google API credentials (Tier 0 through 3) unlocks real field data and live indexation status; without them, Core Web Vitals are lab estimates only and indexation is inferred from page-level signals. Adding MCP extensions (Ahrefs, DataForSEO, SE Ranking, Profound) similarly unlocks competitive and AI-citation data but requires their respective accounts.
 
 ## Requirements
+
+**Agent models.** Five judgment-heavy agents (`seo-content`, `seo-geo`, `seo-sxo`,
+`seo-cluster`, `seo-drift`) run on Opus since v2.3.1; the other thirteen run on
+Sonnet. A full `/seo audit` therefore costs more than it did on v2.3.0. To change
+a model, edit the `model:` line in the agent's frontmatter under `agents/`.
+
 
 - Python 3.10+
 - Claude Code CLI

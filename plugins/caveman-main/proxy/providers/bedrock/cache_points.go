@@ -59,7 +59,7 @@ func (a Adapter) ApplyProviderNativeTransforms(
 	}
 
 	var injected bool
-	switch meta.Endpoint {
+	switch cachePointEndpoint(meta.Endpoint) {
 	case "converse", "converse-stream":
 		injected = injectConverseCachePoint(root)
 	case "invoke", "invoke-with-response-stream":
@@ -77,6 +77,15 @@ func (a Adapter) ApplyProviderNativeTransforms(
 		return passthrough, nil
 	}
 	return providers.TransformResult{Body: out, OptimizerIDs: []string{CachePointsOptimizerID}}, nil
+}
+
+// Gateway telemetry keeps full request path in metadata. Direct engine callers
+// use normalized action. Accept both without broadening supported grammars.
+func cachePointEndpoint(endpoint string) string {
+	if modelID, action := parseModelPath(endpoint); modelID != "" {
+		return action
+	}
+	return endpoint
 }
 
 // cachePointEligibleModels is computed once from the catalog: the Bedrock

@@ -12,6 +12,8 @@ import { homedir, tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { parseArgs } from './lib/cli-args.mjs';
+
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const prRoot = resolve(__dirname, '..');
 const defaultBundle = join(prRoot, 'dist', 'universal.zip');
@@ -32,30 +34,59 @@ if (args.help || args.h || !args.repo) {
   process.exit(1);
 }
 
-const targetRepo = resolve(args.repo);
-const bundlePath = resolve(args.bundle || defaultBundle);
-const selectedProviders = (args.providers || defaultProviders.join(','))
+const targetRepo = resolve(legacySmokeArg(args.repo));
+const bundlePath = resolve(legacySmokeArg(args.bundle) || defaultBundle);
+const selectedProviders = (legacySmokeArg(args.providers) || defaultProviders.join(','))
   .split(',')
   .map((provider) => provider.trim().toLowerCase())
   .filter(Boolean);
 const smokeDir = join(targetRepo, '.impeccable', 'provider-smoke');
 const summaryPath = join(smokeDir, 'summary.json');
-const smokeFiles = {
-  direct: 'src/__impeccable_provider_smoke_direct.html',
-  claude: 'src/__impeccable_provider_smoke_claude.html',
-  codex: 'src/__impeccable_provider_smoke_codex.html',
-  cursor: 'src/__impeccable_provider_smoke_cursor.html',
-  confirmedClaude: 'src/__impeccable_provider_smoke_confirmed_claude.html',
-  confirmedCodex: 'src/__impeccable_provider_smoke_confirmed_codex.html',
-  confirmedCursor: 'src/__impeccable_provider_smoke_confirmed_cursor.html',
-  agentChoiceClaude: 'src/__impeccable_provider_smoke_font_choice_claude.html',
-  agentChoiceCodex: 'src/__impeccable_provider_smoke_font_choice_codex.html',
-  agentChoiceCursor: 'src/__impeccable_provider_smoke_font_choice_cursor.html',
+const directSmokeFile = 'src/__impeccable_provider_smoke_direct.html';
+const providerSmoke = {
+  claude: {
+    fixture: 'src/__impeccable_provider_smoke_claude.html',
+    confirmedFixture: 'src/__impeccable_provider_smoke_confirmed_claude.html',
+    agentChoiceFixture: 'src/__impeccable_provider_smoke_font_choice_claude.html',
+    launcher: '.claude/skills/impeccable/scripts/impeccable',
+    hookVerb: 'hook',
+    event: (file) => postToolUseEvent('confirmed-claude', file, 'Edit'),
+  },
+  codex: {
+    fixture: 'src/__impeccable_provider_smoke_codex.html',
+    confirmedFixture: 'src/__impeccable_provider_smoke_confirmed_codex.html',
+    agentChoiceFixture: 'src/__impeccable_provider_smoke_font_choice_codex.html',
+    launcher: '.agents/skills/impeccable/scripts/impeccable',
+    hookVerb: 'hook',
+    event: (file) => postToolUseEvent('confirmed-codex', file, 'apply_patch'),
+  },
+  cursor: {
+    fixture: 'src/__impeccable_provider_smoke_cursor.html',
+    confirmedFixture: 'src/__impeccable_provider_smoke_confirmed_cursor.html',
+    agentChoiceFixture: 'src/__impeccable_provider_smoke_font_choice_cursor.html',
+    launcher: '.cursor/skills/impeccable/scripts/impeccable',
+    hookVerb: 'hook-before-edit',
+    event: (file) => ({
+      hook_event_name: 'preToolUse',
+      cwd: targetRepo,
+      tool_name: 'Write',
+      tool_input: {
+        file_path: file,
+        content: readFileSync(file, 'utf8'),
+      },
+    }),
+  },
 };
 
 const results = [];
 const hookConfigFiles = ['.impeccable/config.json', '.impeccable/config.local.json'];
 const originalHookConfigFiles = new Map();
+
+function legacySmokeArg(value) {
+  // The retired local parser represented a bare flag as the string "true".
+  // Preserve that CLI/error behavior while sharing the repository parser.
+  return value === true ? 'true' : value;
+}
 
 main().catch((error) => {
   restoreHookConfigFiles();
@@ -107,21 +138,6 @@ async function checked(name, classification, fn) {
     record(name, false, String(error?.message || error), error?.classification || classification);
     throw error;
   }
-}
-
-function parseArgs(argv) {
-  const out = {};
-  for (let i = 0; i < argv.length; i++) {
-    const arg = argv[i];
-    if (!arg.startsWith('--')) continue;
-    const eq = arg.indexOf('=');
-    if (eq !== -1) {
-      out[arg.slice(2, eq)] = arg.slice(eq + 1);
-    } else {
-      out[arg.slice(2)] = argv[i + 1] && !argv[i + 1].startsWith('--') ? argv[++i] : 'true';
-    }
-  }
-  return out;
 }
 
 function assertPath(path, label) {
@@ -377,7 +393,7 @@ function stripImpeccableHookEntry(entry) {
 }
 
 function containsImpeccableHook(value) {
-  if (typeof value === 'string') return value.includes('skills/impeccable/scripts/hook') || value.includes('.cursor/pre-log.mjs');
+  if (typeof value === 'string') return value.includes('skills/impeccable/scripts/impeccable') || value.includes('.cursor/pre-log.mjs');
   if (Array.isArray(value)) return value.some(containsImpeccableHook);
   if (value && typeof value === 'object') return Object.values(value).some(containsImpeccableHook);
   return false;
@@ -387,24 +403,19 @@ function verifyInstallShape() {
   const claude = readText('.claude/settings.local.json');
   const codex = readText('.codex/hooks.json');
   const cursor = readText('.cursor/hooks.json');
-  assertCount(claude, '.claude/skills/impeccable/scripts/hook.mjs', 1, 'Claude hook.mjs');
-  assertCount(codex, '.agents/skills/impeccable/scripts/hook.mjs', 1, 'Codex hook.mjs');
-  assertCount(cursor, '.cursor/skills/impeccable/scripts/hook-before-edit.mjs', 1, 'Cursor preToolUse');
-  assertCount(cursor, '.cursor/skills/impeccable/scripts/hook-after-edit.mjs', 0, 'Cursor afterFileEdit');
-  assertCount(cursor, '.cursor/skills/impeccable/scripts/hook-stop.mjs', 0, 'Cursor stop');
+  assertCount(claude, '.claude/skills/impeccable/scripts/impeccable" hook', 1, 'Claude hook');
+  assertCount(codex, '.agents/skills/impeccable/scripts/impeccable" hook', 1, 'Codex hook');
+  assertCount(cursor, '.cursor/skills/impeccable/scripts/impeccable" hook-before-edit', 1, 'Cursor preToolUse');
   for (const text of [claude, codex, cursor]) {
-    if (text.includes('hook-probe.mjs')) throw new Error('hook-probe.mjs still appears in hook manifests');
+    if (text.includes('.mjs')) throw new Error('a Node hook script still appears in hook manifests');
   }
   for (const rel of [
-    '.claude/skills/impeccable/scripts/hook.mjs',
-    '.claude/skills/impeccable/scripts/hook-lib.mjs',
-    '.claude/skills/impeccable/scripts/detector/cli/main.mjs',
-    '.agents/skills/impeccable/scripts/hook.mjs',
-    '.agents/skills/impeccable/scripts/hook-lib.mjs',
-    '.agents/skills/impeccable/scripts/detector/cli/main.mjs',
-    '.cursor/skills/impeccable/scripts/hook-before-edit.mjs',
-    '.cursor/skills/impeccable/scripts/hook-lib.mjs',
-    '.cursor/skills/impeccable/scripts/detector/cli/main.mjs',
+    '.claude/skills/impeccable/scripts/impeccable',
+    '.claude/skills/impeccable/scripts/VERSION',
+    '.agents/skills/impeccable/scripts/impeccable',
+    '.agents/skills/impeccable/scripts/VERSION',
+    '.cursor/skills/impeccable/scripts/impeccable',
+    '.cursor/skills/impeccable/scripts/VERSION',
   ]) {
     assertPath(join(targetRepo, rel), rel);
   }
@@ -466,9 +477,9 @@ function assertNoPluginInstall() {
 
 function runDirectContractChecks() {
   clearRuntimeState();
-  const file = writeBadFixture(smokeFiles.direct);
+  const file = writeBadFixture(directSmokeFile);
   const env = { IMPECCABLE_HOOK_LOG: join(smokeDir, 'direct.ndjson') };
-  const claude = run('node', ['.claude/skills/impeccable/scripts/hook.mjs'], {
+  const claude = run('.claude/skills/impeccable/scripts/impeccable', ['hook'], {
     cwd: targetRepo,
     env,
     logName: 'direct-claude.log',
@@ -477,7 +488,7 @@ function runDirectContractChecks() {
   requireFinding('direct Claude hook', `${claude.stdout}\n${readMaybe(join(smokeDir, 'direct.ndjson'))}`);
 
   clearRuntimeState();
-  const codex = run('node', ['.agents/skills/impeccable/scripts/hook.mjs'], {
+  const codex = run('.agents/skills/impeccable/scripts/impeccable', ['hook'], {
     cwd: targetRepo,
     env,
     logName: 'direct-codex.log',
@@ -486,7 +497,7 @@ function runDirectContractChecks() {
   requireFinding('direct Codex hook', `${codex.stdout}\n${readMaybe(join(smokeDir, 'direct.ndjson'))}`);
 
   clearRuntimeState();
-  const pre = run('node', ['.cursor/skills/impeccable/scripts/hook-before-edit.mjs'], {
+  const pre = run('.cursor/skills/impeccable/scripts/impeccable', ['hook-before-edit'], {
     cwd: targetRepo,
     env,
     logName: 'direct-cursor-before.log',
@@ -495,7 +506,7 @@ function runDirectContractChecks() {
       cwd: targetRepo,
       tool_name: 'Write',
       tool_input: {
-        file_path: join(targetRepo, smokeFiles.direct),
+        file_path: join(targetRepo, directSmokeFile),
         content: badFixtureContent(),
       },
     }),
@@ -515,7 +526,7 @@ function runConfirmedExceptionPersistenceChecks() {
 
 function runConfirmedExceptionForProvider(provider) {
   clearRuntimeState();
-  const rel = confirmedSmokeFile(provider);
+  const rel = providerSmoke[provider].confirmedFixture;
   const file = writeConfirmedFixture(rel);
   const beforeLog = `${provider}-confirmed-before.ndjson`;
   const afterLog = `${provider}-confirmed-after.ndjson`;
@@ -527,8 +538,8 @@ function runConfirmedExceptionForProvider(provider) {
   requireRuleFinding(`${provider} confirmed exception first hook`, `${first.stdout}\n${first.stderr}\n${readMaybe(join(smokeDir, beforeLog))}`, 'overused-font');
   assertNoSpecificFontIgnoreConfig(provider);
 
-  run('node', [
-    providerAdminScript(provider),
+  run(providerSmoke[provider].launcher, [
+    'hooks',
     'ignore-value',
     'overused-font',
     'Roboto',
@@ -580,7 +591,7 @@ function runAgentChosenFontExceptionChecks() {
 
 function runAgentChosenFontExceptionForProvider(provider) {
   clearRuntimeState();
-  const rel = agentChoiceSmokeFile(provider);
+  const rel = providerSmoke[provider].agentChoiceFixture;
   const file = writeConfirmedFixture(rel);
   const beforeLog = `${provider}-agent-choice-before.ndjson`;
   const afterLog = `${provider}-agent-choice-after.ndjson`;
@@ -612,27 +623,40 @@ function runAgentChosenFontExceptionForProvider(provider) {
 }
 
 function runProviderAgentFontException(provider, rel) {
-  const prompt = fontExceptionPrompt(provider, rel);
+  runProviderAgent(provider, fontExceptionPrompt(provider, rel), {
+    logName: `${provider}-agent-choice.log`,
+    claudeDebugLog: 'claude-agent-choice-debug.log',
+  });
+}
+
+function runProviderAgent(provider, prompt, {
+  logName,
+  env = {},
+  claudeDebugLog,
+  claudeTools = 'Read,Bash',
+  claudeAllowedTools = 'Read Bash',
+  cursorReady = false,
+} = {}) {
   if (provider === 'claude') {
-    run('claude', [
+    return run('claude', [
       '-p',
       '--setting-sources', 'project',
       '--permission-mode', 'acceptEdits',
-      '--tools', 'Read,Bash',
-      '--allowedTools', 'Read Bash',
+      '--tools', claudeTools,
+      '--allowedTools', claudeAllowedTools,
       '--debug', 'hooks',
-      '--debug-file', join(smokeDir, 'claude-agent-choice-debug.log'),
+      '--debug-file', join(smokeDir, claudeDebugLog),
       prompt,
     ], {
       cwd: targetRepo,
-      logName: 'claude-agent-choice.log',
+      env,
+      logName,
       timeoutMs: 10 * 60 * 1000,
     });
-    return;
   }
 
   if (provider === 'codex') {
-    run('codex', [
+    return run('codex', [
       'exec',
       '-C', targetRepo,
       '--dangerously-bypass-hook-trust',
@@ -641,14 +665,14 @@ function runProviderAgentFontException(provider, rel) {
       prompt,
     ], {
       cwd: targetRepo,
-      logName: 'codex-agent-choice.log',
+      env,
+      logName,
       timeoutMs: 10 * 60 * 1000,
     });
-    return;
   }
 
   if (provider === 'cursor') {
-    ensureCursorAgent();
+    if (!cursorReady) ensureCursorAgent();
     const res = run('agent', [
       '-p',
       '--force',
@@ -658,7 +682,8 @@ function runProviderAgentFontException(provider, rel) {
       prompt,
     ], {
       cwd: targetRepo,
-      logName: 'cursor-agent-choice.log',
+      env,
+      logName,
       timeoutMs: 10 * 60 * 1000,
       allowFailure: true,
     });
@@ -671,10 +696,10 @@ function runProviderAgentFontException(provider, rel) {
       }
       throw new Error(res.error ? `agent failed: ${res.error.message}` : `agent exited ${res.status}`);
     }
-    return;
+    return res;
   }
 
-  throw new Error(`Unsupported agent-choice provider: ${provider}`);
+  throw new Error(`Unsupported provider agent: ${provider}`);
 }
 
 function assertSpecificFontIgnoreConfig(provider, config) {
@@ -713,84 +738,29 @@ function readSharedHookConfig() {
 }
 
 function runInstalledProviderHook(provider, file, logName) {
+  const smoke = providerSmoke[provider];
   const env = { IMPECCABLE_HOOK_LOG: join(smokeDir, logName) };
-  if (provider === 'claude') {
-    return run('node', ['.claude/skills/impeccable/scripts/hook.mjs'], {
-      cwd: targetRepo,
-      env,
-      logName: `direct-${provider}-confirmed-${logName.replace(/\.ndjson$/, '.log')}`,
-      input: JSON.stringify(postToolUseEvent(`confirmed-${provider}`, file, 'Edit')),
-    });
-  }
-  if (provider === 'codex') {
-    return run('node', ['.agents/skills/impeccable/scripts/hook.mjs'], {
-      cwd: targetRepo,
-      env,
-      logName: `direct-${provider}-confirmed-${logName.replace(/\.ndjson$/, '.log')}`,
-      input: JSON.stringify(postToolUseEvent(`confirmed-${provider}`, file, 'apply_patch')),
-    });
-  }
-  if (provider === 'cursor') {
-    return run('node', ['.cursor/skills/impeccable/scripts/hook-before-edit.mjs'], {
-      cwd: targetRepo,
-      env,
-      logName: `direct-${provider}-confirmed-${logName.replace(/\.ndjson$/, '.log')}`,
-      input: JSON.stringify({
-        hook_event_name: 'preToolUse',
-        cwd: targetRepo,
-        tool_name: 'Write',
-        tool_input: {
-          file_path: file,
-          content: readFileSync(file, 'utf8'),
-        },
-      }),
-    });
-  }
-  throw new Error(`Unsupported confirmed exception provider: ${provider}`);
-}
-
-function confirmedSmokeFile(provider) {
-  if (provider === 'claude') return smokeFiles.confirmedClaude;
-  if (provider === 'codex') return smokeFiles.confirmedCodex;
-  if (provider === 'cursor') return smokeFiles.confirmedCursor;
-  throw new Error(`Unsupported confirmed exception provider: ${provider}`);
-}
-
-function agentChoiceSmokeFile(provider) {
-  if (provider === 'claude') return smokeFiles.agentChoiceClaude;
-  if (provider === 'codex') return smokeFiles.agentChoiceCodex;
-  if (provider === 'cursor') return smokeFiles.agentChoiceCursor;
-  throw new Error(`Unsupported agent-choice provider: ${provider}`);
-}
-
-function providerAdminScript(provider) {
-  if (provider === 'claude') return '.claude/skills/impeccable/scripts/hook-admin.mjs';
-  if (provider === 'codex') return '.agents/skills/impeccable/scripts/hook-admin.mjs';
-  if (provider === 'cursor') return '.cursor/skills/impeccable/scripts/hook-admin.mjs';
-  throw new Error(`Unsupported admin provider: ${provider}`);
+  return run(smoke.launcher, [smoke.hookVerb], {
+    cwd: targetRepo,
+    env,
+    logName: `direct-${provider}-confirmed-${logName.replace(/\.ndjson$/, '.log')}`,
+    input: JSON.stringify(smoke.event(file)),
+  });
 }
 
 function runClaudeProviderSmoke() {
   clearRuntimeState();
   const env = { IMPECCABLE_HOOK_LOG: join(smokeDir, 'claude.ndjson') };
-  const prompt = providerPrompt(smokeFiles.claude);
-  const res = run('claude', [
-    '-p',
-    '--setting-sources', 'project',
-    '--permission-mode', 'acceptEdits',
-    '--tools', 'Read,Write,Edit',
-    '--allowedTools', 'Read Write Edit',
-    '--debug', 'hooks',
-    '--debug-file', join(smokeDir, 'claude-debug.log'),
-    prompt,
-  ], {
-    cwd: targetRepo,
+  const prompt = providerPrompt(providerSmoke.claude.fixture);
+  const res = runProviderAgent('claude', prompt, {
     env,
     logName: 'claude-provider.log',
-    timeoutMs: 10 * 60 * 1000,
+    claudeDebugLog: 'claude-debug.log',
+    claudeTools: 'Read,Write,Edit',
+    claudeAllowedTools: 'Read Write Edit',
   });
   const evidence = `${res.stdout}\n${res.stderr}\n${readMaybe(join(smokeDir, 'claude.ndjson'))}\n${readMaybe(join(smokeDir, 'claude-debug.log'))}`;
-  requireFile(smokeFiles.claude, 'Claude provider fixture');
+  requireFile(providerSmoke.claude.fixture, 'Claude provider fixture');
   requireFinding('Claude provider hook', evidence);
   if (!/PostToolUse|hook/i.test(evidence)) throw new Error('Claude provider evidence lacks hook/PostToolUse marker');
   record('claude provider', true, 'Claude edit triggered PostToolUse hook and side-tab detection');
@@ -799,23 +769,14 @@ function runClaudeProviderSmoke() {
 function runCodexProviderSmoke() {
   clearRuntimeState();
   const env = { IMPECCABLE_HOOK_LOG: join(smokeDir, 'codex.ndjson') };
-  const prompt = `Use apply_patch to ${providerPrompt(smokeFiles.codex)}`;
-  const res = run('codex', [
-    'exec',
-    '-C', targetRepo,
-    '--dangerously-bypass-hook-trust',
-    '--dangerously-bypass-approvals-and-sandbox',
-    '--json',
-    prompt,
-  ], {
-    cwd: targetRepo,
+  const prompt = `Use apply_patch to ${providerPrompt(providerSmoke.codex.fixture)}`;
+  const res = runProviderAgent('codex', prompt, {
     env,
     logName: 'codex-provider.log',
-    timeoutMs: 10 * 60 * 1000,
   });
   const evidence = `${res.stdout}\n${res.stderr}\n${readMaybe(join(smokeDir, 'codex.ndjson'))}`;
   const cacheEvidence = `${readMaybe(join(targetRepo, '.impeccable', 'hook.cache.json'))}\n${readMaybe(join(targetRepo, '.impeccable', 'hook.pending.json'))}`;
-  requireFile(smokeFiles.codex, 'Codex provider fixture');
+  requireFile(providerSmoke.codex.fixture, 'Codex provider fixture');
   requireFinding('Codex provider hook', `${evidence}\n${cacheEvidence}`);
   record('codex provider', true, 'Codex apply_patch triggered project hook and side-tab detection');
 }
@@ -824,37 +785,19 @@ function runCursorProviderSmoke() {
   ensureCursorAgent();
   clearRuntimeState();
   const env = { IMPECCABLE_HOOK_LOG: join(smokeDir, 'cursor.ndjson') };
-  const prompt = providerPrompt(smokeFiles.cursor);
-  const res = run('agent', [
-    '-p',
-    '--force',
-    '--trust',
-    '--workspace', targetRepo,
-    '--output-format', 'stream-json',
-    prompt,
-  ], {
-    cwd: targetRepo,
+  const prompt = providerPrompt(providerSmoke.cursor.fixture);
+  const res = runProviderAgent('cursor', prompt, {
     env,
     logName: 'cursor-provider.log',
-    timeoutMs: 10 * 60 * 1000,
-    allowFailure: true,
+    cursorReady: true,
   });
-  if (res.error || res.status !== 0) {
-    const output = `${res.stdout}\n${res.stderr}\n${res.error?.message || ''}`;
-    if (/Authentication required|agent login|CURSOR_API_KEY/i.test(output)) {
-      const err = new Error('Cursor CLI authentication required. Run `agent login` or set CURSOR_API_KEY, then rerun `bun run smoke:hooks -- --providers=cursor`.');
-      err.classification = 'cursor auth required';
-      throw err;
-    }
-    throw new Error(res.error ? `agent failed: ${res.error.message}` : `agent exited ${res.status}`);
-  }
   const evidence = `${res.stdout}\n${res.stderr}\n${readMaybe(join(smokeDir, 'cursor.ndjson'))}\n${readMaybe(join(targetRepo, '.impeccable', 'hook.pending.json'))}\n${readMaybe(join(targetRepo, '.impeccable', 'hook.cache.json'))}`;
   requireFinding('Cursor provider hook', evidence);
   const auditEvents = readAuditEvents(join(smokeDir, 'cursor.ndjson'));
   if (!auditEvents.some((event) => event.event === 'preToolUse' && event.blocked === true)) {
     throw new Error('Cursor provider evidence lacks a preToolUse audit entry with blocked=true');
   }
-  const fixturePath = join(targetRepo, smokeFiles.cursor);
+  const fixturePath = join(targetRepo, providerSmoke.cursor.fixture);
   const intentionalIgnore = auditEvents.some((event) =>
     event.event === 'preToolUse'
     && event.file === fixturePath
@@ -1017,7 +960,15 @@ function cleanSmokeArtifacts() {
 }
 
 function cleanSmokeFiles() {
-  for (const rel of Object.values(smokeFiles)) {
+  const files = [
+    directSmokeFile,
+    ...Object.values(providerSmoke).flatMap(({ fixture, confirmedFixture, agentChoiceFixture }) => [
+      fixture,
+      confirmedFixture,
+      agentChoiceFixture,
+    ]),
+  ];
+  for (const rel of files) {
     rmSync(join(targetRepo, rel), { force: true });
   }
 }

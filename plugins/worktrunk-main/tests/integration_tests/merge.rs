@@ -5,6 +5,7 @@ use crate::common::{
     repo_with_remote, setup_snapshot_settings, wait_for_file, wait_for_file_content,
     wait_for_worktree_removed,
 };
+use ansi_str::AnsiStr;
 use insta::assert_snapshot;
 use insta_cmd::assert_cmd_snapshot;
 use path_slash::PathExt as _;
@@ -55,6 +56,36 @@ fn snapshot_merge_with_env(
     });
 }
 
+fn create_untracked_files_hidden_by_user_config(repo: &TestRepo, worktree: &Path) {
+    repo.run_git(&["config", "status.showUntrackedFiles", "no"]);
+    fs::create_dir(worktree.join("nested")).unwrap();
+    fs::write(worktree.join("nested/first.txt"), "first").unwrap();
+    fs::write(worktree.join("nested/second.txt"), "second").unwrap();
+
+    let hidden = repo
+        .git_command()
+        .args(["status", "--porcelain"])
+        .current_dir(worktree)
+        .run()
+        .unwrap();
+    assert!(
+        hidden.stdout.is_empty(),
+        "the fixture must demonstrate that the user setting hides both files"
+    );
+}
+
+fn assert_hidden_untracked_auto_staging_warning(output: &std::process::Output, command: &str) {
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        output.status.success(),
+        "{command} should succeed; stderr:\n{stderr}"
+    );
+    assert!(
+        stderr.contains("Auto-staging 1 untracked path:") && stderr.contains("nested/\n"),
+        "the warning must name the hidden directory git add -A will stage; stderr:\n{stderr}"
+    );
+}
+
 #[rstest]
 fn test_merge_fast_forward(merge_scenario: (TestRepo, PathBuf)) {
     let (repo, feature_wt) = merge_scenario;
@@ -66,6 +97,21 @@ fn test_merge_fast_forward(merge_scenario: (TestRepo, PathBuf)) {
         &["main"],
         Some(&feature_wt)
     ));
+}
+
+/// A diff between two revisions passes them as two arguments, and git checks
+/// each against the filesystem, so a directory named like the target branch
+/// must not make the merge's diffs ambiguous.
+#[rstest]
+fn test_merge_with_directory_named_like_target(merge_scenario: (TestRepo, PathBuf)) {
+    let (repo, feature_wt) = merge_scenario;
+    fs::create_dir(feature_wt.join("main")).unwrap();
+
+    let output = make_snapshot_cmd(&repo, "merge", &["main"], Some(&feature_wt))
+        .output()
+        .unwrap();
+
+    assert!(output.status.success(), "{output:?}");
 }
 
 ///
@@ -82,6 +128,49 @@ fn test_merge_as_git_subcommand(merge_scenario: (TestRepo, PathBuf)) {
         cmd.env("GIT_EXEC_PATH", "/usr/lib/git-core");
         cmd
     });
+}
+
+/// A `!wt` alias from the feature worktree exports `GIT_DIR` as that
+/// worktree's private gitdir. `advance_target` then runs `read-tree -m -u`
+/// with `current_dir` on main; if the child still sees the inherited
+/// `GIT_DIR`, it writes feature's index and can leave main's worktree
+/// unsynced (or dirty) while still reporting success.
+#[rstest]
+fn test_merge_syncs_target_when_git_dir_names_the_source(merge_scenario: (TestRepo, PathBuf)) {
+    let (repo, feature_wt) = merge_scenario;
+    let git_dir = fs::read_to_string(feature_wt.join(".git")).unwrap();
+    let git_dir = PathBuf::from(git_dir.trim().strip_prefix("gitdir: ").unwrap());
+
+    let output = repo
+        .wt_command()
+        .current_dir(&feature_wt)
+        .args(["merge", "main", "--no-remove", "--yes"])
+        .env("GIT_DIR", &git_dir)
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "wt merge must succeed when GIT_DIR names the source worktree.\nstdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr),
+    );
+    assert_eq!(
+        fs::read_to_string(repo.root_path().join("feature.txt")).unwrap_or_default(),
+        "feature content",
+        "the target worktree must receive the merged file",
+    );
+    let status = repo
+        .git_command()
+        .args(["status", "--porcelain"])
+        .current_dir(repo.root_path())
+        .run()
+        .unwrap();
+    assert!(
+        String::from_utf8_lossy(&status.stdout).trim().is_empty(),
+        "the target worktree must be clean after the sync; got: {}",
+        String::from_utf8_lossy(&status.stdout),
+    );
 }
 
 #[rstest]
@@ -110,6 +199,46 @@ fn test_merge_with_no_remove_flag(merge_scenario: (TestRepo, PathBuf)) {
         &["main", "--no-remove"],
         Some(&feature_wt)
     ));
+}
+
+/// `git worktree lock` is the user's explicit "don't remove this".
+/// `wt remove` honors it; `wt merge` used to skip that guard and trash
+/// the locked feature worktree after a successful merge.
+#[rstest]
+fn test_merge_preserves_locked_worktree(merge_scenario: (TestRepo, PathBuf)) {
+    let (repo, feature_wt) = merge_scenario;
+    repo.lock_worktree("feature", Some("agent still running"));
+
+    assert_cmd_snapshot!(make_snapshot_cmd(
+        &repo,
+        "merge",
+        &["main"],
+        Some(&feature_wt)
+    ));
+
+    assert!(
+        feature_wt.exists(),
+        "locked feature worktree must survive merge"
+    );
+}
+
+/// Same preserve path as above, but `git worktree lock` with no reason.
+#[rstest]
+fn test_merge_preserves_locked_worktree_no_reason(merge_scenario: (TestRepo, PathBuf)) {
+    let (repo, feature_wt) = merge_scenario;
+    repo.lock_worktree("feature", None);
+
+    assert_cmd_snapshot!(make_snapshot_cmd(
+        &repo,
+        "merge",
+        &["main"],
+        Some(&feature_wt)
+    ));
+
+    assert!(
+        feature_wt.exists(),
+        "locked feature worktree must survive merge"
+    );
 }
 
 #[rstest]
@@ -798,6 +927,51 @@ fn test_merge_cwd_removed_hint_no_recovery(mut repo: TestRepo) {
     assert_cmd_snapshot!(cmd);
 }
 
+/// A merge that removes the worktree the caller is standing in must name the
+/// destination it could not cd to.
+///
+/// Without shell integration the caller is left in a deleted directory, and
+/// unless a post-merge hook announcement names the destination, no other line
+/// of the merge output prints a path to move to — `wt switch ^` does not
+/// recover from wt's own clean removal, because the removal prunes the admin
+/// entry that deleted-CWD recovery matches on. The warning is what un-strands
+/// the caller.
+#[rstest]
+fn test_merge_cwd_removed_warning_names_destination(mut repo: TestRepo) {
+    let feature_wt = repo.add_feature();
+
+    let output = repo
+        .wt_command()
+        .args(["merge", "main", "--yes", "--no-hooks"])
+        .current_dir(&feature_wt)
+        .env("PWD", &feature_wt)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "merge should succeed; stderr:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let plain = stderr.ansi_strip();
+    let warning = plain
+        .lines()
+        .find(|line| line.contains("hange directory"))
+        .unwrap_or_else(|| panic!("merge should warn that it cannot cd; stderr:\n{stderr}"));
+    // `format_path_for_display` renders the destination home-relative, so match
+    // on the primary worktree's directory name rather than the tempdir prefix.
+    let named = warning
+        .split_once(" @ ")
+        .and_then(|(_, rest)| rest.split_once(", but "))
+        .map(|(path, _)| path);
+    let root_name = repo.root_path().file_name().unwrap().to_string_lossy();
+    assert!(
+        named.is_some_and(|path| path.ends_with(&*root_name)),
+        "the warning must name the destination worktree, since the removal deleted the caller's cwd; stderr:\n{stderr}"
+    );
+}
+
 #[rstest]
 fn test_merge_post_merge_command_named(mut repo: TestRepo) {
     // Create project config with named post-merge commands
@@ -864,6 +1038,45 @@ fn test_merge_post_merge_runs_with_nothing_to_merge(mut repo: TestRepo) {
     // post-merge runs in the background, so poll for the file.
     let marker_file = repo.root_path().join("post-merge-ran.txt");
     wait_for_file(&marker_file);
+}
+
+#[rstest]
+fn test_merge_post_merge_runs_in_destination_with_no_remove(mut repo: TestRepo) {
+    // `--no-remove` keeps the feature worktree, but `post-merge` is anchored on
+    // the merge destination either way: the hook's cwd is the target worktree,
+    // not the preserved feature worktree its `worktree_path` names.
+    let config_dir = repo.root_path().join(".config");
+    fs::create_dir_all(&config_dir).unwrap();
+    fs::write(
+        config_dir.join("wt.toml"),
+        r#"post-merge = "echo ran > post-merge-cwd.txt""#,
+    )
+    .unwrap();
+    repo.commit("Add config");
+
+    let feature_wt = repo.add_worktree("feature");
+    fs::write(feature_wt.join("feature.txt"), "feature content").unwrap();
+
+    let output = repo
+        .wt_command()
+        .args(["merge", "main", "--no-remove", "--yes"])
+        .current_dir(&feature_wt)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "merge failed:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    // The hook wrote its marker relative to its cwd: the destination worktree.
+    wait_for_file(&repo.root_path().join("post-merge-cwd.txt"));
+    let feature_marker = feature_wt.join("post-merge-cwd.txt");
+    assert!(
+        !feature_marker.exists(),
+        "post-merge ran in the preserved feature worktree: {}",
+        feature_marker.display()
+    );
 }
 
 #[rstest]
@@ -1201,7 +1414,7 @@ command = "{llm_path_str}"
 // appears on public pages.
 // ============================================================================
 
-/// `wt merge` example for `docs/content/merge.md` — pre-merge hook running
+/// `wt merge` example for `docs/src/content/docs/merge.md` — pre-merge hook running
 /// `cargo nextest run`, one-commit fast-forward merge, background cleanup.
 #[rstest]
 fn test_docs_merge_pre_merge_hook(mut repo: TestRepo) {
@@ -1293,7 +1506,7 @@ impl Registry {
     );
 }
 
-/// `wt merge` example for `docs/content/llm-commits.md` — three commits
+/// `wt merge` example for `docs/src/content/docs/llm-commits.md` — three commits
 /// squashed with an LLM-generated message, then merged to default branch.
 #[rstest]
 fn test_docs_merge_squash_llm(mut repo: TestRepo) {
@@ -1363,7 +1576,7 @@ logic, and authentication tests.";
     );
 }
 
-/// `wt step squash` example for `docs/content/llm-commits.md` — three commits
+/// `wt step squash` example for `docs/src/content/docs/llm-commits.md` — three commits
 /// squashed with an LLM-generated message.
 #[rstest]
 fn test_docs_step_squash_llm(mut repo: TestRepo) {
@@ -1421,7 +1634,7 @@ logic, and authentication tests.";
     });
 }
 
-/// `wt step commit` example for `docs/content/step.md` and `docs/content/llm-commits.md`.
+/// `wt step commit` example for `docs/src/content/docs/step.md` and `docs/src/content/docs/llm-commits.md`.
 /// Feature worktree with two staged files + LLM-generated commit message.
 #[rstest]
 fn test_docs_step_commit_llm(mut repo: TestRepo) {
@@ -1513,6 +1726,68 @@ fn test_merge_no_commit_with_dirty_tree(mut repo: TestRepo) {
     );
 }
 
+/// `status.showUntrackedFiles` controls presentation, not whether a destructive
+/// merge cleanup may discard files. `--no-commit` must reject the hidden file
+/// before changing either branch or removing the source worktree.
+#[rstest]
+fn test_merge_no_commit_refuses_untracked_files_hidden_by_user_config(mut repo: TestRepo) {
+    let feature_wt = repo.add_worktree_with_commit(
+        "feature",
+        "committed.txt",
+        "committed content",
+        "Add committed file",
+    );
+    repo.run_git(&["config", "status.showUntrackedFiles", "no"]);
+    fs::write(feature_wt.join("precious.txt"), "uncommitted work").unwrap();
+
+    let hidden = repo
+        .git_command()
+        .args(["status", "--porcelain"])
+        .current_dir(&feature_wt)
+        .run()
+        .unwrap();
+    assert!(
+        hidden.stdout.is_empty(),
+        "the fixture must demonstrate that the user setting hides the file"
+    );
+    let forced = repo
+        .git_command()
+        .args(["status", "--porcelain", "--untracked-files=normal"])
+        .current_dir(&feature_wt)
+        .run()
+        .unwrap();
+    assert!(
+        String::from_utf8_lossy(&forced.stdout).contains("?? precious.txt"),
+        "the explicit safety query must reveal the untracked file"
+    );
+
+    let target_tip = repo.git_output(&["rev-parse", "main"]);
+    let source_tip = repo.git_output(&["rev-parse", "feature"]);
+    let output = repo
+        .wt_command()
+        .args(["merge", "main", "--no-commit"])
+        .current_dir(&feature_wt)
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    assert!(
+        !output.status.success(),
+        "merge must refuse hidden untracked files before cleanup; stderr:\n{stderr}"
+    );
+    assert!(
+        stderr.contains("has uncommitted changes") && stderr.contains("precious.txt"),
+        "the dirty-worktree gate must explain the refusal; stderr:\n{stderr}"
+    );
+    assert_eq!(repo.git_output(&["rev-parse", "main"]), target_tip);
+    assert_eq!(repo.git_output(&["rev-parse", "feature"]), source_tip);
+    assert!(feature_wt.exists(), "failed merge must keep the worktree");
+    assert!(
+        feature_wt.join("precious.txt").exists(),
+        "the hidden untracked file must remain recoverable"
+    );
+}
+
 #[rstest]
 fn test_merge_no_commits(mut repo_with_main_worktree: TestRepo) {
     let repo = &mut repo_with_main_worktree;
@@ -1593,6 +1868,33 @@ fn test_merge_rebase_true_rebase(mut repo: TestRepo) {
         &["main"],
         Some(&feature_wt)
     ));
+}
+
+/// `rebase.updateRefs` would also move a branch stacked inside the rebased
+/// range; `wt step rebase` rewrites only the worktree's own branch.
+#[rstest]
+fn test_step_rebase_leaves_stacked_branches(mut repo: TestRepo) {
+    let feature_wt = repo.add_worktree("feature");
+    repo.commit_in_worktree(&feature_wt, "base.txt", "base\n", "Stack base");
+    repo.run_git_in(&feature_wt, &["branch", "stacked"]);
+    repo.commit_in_worktree(&feature_wt, "top.txt", "top\n", "Stack top");
+    fs::write(repo.root_path().join("main-update.txt"), "main\n").unwrap();
+    repo.run_git(&["add", "main-update.txt"]);
+    repo.run_git(&["commit", "--message", "Update main"]);
+    repo.run_git(&["config", "rebase.updateRefs", "true"]);
+    let stacked_before = repo.git_output(&["rev-parse", "stacked"]);
+
+    let output = make_snapshot_cmd(&repo, "step", &["rebase", "main"], Some(&feature_wt))
+        .output()
+        .unwrap();
+
+    assert!(output.status.success(), "{output:?}");
+    assert_eq!(repo.git_output(&["rev-parse", "stacked"]), stacked_before);
+    assert_eq!(
+        repo.git_output(&["merge-base", "main", "feature"]),
+        repo.git_output(&["rev-parse", "main"]),
+        "feature should be rebased onto main"
+    );
 }
 
 // =============================================================================
@@ -1710,6 +2012,44 @@ fn test_merge_no_commit_no_rebase_removes_merge_shaped_worktree(mut repo: TestRe
     assert!(
         !feature_ref.status.success(),
         "removed source branch should no longer exist"
+    );
+}
+
+/// `wt merge --no-ff` builds its merge commit with `commit-tree`, which ignores
+/// `commit.gpgSign`, so it asks for the signature `git merge --no-ff` would add.
+#[cfg(unix)]
+#[rstest]
+fn test_merge_no_ff_signs_merge_commit(merge_scenario: (TestRepo, PathBuf)) {
+    let (repo, feature_wt) = merge_scenario;
+    let key = repo.root_path().parent().unwrap().join("signing-key");
+    let keygen = std::process::Command::new("ssh-keygen")
+        .args(["-q", "-t", "ed25519", "-N", "", "-f"])
+        .arg(&key)
+        .output()
+        .unwrap();
+    assert!(keygen.status.success(), "{keygen:?}");
+    repo.run_git(&["config", "gpg.format", "ssh"]);
+    repo.run_git(&["config", "user.signingKey", key.to_str().unwrap()]);
+    repo.run_git(&["config", "commit.gpgSign", "true"]);
+
+    let output = repo
+        .wt_command()
+        .args(["merge", "main", "--no-ff", "--no-remove", "--no-hooks"])
+        .current_dir(&feature_wt)
+        .output()
+        .unwrap();
+
+    assert!(output.status.success(), "{output:?}");
+    assert_eq!(
+        repo.git_output(&["show", "--no-patch", "--format=%P", "main"])
+            .split(' ')
+            .count(),
+        2
+    );
+    assert!(
+        repo.git_output(&["cat-file", "commit", "main"])
+            .contains("\ngpgsig "),
+        "the merge commit must carry a signature"
     );
 }
 
@@ -2322,6 +2662,27 @@ fn test_step_squash_with_no_hooks_flag(mut repo: TestRepo) {
 }
 
 #[rstest]
+fn test_step_squash_auto_staging_warns_about_untracked_files_hidden_by_user_config(
+    repo_with_multi_commit_feature: TestRepo,
+) {
+    let repo = &repo_with_multi_commit_feature;
+    let feature_wt = &repo.worktrees["feature"];
+    create_untracked_files_hidden_by_user_config(repo, feature_wt);
+
+    let output = repo
+        .wt_command()
+        .args(["step", "squash", "--no-hooks"])
+        .current_dir(feature_wt)
+        .env(
+            "WORKTRUNK_COMMIT__GENERATION__COMMAND",
+            "cat >/dev/null && echo 'squash: include hidden files'",
+        )
+        .output()
+        .unwrap();
+    assert_hidden_untracked_auto_staging_warning(&output, "step squash");
+}
+
+#[rstest]
 fn test_step_squash_with_stage_tracked_flag(mut repo: TestRepo) {
     let feature_wt = repo.add_worktree("feature");
 
@@ -2434,6 +2795,52 @@ fn test_step_commit_with_no_hooks_flag(repo: TestRepo) {
         );
         cmd
     });
+}
+
+#[rstest]
+fn test_step_commit_auto_staging_warns_about_untracked_files_hidden_by_user_config(repo: TestRepo) {
+    create_untracked_files_hidden_by_user_config(&repo, repo.root_path());
+
+    let output = repo
+        .wt_command()
+        .args(["step", "commit", "--no-hooks"])
+        .env(
+            "WORKTRUNK_COMMIT__GENERATION__COMMAND",
+            "cat >/dev/null && echo 'feat: include hidden files'",
+        )
+        .output()
+        .unwrap();
+    assert_hidden_untracked_auto_staging_warning(&output, "step commit");
+}
+
+/// Ten paths fill the listing's ten rows. One more lists nine and counts the
+/// other two, so the hint never takes the row a single remaining path would
+/// have used. `0-generated/` sorts first and holds 300 files, but as a wholly
+/// untracked directory it takes one row and leaves the rest of the listing to
+/// the paths beside it.
+#[rstest]
+fn test_step_commit_auto_staging_caps_untracked_listing(
+    repo: TestRepo,
+    #[values(10, 11)] count: usize,
+) {
+    let generated = repo.root_path().join("0-generated");
+    fs::create_dir(&generated).unwrap();
+    for i in 1..=300 {
+        fs::write(generated.join(format!("{i:03}.txt")), "").unwrap();
+    }
+    for i in 1..count {
+        fs::write(repo.root_path().join(format!("{i:02}.txt")), "").unwrap();
+    }
+
+    let mut cmd = make_snapshot_cmd(&repo, "step", &["commit"], None);
+    cmd.env(
+        "WORKTRUNK_COMMIT__GENERATION__COMMAND",
+        "cat >/dev/null && echo 'feat: add generated files'",
+    );
+    assert_cmd_snapshot!(
+        format!("step_commit_auto_staging_caps_untracked_listing_{count}"),
+        cmd
+    );
 }
 
 #[rstest]
@@ -2661,6 +3068,146 @@ fn test_step_commit_show_prompt(repo: TestRepo) {
     ));
 }
 
+/// The staged diff hides intent-to-add entries and pairs renames, as
+/// `git diff --cached` does, so the fallback message names only what the
+/// commit records.
+#[rstest]
+fn test_step_commit_fallback_message_names_recorded_changes(repo: TestRepo) {
+    fs::write(repo.root_path().join("old.txt"), "content\n").unwrap();
+    repo.run_git(&["add", "old.txt"]);
+    repo.run_git(&["commit", "--message", "Add old.txt"]);
+    repo.run_git(&["mv", "old.txt", "new.txt"]);
+    fs::write(repo.root_path().join("notes.txt"), "").unwrap();
+    repo.run_git(&["add", "--intent-to-add", "notes.txt"]);
+
+    let output = make_snapshot_cmd(
+        &repo,
+        "step",
+        &["commit", "--stage=none", "--no-hooks"],
+        None,
+    )
+    .output()
+    .unwrap();
+
+    assert!(output.status.success(), "{output:?}");
+    assert_eq!(
+        repo.git_output(&["log", "--max-count=1", "--format=%s"]),
+        "Changes to new.txt"
+    );
+}
+
+/// A staged diff on an unborn branch compares against the empty tree, whose
+/// id depends on the repository's object format.
+#[test]
+fn test_step_commit_first_commit_in_sha256_repo() {
+    let repo = TestRepo::init_repo(&[
+        "init",
+        "--quiet",
+        "--initial-branch=main",
+        "--object-format=sha256",
+    ]);
+    fs::write(repo.root_path().join("first.txt"), "first\n").unwrap();
+    repo.run_git(&["add", "first.txt"]);
+
+    let output = make_snapshot_cmd(&repo, "step", &["commit", "--no-hooks"], None)
+        .output()
+        .unwrap();
+
+    assert!(output.status.success(), "{output:?}");
+    assert_eq!(
+        repo.git_output(&["log", "--max-count=1", "--format=%s"]),
+        "Changes to first.txt"
+    );
+}
+
+/// The squash commits the index, so its prompt must describe the working-tree
+/// changes folded in alongside the commits, and each preview must span what its
+/// own run would commit.
+///
+/// The prompt used to diff `merge_base..HEAD`, which named only the commits —
+/// so `wt merge` on a dirty worktree generated a message about the branch's
+/// older commits and said nothing about the work it had just staged into the
+/// same commit. `--dry-run` inherits that duty: it stages into a temp index the
+/// way a real run stages the real one, where `--show-prompt` deliberately shows
+/// only what is already staged.
+#[rstest]
+fn test_squash_prompt_covers_what_its_run_would_commit(repo_with_multi_commit_feature: TestRepo) {
+    let repo = repo_with_multi_commit_feature;
+    let feature_wt = repo.worktree_path("feature");
+    fs::write(feature_wt.join("staged.txt"), "staged content\n").unwrap();
+    repo.git_command()
+        .args(["add", "staged.txt"])
+        .current_dir(feature_wt)
+        .run()
+        .unwrap();
+    fs::write(feature_wt.join("unstaged.txt"), "unstaged content\n").unwrap();
+
+    let prompt_of = |args: &[&str]| {
+        let output = make_snapshot_cmd(&repo, "step", args, Some(feature_wt))
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "{output:?}");
+        String::from_utf8(output.stdout).unwrap()
+    };
+
+    let shown = prompt_of(&["squash", "--show-prompt"]);
+    assert!(
+        shown.contains("staged.txt"),
+        "--show-prompt covers the staged change: {shown}"
+    );
+    for committed in ["file1.txt", "file2.txt"] {
+        assert!(
+            shown.contains(committed),
+            "--show-prompt still covers {committed}: {shown}"
+        );
+    }
+    assert!(
+        !shown.contains("unstaged.txt"),
+        "--show-prompt shows what is already staged, and nothing else: {shown}"
+    );
+
+    let dry = prompt_of(&["squash", "--dry-run"]);
+    assert!(
+        dry.contains("unstaged.txt") && dry.contains("staged.txt"),
+        "--dry-run covers everything a real squash would stage: {dry}"
+    );
+}
+
+/// The commit and squash prompts split git's diff into per-file sections, so
+/// the user's diff display settings must not change what the LLM receives.
+#[rstest]
+fn test_show_prompt_ignores_diff_display_config(repo_with_multi_commit_feature: TestRepo) {
+    let repo = repo_with_multi_commit_feature;
+    let feature_wt = repo.worktree_path("feature");
+    fs::write(feature_wt.join("staged.txt"), "staged content\n").unwrap();
+    repo.git_command()
+        .args(["add", "staged.txt"])
+        .current_dir(feature_wt)
+        .run()
+        .unwrap();
+    let prompts = || {
+        ["commit", "squash"].map(|step| {
+            let output =
+                make_snapshot_cmd(&repo, "step", &[step, "--show-prompt"], Some(feature_wt))
+                    .output()
+                    .unwrap();
+            assert!(output.status.success(), "{output:?}");
+            String::from_utf8(output.stdout).unwrap()
+        })
+    };
+
+    let default_prompts = prompts();
+    for (key, value) in [
+        ("color.ui", "always"),
+        ("diff.external", "echo"),
+        ("diff.noprefix", "true"),
+    ] {
+        repo.run_git(&["config", key, value]);
+    }
+
+    assert_eq!(prompts(), default_prompts);
+}
+
 #[rstest]
 fn test_step_commit_show_prompt_no_staged_changes(repo: TestRepo) {
     // No staged changes - should still output the prompt (with empty diff)
@@ -2782,11 +3329,14 @@ squash-template = """
     ));
 }
 
-/// A custom squash template that references the deprecated `commits` variable
-/// still renders, and the standard config-deprecation framework warns that it
-/// is replaced by `commit_details` and points at `wt config update` to apply
-/// the rewrite (see #2984). The rename is mechanical because each
-/// `commit_details` element renders as its subject when printed bare.
+/// A custom squash template that references the retired `commits` variable
+/// still renders, even though the prompt renderer no longer supplies that name:
+/// the config-deprecation layer rewrites it to `commit_details` on load, warns
+/// that it is replaced, and points at `wt config update` to write the rename
+/// into the file (see #2984 and `RETIRED_VARS`). The rename is mechanical
+/// because each `commit_details` element renders as its subject when printed
+/// bare — which is why the rendered count below is the real commit count and
+/// not the zero an undefined variable would produce.
 #[rstest]
 fn test_step_squash_show_prompt_deprecated_commits_warns(mut repo: TestRepo) {
     let feature_wt = repo.add_worktree("feature");
@@ -2865,6 +3415,9 @@ command = "cat >/dev/null && echo 'feat: add untracked'"
     fs::write(repo.test_config_path(), worktrunk_config).unwrap();
 
     let output = make_snapshot_cmd(&repo, "step", &["commit", "--dry-run"], None)
+        // The worktree-root case exercises the empty relative path in the
+        // temporary-index exclusion.
+        .env("TMPDIR", repo.root_path())
         .output()
         .expect("wt step commit --dry-run failed");
     let stdout = String::from_utf8(output.stdout).unwrap();
@@ -2872,6 +3425,10 @@ command = "cat >/dev/null && echo 'feat: add untracked'"
         stdout.contains("untracked.txt"),
         "--dry-run with default --stage=all should include untracked files in the prompt; \
          got stdout:\n{stdout}"
+    );
+    assert!(
+        !stdout.contains("worktrunk-temp-index-"),
+        "--dry-run must exclude its temporary index artifacts; got stdout:\n{stdout}"
     );
 
     // The user's real index must not have absorbed the untracked file.
@@ -3026,7 +3583,7 @@ command = "cat >/dev/null && echo 'feat: combined feature work'"
 /// `GIT_INDEX_FILE` pointed at the copy. If that `git add` exits non-zero, the
 /// error must propagate (not silently feed an empty diff to the LLM). We
 /// reproduce a non-zero exit by replacing `.git/index` with garbage — the temp
-/// copy succeeds, but `git add -A` rejects the corrupt index.
+/// copy succeeds, but the all-files `git add` rejects the corrupt index.
 #[rstest]
 fn test_step_commit_dry_run_propagates_git_add_failure(repo: TestRepo) {
     fs::write(repo.root_path().join("new.txt"), "x").expect("Failed to write file");
@@ -3045,8 +3602,8 @@ fn test_step_commit_dry_run_propagates_git_add_failure(repo: TestRepo) {
     );
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
-        stderr.contains("git add -A failed"),
-        "expected bail! to surface 'git add -A failed'; got stderr:\n{stderr}"
+        stderr.contains("git add -A -- . failed"),
+        "expected the failing git add command; got stderr:\n{stderr}"
     );
 }
 
@@ -3091,7 +3648,7 @@ command = "cat >/dev/null && echo 'feat: missing-index'"
 }
 
 /// `wt step squash --show-prompt` propagates template errors from
-/// `build_squash_prompt`. A malformed jinja template must surface the failure
+/// `SquashInputs::prompt`. A malformed jinja template must surface the failure
 /// rather than producing an empty prompt.
 #[rstest]
 fn test_step_squash_show_prompt_malformed_template(repo_with_multi_commit_feature: TestRepo) {
@@ -3121,7 +3678,7 @@ squash-template = "{% if commits"
 }
 
 /// `wt step squash --dry-run` propagates LLM-command failures from
-/// `generate_squash_message`. The prompt renders fine, but a non-zero exit
+/// `SquashInputs::generate_message`. The prompt renders fine, but a non-zero exit
 /// from the configured command must be surfaced rather than swallowed.
 #[rstest]
 fn test_step_squash_dry_run_llm_failure(repo_with_multi_commit_feature: TestRepo) {
@@ -3129,7 +3686,7 @@ fn test_step_squash_dry_run_llm_failure(repo_with_multi_commit_feature: TestRepo
     let feature_wt = repo.worktree_path("feature");
 
     // `cat >/dev/null` consumes stdin first to avoid a broken-pipe race; the
-    // command then exits non-zero so generate_squash_message bubbles the failure up.
+    // command then exits non-zero so `generate_message` bubbles the failure up.
     let worktrunk_config = r#"
 [commit.generation]
 command = "cat >/dev/null; echo 'simulated LLM failure' >&2 && exit 1"
@@ -3144,6 +3701,92 @@ command = "cat >/dev/null; echo 'simulated LLM failure' >&2 && exit 1"
         "expected non-zero exit when LLM command fails; stdout:\n{}\nstderr:\n{}",
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr),
+    );
+}
+
+// =============================================================================
+// --branch (commit another worktree) tests
+// =============================================================================
+
+/// `wt step commit --branch <b>` commits `<b>`'s worktree, so every prompt
+/// input must come from there. Reading the diff from the invoking worktree —
+/// clean, since the changes are in `<b>` — sent the generator an empty
+/// `<diff>`, and the model's "I don't see any staged changes" reply became the
+/// commit message over a full set of files.
+#[rstest]
+fn test_step_commit_branch_prompt_reads_target_worktree(mut repo: TestRepo) {
+    let feature_wt = repo.add_worktree("feature");
+
+    // The work is in the feature worktree only; the invoking worktree stays clean.
+    fs::write(feature_wt.join("feature_only.txt"), "line one\nline two\n").unwrap();
+
+    // The mock generator saves its prompt outside both worktrees, so `--stage=all`
+    // can't sweep the capture into the commit under test.
+    let captured = repo.home_path().join("captured-prompt.txt");
+    repo.write_test_config(&format!(
+        r#"
+[commit.generation]
+command = "cat > {} && echo 'feat: mock message'"
+"#,
+        captured.to_slash_lossy()
+    ));
+
+    let output = repo
+        .wt_command()
+        .args(["step", "commit", "--branch", "feature", "--no-hooks"])
+        .output()
+        .expect("wt step commit --branch failed to spawn");
+    assert!(
+        output.status.success(),
+        "commit failed; stderr:\n{}",
+        String::from_utf8_lossy(&output.stderr),
+    );
+
+    let prompt = fs::read_to_string(&captured).expect("generator received no prompt");
+    assert!(
+        prompt.contains("feature_only.txt") && prompt.contains("+line one"),
+        "the prompt must carry the target worktree's staged diff; got:\n{prompt}"
+    );
+    assert!(
+        prompt.contains("Branch: feature"),
+        "the prompt must name the committed branch; got:\n{prompt}"
+    );
+
+    // The generated message landed on the commit the prompt described.
+    let message = repo
+        .git_command()
+        .args(["log", "-1", "--format=%s"])
+        .current_dir(&feature_wt)
+        .run()
+        .unwrap();
+    assert_eq!(
+        String::from_utf8_lossy(&message.stdout).trim(),
+        "feat: mock message"
+    );
+}
+
+/// `--show-prompt` previews what a real run would send, so `--branch` selects
+/// the previewed worktree exactly as it selects the committed one.
+#[rstest]
+fn test_step_commit_show_prompt_branch_previews_target_worktree(mut repo: TestRepo) {
+    let feature_wt = repo.add_worktree("feature");
+
+    // --show-prompt previews the existing index, so stage in the target worktree.
+    fs::write(feature_wt.join("feature_only.txt"), "line one\n").unwrap();
+    repo.run_git_in(&feature_wt, &["add", "feature_only.txt"]);
+
+    let output = make_snapshot_cmd(
+        &repo,
+        "step",
+        &["commit", "--show-prompt", "--branch", "feature"],
+        None,
+    )
+    .output()
+    .expect("wt step commit --show-prompt --branch failed to spawn");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("feature_only.txt") && stdout.contains("Branch: feature"),
+        "the preview must describe the target worktree; got:\n{stdout}"
     );
 }
 

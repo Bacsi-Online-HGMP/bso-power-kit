@@ -74,19 +74,48 @@ func (s claudeSessionSource) scanSession(ref sessionRef, since time.Time, emit f
 		}
 		ctx, hasUsage := claudeTurnContext(obj)
 		cacheRead, cacheCreation, hasCacheUsage := claudeCacheUsage(obj)
+		fresh, out, hasBilling := claudeBillingUsage(obj)
 		lower := strings.ToLower(string(line))
 		emit(turnEvent{
 			Timestamp: ts, ContextTotal: ctx, ContextUsagePresent: hasUsage,
 			CacheReadInputTokens: cacheRead, CacheCreationInputTokens: cacheCreation,
 			CacheUsagePresent: hasCacheUsage,
-			UsageMessageID:    claudeUsageMessageID(obj), Model: claudeModel(obj), ProviderKey: "anthropic",
+			InputFreshTokens:  fresh, OutputTokens: out, BillingUsagePresent: hasBilling,
+			UsageMessageID: claudeUsageMessageID(obj), Model: claudeModel(obj), ProviderKey: "anthropic",
 			ToolCalls: claudeTurnToolCalls(obj, pendingTools), TextPayloads: claudeTextPayloads(obj),
 			TaskSpawns: strings.Count(lower, `"name":"task"`), SkillUses: claudeStructuredSkillReferences(obj),
-			SkillHaystack: lower, Compaction: claudeCompactionMarker(obj),
-			JSONLLine: lineNo, RelPath: ref.relPath, Repo: repo, Side: obj["isSidechain"] == true,
+			Compaction: claudeCompactionMarker(obj),
+			JSONLLine:  lineNo, RelPath: ref.relPath, Repo: repo, Side: obj["isSidechain"] == true,
 		})
 	}
 	return false
+}
+
+// claudeBillingUsage returns the DISJOINT billable buckets Anthropic reports:
+// input_tokens is already uncached-only (cache reads and writes are separate
+// fields), so no subtraction is needed. Absence of the usage block leaves the
+// buckets unstated rather than zero — a fabricated zero would price real
+// traffic at nothing.
+func claudeBillingUsage(obj map[string]any) (fresh, output int, present bool) {
+	msg := asMap(obj["message"])
+	usage := asMap(msg["usage"])
+	if len(usage) == 0 {
+		usage = asMap(obj["usage"])
+	}
+	if len(usage) == 0 {
+		return 0, 0, false
+	}
+	_, hasInput := usage["input_tokens"]
+	_, hasOutput := usage["output_tokens"]
+	if !hasInput && !hasOutput {
+		return 0, 0, false
+	}
+	fresh64 := int64FromAny(usage["input_tokens"])
+	out64 := int64FromAny(usage["output_tokens"])
+	if fresh64 < 0 || out64 < 0 || uint64(fresh64) > uint64(^uint(0)>>1) || uint64(out64) > uint64(^uint(0)>>1) {
+		return 0, 0, false
+	}
+	return int(fresh64), int(out64), true
 }
 
 // claudeCacheUsage preserves provider-reported cache components. Presence is

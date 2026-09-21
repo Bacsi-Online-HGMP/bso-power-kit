@@ -96,6 +96,7 @@ not merged after review.
 
 | Reporter | Issue | Contribution category |
 |----------|-------|-----------------------|
+| [@DreaminginAI](https://github.com/DreaminginAI) | [#176](https://github.com/AgriciDaniel/claude-seo/issues/176) | Format-specific report dependency analysis and verification |
 | [@sam-fakhreddine](https://github.com/sam-fakhreddine) | [#174](https://github.com/AgriciDaniel/claude-seo/issues/174) | Managed virtual-environment bypass in agent script commands |
 | [@n-youn9](https://github.com/n-youn9) | [#173](https://github.com/AgriciDaniel/claude-seo/issues/173) | GSC total-limit pagination hang and reproducible root-cause analysis |
 | [@jonathanlombi-debug](https://github.com/jonathanlombi-debug) | [#163](https://github.com/AgriciDaniel/claude-seo/issues/163) | Banana extension script-path and install-layout analysis |

@@ -83,9 +83,9 @@ pub(super) fn resolve_copy_ignored_config(repo: &Repository) -> anyhow::Result<C
         exclude: default_copy_ignored_excludes(),
     };
     let user_config = repo.user_config();
-    let project_config = repo
-        .project_config()
-        .context("Failed to load project config")?;
+    // No `.context()`: `project_config()` already wraps the load failure with
+    // exactly that header (see `handle_hook_show`).
+    let project_config = repo.project_config()?;
     if let Some(project_config) = project_config
         && let Some(project_copy_ignored) = project_config.copy_ignored()
     {
@@ -217,6 +217,7 @@ fn list_ignored_entries(
         .args(args)
         .current_dir(worktree_path)
         .context(context)
+        .scrub_git_discovery_env()
         .run()
         .context("Failed to run git ls-files")?;
 

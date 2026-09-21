@@ -92,35 +92,6 @@ set covers:
 Generate and validate artifacts through package scripts rather than editing
 generated outputs independently.
 
-## Evaluation graders
-
-`packages/graders` implements 27 current TypeScript grader types. Graders validate input
-and fail closed: unknown grader type or malformed required data does not pass.
-
-Evaluation result means fixture or task met that grader's rule. It does not by
-itself establish universal model quality or verified monetary savings.
-
-```bash
-pnpm --dir packages/graders build
-pnpm --dir packages/graders test
-```
-
-## UI kit and utilities
-
-`packages/kit` provides honesty-aware React surfaces such as basis labels for measured,
-inferred, verified, and unpriced values. These components help prevent a number
-from appearing without its evidence basis.
-
-`ui` is an in-tree MIT utility package with registry publication disabled. It
-supports repository applications but is not released as a public registry
-package.
-
-## Mastra adapter
-
-`packages/mastra` connects supported Mastra agent flows to Caveman SDK
-contracts. Keep framework-specific mapping in adapter and shared semantics in
-SDK.
-
 ## Provider catalog
 
 `shared/provider-catalog` stores dated public list-price records and generated

@@ -9,15 +9,15 @@ import { extractTextFromFrames } from '../processors/frame-ocr.js';
 import { ocrSourceFrames, optimizeFramesKeepingOriginals } from '../processors/image-optimizer.js';
 import { createProgressReporter } from '../utils/progress.js';
 import { createTempDir } from '../utils/temp-files.js';
-import { isVideoSource } from '../utils/url-detector.js';
+import { isVideoSource, sourceRejectionMessage } from '../utils/url-detector.js';
+import { warningReason } from '../utils/warnings.js';
 import { maxWidthParam } from './frame-options.js';
 
 const AnalyzeMomentSchema = z.object({
   url: z
     .string()
     .refine(isVideoSource, {
-      message:
-        'Must be a supported video URL (Loom, YouTube, Vimeo, TikTok, Instagram, X/Twitter, Twitch, Dailymotion, Facebook), a direct .mp4/.webm/.mov URL, or an absolute path / file:// URI to a local video file',
+      error: (issue) => sourceRejectionMessage(issue.input),
     })
     .describe(
       'Video source: Loom share link, platform video URL (YouTube, Vimeo, TikTok, Instagram, X, Twitch, Dailymotion, Facebook), direct .mp4/.webm/.mov URL, or absolute path to a local video file',
@@ -95,7 +95,7 @@ Supports: Loom (loom.com/share/...), YouTube/Vimeo/TikTok/Instagram/X/Twitch/Dai
 
       // Fetch transcript and filter to time range
       const fullTranscript = await adapter.getTranscript(url).catch((e: unknown) => {
-        warnings.push(`Failed to fetch transcript: ${e instanceof Error ? e.message : String(e)}`);
+        warnings.push(`Failed to fetch transcript: ${warningReason(e)}`);
         return [];
       });
 
@@ -165,7 +165,7 @@ Supports: Loom (loom.com/share/...), YouTube/Vimeo/TikTok/Instagram/X/Twitch/Dai
         const pct = 75 + Math.round((completed / total) * 15);
         progress(pct, `OCR: processing frame ${completed}/${total}...`);
       }).catch((e: unknown) => {
-        warnings.push(`OCR failed: ${e instanceof Error ? e.message : String(e)}`);
+        warnings.push(`OCR failed: ${warningReason(e)}`);
         return [];
       });
 

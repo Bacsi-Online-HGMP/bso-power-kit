@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, readFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 import os from "node:os";
 import { fileURLToPath } from "node:url";
@@ -10,11 +10,22 @@ import {
   countTestRisks,
   extractChangelogVersion,
   extractGuideStepLabels,
+  hasOpencodeSlashFlag,
   PRODUCTION_RISK_COUNT,
   TEST_RISK_COUNT,
 } from "./frontmatter.mjs";
 import { GUIDE_BY_MODE, VALID_MODES } from "./assemble-prompt.mjs";
 import { versionRefs } from "./version-refs.mjs";
+import { coverageVerdict } from "./changelog-audit.mjs";
+import {
+  platformDocs,
+  setupGuides,
+  linkedSetupGuides,
+  parseInstallerPlatforms,
+  platformEnumeration,
+  namesPlatform,
+} from "./platforms.mjs";
+import { render as renderStarHistory, readStamps as readStarStamps } from "./gen-star-history.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(__dirname, "..");
@@ -93,6 +104,33 @@ function checkChangelog() {
     latestVersion === version,
     `CHANGELOG.md latest version ${latestVersion ?? "<missing>"} does not match package.json version ${version}`,
   );
+}
+
+// Changelog COVERAGE, as distinct from checkChangelog()'s existence check.
+// The audit runs only while a release is in progress — derived as "this
+// version has no tag yet" — so it never nags during normal work. Only the
+// provable gap fails: a pull request merged in the range whose number the
+// section never cites. Everything else is judgment and belongs to the
+// maintainer walking `npm run changelog:audit`.
+//
+// The skip is announced rather than silent. Plain `npm version <v>` tags as it
+// commits, and a tag deleted on the remote can survive locally; either would
+// switch this check off, and an unannounced off-state reads exactly like a pass.
+function checkChangelogCoverage() {
+  const verdict = coverageVerdict({ version, cwd: root, changelog: readText("CHANGELOG.md") });
+  if (verdict.skipped !== null) {
+    console.log(`Changelog coverage: not audited — ${verdict.skipped}.`);
+    return;
+  }
+  // Every audited run is announced, not only the failing ones — the range is
+  // context for a failure and the only proof of life on a pass. The scope is
+  // spelled out because the gate proves each merged pull request's number
+  // appears somewhere in the section, never that an entry was written.
+  console.log(
+    `Changelog coverage: audited ${verdict.commitCount} commits in ${verdict.range} — ` +
+      `pull-request citations only; walk the rest with npm run changelog:audit.`,
+  );
+  for (const gap of verdict.errors) check(false, gap);
 }
 
 // Version strings embedded in text files (README badges, docs JSON-LD). The
@@ -325,6 +363,88 @@ function checkAgentsDocs() {
   }
 }
 
+// Every docs/<name>-setup.md must be linked from all six READMEs and the
+// getting-started table, and every platform the installer accepts must appear in
+// each document's `<platform> = …` list. Linking alone was not enough: IBM Bob
+// arrived with its setup guide linked everywhere and its name missing from every
+// enumeration but the English one.
+function checkPlatformDocs() {
+  const guides = setupGuides(root);
+  const { declared } = parseInstallerPlatforms(readText("scripts/install.sh"));
+  check(guides.length > 0, "docs/ should contain at least one <platform>-setup.md guide");
+
+  for (const file of platformDocs(root)) {
+    const text = readText(file);
+    const linked = linkedSetupGuides(text);
+    for (const guide of guides) {
+      check(linked.includes(guide), `${file} is missing an install-table link to docs/${guide}`);
+    }
+    for (const link of linked) {
+      check(guides.includes(link), `${file} links to docs/${link}, which does not exist`);
+    }
+    const enumeration = platformEnumeration(text);
+    if (enumeration === "") {
+      check(false, `${file} has no '<platform> = …' list of the installer's platforms`);
+      continue;
+    }
+    for (const platform of declared) {
+      check(
+        namesPlatform(enumeration, platform),
+        `${file} omits '${platform}' from its '<platform> = …' list, which scripts/install.sh accepts`,
+      );
+    }
+  }
+}
+
+function checkInstallerPlatforms() {
+  const { declared, global: globalArms, project } = parseInstallerPlatforms(readText("scripts/install.sh"));
+  check(declared.length > 0, "scripts/install.sh should declare a PLATFORMS list");
+
+  for (const [arms, fn] of [[globalArms, "global_dir"], [project, "project_dir"]]) {
+    for (const platform of declared) {
+      check(arms.includes(platform), `scripts/install.sh ${fn}() has no path for PLATFORMS entry '${platform}'`);
+    }
+    for (const platform of arms) {
+      check(declared.includes(platform), `scripts/install.sh ${fn}() maps '${platform}', which PLATFORMS omits`);
+    }
+  }
+}
+
+// OpenCode v2 shadows nothing and auto-registers nothing: a skill reaches the
+// `/` menu only by opting in with metadata.opencode/slash. No other platform
+// reads the flag, so nothing else fails when a new skill ships without it —
+// this check is the only thing standing between a seventh skill and a silently
+// missing /brooks-* on OpenCode. Scans the directory rather than the mode
+// registry so an unregistered skill folder is caught too; _shared/ has no
+// SKILL.md and is skipped by construction.
+function checkOpencodeSlashFlag() {
+  const skillDirs = readdirSync(path.join(root, "skills"), { withFileTypes: true })
+    .filter((entry) => entry.isDirectory())
+    .map((entry) => entry.name)
+    .filter((dir) => existsSync(path.join(root, "skills", dir, "SKILL.md")))
+    .sort();
+
+  check(skillDirs.length > 0, "skills/ contains no SKILL.md — expected at least one skill");
+
+  for (const dir of skillDirs) {
+    check(
+      hasOpencodeSlashFlag(readText(`skills/${dir}/SKILL.md`)),
+      `skills/${dir}/SKILL.md frontmatter needs metadata: opencode/slash: "true" — without it the skill never appears in OpenCode's / menu`,
+    );
+  }
+}
+
+// assets/star-history.svg is a pure function of assets/star-history.json, so a
+// mismatch means the chart was hand-edited or the data moved without a redraw.
+// Re-rendering here needs no credentials, which is the point of committing the
+// data rather than the drawing alone.
+function checkStarHistory() {
+  check(
+    renderStarHistory(readStarStamps()) === readText("assets/star-history.svg"),
+    "assets/star-history.svg does not match assets/star-history.json — rerun `node scripts/gen-star-history.mjs --render-only`",
+  );
+}
+
 function checkSecurity() {
   const security = readText("SECURITY.md");
   check(!security.includes("<!--"), "SECURITY.md still contains placeholder content");
@@ -363,6 +483,7 @@ function checkHookOutput() {
 checkVersionConsistency();
 checkDescriptionConsistency();
 checkChangelog();
+checkChangelogCoverage();
 checkVersionRefs();
 checkReadmeIntegrity();
 checkConfigExamples();
@@ -373,7 +494,11 @@ checkStepAlignment();
 checkEvalSuite();
 checkContributing();
 checkAgentsDocs();
+checkPlatformDocs();
+checkInstallerPlatforms();
+checkOpencodeSlashFlag();
 checkSecurity();
+checkStarHistory();
 checkHookOutput();
 
 // ── Report ─────────────────────────────────────────────────────────────────

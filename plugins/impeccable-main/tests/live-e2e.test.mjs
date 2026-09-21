@@ -32,7 +32,7 @@ import {
   FAKE_VARIANT_FONT_WEIGHTS,
 } from './live-e2e/agent.mjs';
 import { createLlmAgent, resolveLlmAgentConfig } from './live-e2e/agents/llm-agent.mjs';
-import { bootFixtureSession, FIXTURES_DIR } from './live-e2e/session.mjs';
+import { bootFixtureSession, ENGINE_BIN, ENGINE_MISSING_MESSAGE, FIXTURES_DIR, runEngineSync } from './live-e2e/session.mjs';
 import {
   assertApplyDockVisible,
   assertApplyDockLoading,
@@ -173,6 +173,9 @@ function isBenignConsoleError(entry) {
 
 before(async () => {
   if (fixtures.length === 0) return;
+  // The whole sweep drives engine verbs; without a binary there is nothing to
+  // test, and a silent skip would read as coverage.
+  if (!ENGINE_BIN) throw new Error(ENGINE_MISSING_MESSAGE);
   try {
     playwright = await import('playwright');
   } catch (err) {
@@ -1280,17 +1283,21 @@ for (const { name, fixture } of fixtures) {
         const pickSelector = annotation.selector || fixture.runtime.pickSelector || 'h1.hero-title';
         try {
           await waitForHandshake(page);
+          if (annotation.uploadDelayMs) {
+            await page.route('**/annotation?*', async (route) => {
+              await new Promise(resolve => setTimeout(resolve, annotation.uploadDelayMs));
+              await route.continue();
+            });
+          }
           if (fixture.runtime.preActions) await runPreActions(page, fixture.runtime.preActions);
           await pickElement(page, pickSelector, { resetPickMode: true });
           await drawAnnotationPinAndStroke(page, {
             comment: annotation.comment || 'Make this selected element easier to scan',
           });
           await clickGo(page);
-          await waitForCyclingRobust(page, 3, {
-            agentMode,
-            preActions: fixture.runtime.preActions,
-            log: (m) => t.diagnostic(m),
-          });
+          // A reload would mask a checkpoint-before-creation race by adopting
+          // the session again. Annotated generation must complete in this tab.
+          await waitForCycling(page, 3, { timeout: agentMode === 'llm' ? 180_000 : 30_000 });
 
           const generateEvent = recordedGenerateEvents.at(-1);
           await assertAnnotationUploadEvent(generateEvent);
@@ -1299,7 +1306,7 @@ for (const { name, fixture } of fixtures) {
 
           const sourceFile = await locateSessionFile(session.appRoot);
           const svelteComponentTarget = svelteComponentTargetFor(sourceFile);
-          await clickNext(page);
+          await cycleToVariant(page, 2, 3);
           assert.equal(await getVisibleVariant(page), 2, 'variant 2 visible after annotated generate');
           await clickAccept(page, { expectedVariant: 2 });
           await waitForBarHidden(page);
@@ -1685,11 +1692,10 @@ function maybeWrapMalformedAckProbe(agent, scenario, probeState, t) {
       probeState.applyCalls = (probeState.applyCalls || 0) + 1;
       const sourceFile = firstExpectedSourceFile(scenario) || 'src/App.jsx';
       try {
-        execFileSync(
-          process.execPath,
-          [join(context.scriptsDir, 'live-poll.mjs'), '--reply', 'done', '--file', sourceFile],
-          { cwd: context.tmp, encoding: 'utf-8', stdio: ['ignore', 'pipe', 'pipe'] },
-        );
+        runEngineSync('live-poll', ['--reply', 'done', '--file', sourceFile], {
+          cwd: context.tmp,
+          stdio: ['ignore', 'pipe', 'pipe'],
+        });
         assert.fail('malformed manual Apply ack unexpectedly succeeded');
       } catch (err) {
         const output = [err.stdout, err.stderr, err.message].filter(Boolean).join('\n');

@@ -66,6 +66,39 @@ class PipelineV3Tests(unittest.TestCase):
                 mock=True,
             )
 
+    def test_external_plan_honors_per_subquery_sources_at_default_depth(self):
+        # Issue #1073: --plan sources are a contract at default/deep.
+        plan = {
+            "intent": "opinion",
+            "freshness_mode": "balanced_recent",
+            "cluster_mode": "debate",
+            "subqueries": [
+                {
+                    "label": "primary",
+                    "search_query": "late diagnosed autism adults",
+                    "ranking_query": "What are people saying about late diagnosed autism in adults?",
+                    "sources": ["reddit", "x", "youtube"],
+                    "weight": 1.0,
+                }
+            ],
+        }
+        report = pipeline.run(
+            topic="late diagnosed autism adults",
+            config={"LAST30DAYS_REASONING_PROVIDER": "gemini"},
+            depth="default",
+            requested_sources=["reddit", "x", "youtube", "hackernews", "polymarket", "github"],
+            mock=True,
+            web_backend="none",
+            external_plan=plan,
+        )
+        self.assertEqual(
+            ["reddit", "x", "youtube"],
+            report.query_plan.subqueries[0].sources,
+        )
+        self.assertNotIn("hackernews", report.items_by_source)
+        self.assertNotIn("polymarket", report.items_by_source)
+        self.assertNotIn("github", report.items_by_source)
+
     def test_planner_trace_always_fires_on_mock_run(self):
         """Unit 5: The unified planner trace emits one summary line plus one
         line per subquery on every run, regardless of --debug. 2026-04-19
@@ -119,6 +152,34 @@ class PipelineV3Tests(unittest.TestCase):
         # changing the contract that the grounding source registers an
         # error when its required backend key is unset.
         self.assertIn("grounding", report.errors_by_source)
+
+    def test_parallel_mcp_enables_grounding_without_key_on_native_host(self):
+        def mcp_response(message, _api_key, _session_id=None):
+            results = {
+                "initialize": {"protocolVersion": "2025-03-26"},
+                "notifications/initialized": {},
+                "tools/list": {"tools": [{"name": "web_search"}]},
+                "tools/call": {"structuredContent": {"results": [{
+                    "url": "https://example.com/update",
+                    "title": "Test topic update",
+                    "publish_date": "2026-08-01",
+                    "excerpts": ["New evidence about test topic"],
+                }]}},
+            }
+            return {"result": results[message["method"]]}, None
+
+        with patch("lib.parallel_mcp._request", side_effect=mcp_response):
+            report = pipeline.run(
+                topic="test topic",
+                config={"LAST30DAYS_REASONING_PROVIDER": "auto", "LAST30DAYS_NATIVE_SEARCH": "1"},
+                depth="quick",
+                requested_sources=["grounding"],
+                web_backend="parallel-mcp",
+                as_of_date="2026-08-26",
+            )
+        self.assertNotIn("grounding", report.errors_by_source)
+        self.assertEqual(1, len(report.items_by_source["grounding"]))
+        self.assertEqual("2026-08-01", report.items_by_source["grounding"][0].published_at)
 
     def test_hiring_signals_mode_enables_jobs_source_in_mock_run(self):
         report = pipeline.run(

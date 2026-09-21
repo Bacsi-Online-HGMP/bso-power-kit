@@ -1,4 +1,5 @@
 import { existsSync } from 'node:fs';
+import type * as FsPromises from 'node:fs/promises';
 import { appendFile, copyFile, readFile, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -12,6 +13,22 @@ import {
 } from './analysis-sidecar.js';
 import { cleanupTempDir, createTempDir } from './temp-files.js';
 import { parseVtt } from './vtt-parser.js';
+
+// Lets one test make the .vtt write fail for a NON-EEXIST reason; every other
+// write (and every other test) passes straight through to the real fs.
+const failVtt = vi.hoisted(() => ({ code: null as string | null }));
+vi.mock('node:fs/promises', async (importOriginal) => {
+  const actual = await importOriginal<typeof FsPromises>();
+  return {
+    ...actual,
+    writeFile: async (path: unknown, data: unknown, opts: unknown) => {
+      if (failVtt.code && String(path).endsWith('.vtt')) {
+        throw Object.assign(new Error('denied'), { code: failVtt.code });
+      }
+      return actual.writeFile(path as never, data as never, opts as never);
+    },
+  };
+});
 
 function fakeResult(framePath: string): IAnalysisResult {
   return {
@@ -323,14 +340,67 @@ describe('sidecar write/read', () => {
       expect(existsSync(join(tempDir, 'clip.vtt'))).toBe(false);
 
       // A pre-existing .vtt (e.g. the user's own GPU transcript) is preserved.
+      // The write is create-exclusive ('wx'), so this exercises the EEXIST path:
+      // the file is neither clobbered nor reported as written, and EEXIST must
+      // NOT surface as failed — an existing .vtt is the documented no-op.
       const userVtt = join(tempDir, 'clip.vtt');
       await writeFile(userVtt, 'WEBVTT\n\nUSER CONTENT', 'utf8');
-      await writeAnalysisSidecars(clip, fakeResult(frame), PARAMS, { transcriptFromWhisper: true });
+      const second = await writeAnalysisSidecars(clip, fakeResult(frame), PARAMS, {
+        transcriptFromWhisper: true,
+      });
       const { readFile } = await import('node:fs/promises');
       expect(await readFile(userVtt, 'utf8')).toContain('USER CONTENT');
+      expect(second.written).not.toContain(userVtt);
+      expect(second.failed).toBe(false);
     } finally {
       await cleanupTempDir(tempDir);
     }
+  });
+
+  it('reports failed with a reason when the .vtt write fails for a real reason', async () => {
+    // The rethrow half of the EEXIST filter. Without a test here, simplifying
+    // that line to a bare `catch {}` — which reads as harmless next to a
+    // comment saying "an existing .vtt is a no-op" — turns every genuine write
+    // failure into a silent success. (Pre-creating a DIRECTORY at the path is
+    // not a substitute: O_CREAT|O_EXCL returns EEXIST for one, so it lands in
+    // the no-op branch instead.)
+    const tempDir = await createTempDir();
+    try {
+      const clip = join(tempDir, 'clip.mp4');
+      await copyFile(join(FIXTURES_DIR, 'tiny.mp4'), clip);
+      const frame = await createTestImage(tempDir, 'frame.jpg');
+
+      failVtt.code = 'EACCES';
+      const { written, failed, reason } = await writeAnalysisSidecars(
+        clip,
+        fakeResult(frame),
+        PARAMS,
+        { transcriptFromWhisper: true },
+      );
+
+      expect(failed).toBe(true);
+      expect(written).not.toContain(join(tempDir, 'clip.vtt'));
+      // The .vtt is written LAST, so the authoritative .analysis.json is
+      // already on disk — the caller needs that to avoid telling the user
+      // nothing was persisted.
+      expect(written).toContain(join(tempDir, 'clip.analysis.json'));
+      expect(reason).toBeTruthy();
+      expect(reason).not.toContain(tempDir); // no filesystem paths in warnings[]
+    } finally {
+      failVtt.code = null;
+      await cleanupTempDir(tempDir);
+    }
+  });
+
+  it('round-trips text containing angle brackets through the .vtt sidecar', async () => {
+    // transcriptToVtt escapes '&' and '<' (WebVTT requires it) and parseVtt
+    // decodes them, so a transcript is not quietly rewritten by being persisted
+    // and read back. Before the escape existed, the '<' was written raw and the
+    // strip deleted it on the next run.
+    const entries = [{ time: '0:00', speaker: 'a<b', text: '5 < 10 && 10 > 5' }];
+    expect(parseVtt(transcriptToVtt(entries))).toEqual([
+      { time: '0:00', endTime: '0:03', speaker: 'a<b', text: '5 < 10 && 10 > 5' },
+    ]);
   });
 
   it('returns null for non-local sources', async () => {

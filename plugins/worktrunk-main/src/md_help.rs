@@ -85,7 +85,10 @@ fn render_markdown(help: &str, width: Option<usize>, code_blocks: CodeBlocks) ->
         // HTML comments are expansion markers for web docs (see readme_sync.rs) and
         // don't render. A `<!-- wt list … -->` marker tags the captured `wt list`
         // output that immediately follows, so the next code block is chopped (below).
-        if trimmed.starts_with("<!--") && trimmed.ends_with("-->") {
+        // Only outside a fence: inside one the same text is content the block is
+        // showing, and the picker's `pr`/comments panes render arbitrary forge
+        // markdown, where a fenced HTML sample would otherwise lose the line.
+        if !in_code_block && trimmed.starts_with("<!--") && trimmed.ends_with("-->") {
             let inner = trimmed
                 .trim_start_matches("<!--")
                 .trim_end_matches("-->")
@@ -105,61 +108,14 @@ fn render_markdown(help: &str, width: Option<usize>, code_blocks: CodeBlocks) ->
                 code_block_lines.clear();
                 in_code_block = true;
             } else {
-                // Closing fence — render the collected code block. Flush mode
-                // dims each line with no gutter and no language-specific
-                // highlighting, so the description pane stays gutter-free and
-                // flush-left; the gutter mode quotes it in the house bar.
-                let content = code_block_lines.join("\n");
-                let formatted = if code_blocks == CodeBlocks::Flush {
-                    // Flush code feeds the gutter-free `pr`/comments panes. Wrap each
-                    // line to width (word-wrap, preserving indent) and dim every
-                    // resulting piece, so a long line doesn't overflow the pane — and,
-                    // when the comments pane re-quotes this in the house gutter, every
-                    // wrapped piece already fits, keeping the gutter's own wrap a no-op
-                    // and the dim consistent rather than landing only on the first line.
-                    let dim = Style::new().dimmed();
-                    code_block_lines
-                        .iter()
-                        .flat_map(|l| {
-                            width.map_or_else(|| vec![l.to_string()], |w| wrap_styled_text(l, w))
-                        })
-                        .map(|piece| format!("{dim}{piece}{dim:#}"))
-                        .collect::<Vec<_>>()
-                        .join("\n")
-                } else {
-                    match code_block_lang.as_str() {
-                        "toml" => format_toml(&content),
-                        "console" => {
-                            // Strip `$ ` prompt from console blocks for copy-paste.
-                            // The prefix is preserved in source for web docs.
-                            let stripped = content
-                                .lines()
-                                .map(|l| l.strip_prefix("$ ").unwrap_or(l))
-                                .collect::<Vec<_>>()
-                                .join("\n");
-                            // Captured `wt list` tables (chop_next_block) are chopped to
-                            // width; hand-authored command sessions still word-wrap.
-                            if chop_next_block {
-                                format_bash_with_gutter_chopped(&stripped)
-                            } else {
-                                format_bash_with_gutter(&stripped)
-                            }
-                        }
-                        "bash" | "sh" => format_bash_with_gutter(&content),
-                        _ => {
-                            // Dim the content before adding gutter (format_with_gutter
-                            // doesn't style text; bash/toml formatters handle their own)
-                            let dim = Style::new().dimmed();
-                            let dimmed = code_block_lines
-                                .iter()
-                                .map(|l| format!("{dim}{l}{dim:#}"))
-                                .collect::<Vec<_>>()
-                                .join("\n");
-                            format_with_gutter(&dimmed, None)
-                        }
-                    }
-                };
-                result.push_str(&formatted);
+                // Closing fence — render the collected code block.
+                result.push_str(&render_code_block(
+                    &code_block_lines,
+                    &code_block_lang,
+                    chop_next_block,
+                    width,
+                    code_blocks,
+                ));
                 result.push('\n');
                 in_code_block = false;
                 // A marker applies only to the block right after it.
@@ -252,8 +208,86 @@ fn render_markdown(help: &str, width: Option<usize>, code_blocks: CodeBlocks) ->
         i += 1;
     }
 
+    // An opening fence with no closing one: render what it collected rather
+    // than dropping it. Help pages are authored and balanced, but the picker's
+    // `pr` and comments panes render arbitrary forge markdown, where an
+    // unterminated fence would otherwise take the rest of the body with it.
+    if in_code_block {
+        result.push_str(&render_code_block(
+            &code_block_lines,
+            &code_block_lang,
+            chop_next_block,
+            width,
+            code_blocks,
+        ));
+        result.push('\n');
+    }
+
     // Color status symbols to match their descriptions
     colorize_status_symbols(&result)
+}
+
+/// Render one fenced code block's collected lines.
+///
+/// Flush mode dims each line with no gutter and no language-specific
+/// highlighting, so the description pane stays gutter-free and flush-left; the
+/// gutter mode quotes it in the house bar. Shared by the closing fence and by
+/// the end-of-input flush, so an unterminated block renders exactly as the
+/// same lines would with a closing fence.
+fn render_code_block(
+    code_block_lines: &[&str],
+    code_block_lang: &str,
+    chop_block: bool,
+    width: Option<usize>,
+    code_blocks: CodeBlocks,
+) -> String {
+    let content = code_block_lines.join("\n");
+    if code_blocks == CodeBlocks::Flush {
+        // Flush code feeds the gutter-free `pr`/comments panes. Wrap each
+        // line to width (word-wrap, preserving indent) and dim every
+        // resulting piece, so a long line doesn't overflow the pane — and,
+        // when the comments pane re-quotes this in the house gutter, every
+        // wrapped piece already fits, keeping the gutter's own wrap a no-op
+        // and the dim consistent rather than landing only on the first line.
+        let dim = Style::new().dimmed();
+        return code_block_lines
+            .iter()
+            .flat_map(|l| width.map_or_else(|| vec![l.to_string()], |w| wrap_styled_text(l, w)))
+            .map(|piece| format!("{dim}{piece}{dim:#}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+    }
+    match code_block_lang {
+        "toml" => format_toml(&content),
+        "console" => {
+            // Strip `$ ` prompt from console blocks for copy-paste.
+            // The prefix is preserved in source for web docs.
+            let stripped = content
+                .lines()
+                .map(|l| l.strip_prefix("$ ").unwrap_or(l))
+                .collect::<Vec<_>>()
+                .join("\n");
+            // Captured `wt list` tables (chop_block) are chopped to
+            // width; hand-authored command sessions still word-wrap.
+            if chop_block {
+                format_bash_with_gutter_chopped(&stripped)
+            } else {
+                format_bash_with_gutter(&stripped)
+            }
+        }
+        "bash" | "sh" => format_bash_with_gutter(&content),
+        _ => {
+            // Dim the content before adding gutter (format_with_gutter
+            // doesn't style text; bash/toml formatters handle their own)
+            let dim = Style::new().dimmed();
+            let dimmed = code_block_lines
+                .iter()
+                .map(|l| format!("{dim}{l}{dim:#}"))
+                .collect::<Vec<_>>()
+                .join("\n");
+            format_with_gutter(&dimmed, None)
+        }
+    }
 }
 
 /// Render a markdown table using termimad (for help text, no indent)
@@ -450,7 +484,7 @@ fn render_inline_formatting(line: &str) -> String {
 
 /// Add colors to status symbols in help text (matching wt list output colors)
 fn colorize_status_symbols(text: &str) -> String {
-    // Define semantic styles matching src/commands/list/model.rs StatusSymbols::styled_symbols
+    // Define semantic styles matching src/commands/list/model/status_symbols.rs StatusSymbols::styled_symbols
     let error = Style::new().fg_color(Some(AnsiStyleColor::Ansi(AnsiColor::Red)));
     let warning = Style::new().fg_color(Some(AnsiStyleColor::Ansi(AnsiColor::Yellow)));
     let success = Style::new().fg_color(Some(AnsiStyleColor::Ansi(AnsiColor::Green)));
@@ -554,7 +588,7 @@ mod tests {
     fn test_render_inline_formatting_strips_links() {
         assert_eq!(render_inline_formatting("[text](url)"), "text");
         assert_eq!(
-            render_inline_formatting("See [wt hook](@/hook.md) for details"),
+            render_inline_formatting("See [wt hook](/hook/) for details"),
             "See wt hook for details"
         );
     }
@@ -624,7 +658,7 @@ mod tests {
         assert_snapshot!(mixed, @"text [2mcode[0m more [1mbold[0m end");
 
         // Backticks inside link text
-        let link_code = render_inline_formatting("See [`wt hook`](@/hook.md) for details");
+        let link_code = render_inline_formatting("See [`wt hook`](/hook/) for details");
         assert_snapshot!(link_code, @"See [2mwt hook[0m for details");
 
         // Unclosed backtick
@@ -660,7 +694,7 @@ mod tests {
         // header's own style covers the whole line (no literal backticks, no
         // mid-line ANSI reset). Real case: `### Command log (`commands.jsonl`)`
         // on the `wt config state logs` page.
-        let md = "### `--stage`\n#### Run `wt merge`\n## See [the docs](@/x.md)";
+        let md = "### `--stage`\n#### Run `wt merge`\n## See [the docs](/x/)";
         let result = render_markdown_in_help(md);
         assert_snapshot!(result, @"
         [32m--stage[0m
@@ -717,6 +751,41 @@ mod tests {
     fn test_render_markdown_in_help_html_comment() {
         let result = render_markdown_in_help("<!-- comment -->\nvisible");
         assert_snapshot!(result, @"visible");
+    }
+
+    #[test]
+    fn test_html_comment_inside_a_code_block_is_content() {
+        // Forge markdown can contain fenced HTML samples. A comment inside the
+        // fence is content even when it matches a docs expansion marker.
+        let result = render_markdown_flush("```html\n<!-- wt list -->\n<p>body</p>\n```", None);
+        assert_snapshot!(result, @"
+        [2m<!-- wt list -->[0m
+        [2m<p>body</p>[0m
+        ");
+    }
+
+    #[test]
+    fn test_unterminated_fence_still_renders_its_content() {
+        // A PR description or comment can open a fence and never close it. The
+        // panes render that markdown verbatim from the forge, so the block is
+        // flushed at end of input rather than swallowing the rest of the body.
+        let result = render_markdown_flush("before\n```sh\nwt list\nwt merge", None);
+        assert_snapshot!(result, @"
+        before
+        [2mwt list[0m
+        [2mwt merge[0m
+        ");
+    }
+
+    #[test]
+    fn test_unterminated_fence_keeps_the_gutter_form_too() {
+        // The same flush in gutter mode, so both render contexts are pinned:
+        // the block keeps its language handling rather than being dropped.
+        let result = render_markdown_in_help("before\n```\ncode here");
+        assert_snapshot!(result, @"
+        before
+        [107m [0m [2mcode here[0m
+        ");
     }
 
     #[test]

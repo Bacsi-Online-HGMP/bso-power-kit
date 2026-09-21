@@ -8,6 +8,20 @@ import { tmpdir } from 'node:os';
 const SCRIPT = 'scripts/ci-test-plan.mjs';
 
 describe('ci-test-plan', () => {
+  it('requires explicit manual opt-in and preprovisions the full workflow job', () => {
+    const workflow = readFileSync('.github/workflows/ci.yml', 'utf8');
+    assert.match(workflow, /skill_workflow:\s*description:[^\n]+\s*type: boolean\s*default: false/);
+    const job = workflow.split('\n  skill-workflow:')[1];
+    assert.doesNotMatch(job.split('\n    steps:')[0], /runner\./, 'runner context is unavailable at job-level env');
+    assert.match(job, /if: github.event_name == 'workflow_dispatch' && inputs.skill_workflow/);
+    assert.ok(job.indexOf('bun run fetch:engine') < job.indexOf('bun run test:skill-workflow'));
+    assert.ok(job.indexOf('playwright install --with-deps chromium') < job.indexOf('bun run test:skill-workflow'));
+    const protocol = workflow.split('\n  skill-behavior:')[1].split('\n  skill-workflow:')[0];
+    assert.match(protocol, /bun run fetch:engine/);
+    assert.doesNotMatch(protocol, /IMPECCABLE_SKILL_BEHAVIOR_MODELS:/, 'protocol coverage must retain the multi-family defaults');
+    assert.match(protocol, /GOOGLE_CLOUD_API_KEY:/);
+    assert.match(protocol, /ANTHROPIC_API_KEY:/);
+  });
   it('keeps docs-only pull requests on the core suite', () => {
     const outputs = runPlan({
       GITHUB_EVENT_NAME: 'pull_request',
@@ -23,10 +37,10 @@ describe('ci-test-plan', () => {
     assert.equal(outputs.live_svelte_adapter_deepseek, 'false');
   });
 
-  it('routes detector changes to detector tests only', () => {
+  it('routes extension changes to detector tests only', () => {
     const outputs = runPlan({
       GITHUB_EVENT_NAME: 'pull_request',
-      CI_CHANGED_FILES: 'cli/engine/detect-antipatterns.mjs',
+      CI_CHANGED_FILES: 'extension/manifest.json',
     });
 
     assert.equal(outputs.detector, 'true');
@@ -34,13 +48,13 @@ describe('ci-test-plan', () => {
     assert.equal(outputs.framework, 'false');
   });
 
-  it('routes live server changes to live unit and full live E2E lanes', () => {
+  it('routes an engine version bump to every binary-driven lane', () => {
     const outputs = runPlan({
       GITHUB_EVENT_NAME: 'pull_request',
-      CI_CHANGED_FILES: 'skill/scripts/live-server.mjs',
+      CI_CHANGED_FILES: 'ENGINE_VERSION',
     });
 
-    assert.equal(outputs.live, 'true');
+    assert.equal(outputs.framework, 'true');
     assert.equal(outputs.live_e2e, 'true');
     assert.equal(outputs.live_e2e_accept_cleanup, 'true');
     assert.equal(outputs.live_svelte_adapter_deepseek, 'true');
@@ -103,7 +117,9 @@ describe('ci-test-plan', () => {
     assert.equal(outputs.live_svelte_adapter_deepseek, 'false');
     assert.equal(outputs.cli_remote_e2e, 'false');
     assert.equal(outputs.core, 'true');
+    assert.equal(outputs.detector, 'true');
     assert.equal(outputs.live, 'true');
+    assert.equal(outputs.framework, 'true');
   });
 
 });

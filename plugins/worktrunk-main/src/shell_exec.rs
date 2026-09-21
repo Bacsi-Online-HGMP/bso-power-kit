@@ -46,6 +46,35 @@
 //! keep running as orphans. [`cancel_background_commands`] lets the foreground
 //! thread stop that work — both what is running and what has yet to start —
 //! once nobody is left to read its results.
+//!
+//! ## Timed waits
+//!
+//! Unix has no "wait for this child, but give up after N milliseconds" syscall,
+//! so every deadline here (`Cmd::timeout`, `Cmd::delayed_stream`, the picker's
+//! pager) goes through [`shared_child::SharedChild`]: `waitid(WNOWAIT)` for the
+//! blocking wait, and for the timed one a `SIGCHLD` self-pipe it polls against
+//! the deadline. Windows needs none of that — it waits the process handle.
+//!
+//! **Why not `wait-timeout`.** wt used it until #3856. Its `SIGCHLD` handler
+//! pokes an `AF_UNIX` socketpair with `send()` and `panic!`s on any errno but
+//! `WouldBlock`; the handler is `extern "C"`, so that panic cannot unwind and
+//! goes straight to `abort()`. Under a sandbox that denies the send (the Codex
+//! CLI's `workspace-write` mode) every timed wait in wt became an uncatchable
+//! `SIGABRT` with no diagnostic. `shared_child` reaches the same signal through
+//! `signal_hook`, whose wake deliberately discards write errors — a missed
+//! wakeup costs at worst a wait that runs to its deadline, which is what a
+//! deadline is for. It also probes the wake fd and falls back to `write()` on a
+//! pipe, so the syscall that sandbox denies is not even on the path.
+//!
+//! **When the timed wait itself fails.** Setting a deadline is fallible — each
+//! call allocates a pipe and registers a handler — so each site decides what a
+//! failed `wait_timeout` means instead of propagating it. Where the deadline
+//! bounds wall-clock (`run_with_timeout_impl`, the pager) the site tears the
+//! child down, because a wait it cannot observe bounds nothing. Where it only
+//! decides when output starts streaming ([`Cmd::delayed_stream`]) the site
+//! streams. No site fails the command: a denied syscall in wt's own machinery
+//! is not the child's fault, and erroring over one repeats #3856 in a quieter
+//! form.
 
 use std::collections::BTreeSet;
 use std::ffi::{OsStr, OsString};
@@ -58,9 +87,10 @@ use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
 use anyhow::Context;
-use wait_timeout::ChildExt;
+use shared_child::SharedChild;
 
 use crate::git::{GitError, WorktrunkError};
+use crate::styling::eprintln;
 use crate::sync::Semaphore;
 use crate::trace::CommandTrace;
 
@@ -158,9 +188,8 @@ fn is_cancellable_thread() -> bool {
 /// Register a freshly spawned child as cancellable for as long as the returned
 /// guard lives. Returns `None` when this thread's commands aren't subject to
 /// cancellation (see [`is_cancellable_thread`]).
-fn track_if_cancellable(child: &std::process::Child) -> Option<BackgroundPid> {
+fn track_if_cancellable(pid: u32) -> Option<BackgroundPid> {
     is_cancellable_thread().then(|| {
-        let pid = child.id();
         BACKGROUND_PIDS.lock().unwrap().insert(pid);
         let guard = BackgroundPid(pid);
         // Re-read after publishing the PID, closing the window between this
@@ -496,18 +525,15 @@ fn find_git_bash() -> Option<PathBuf> {
 /// injection surface — this is safe to pass through to alias/hook shell bodies.
 pub const DIRECTIVE_CD_FILE_ENV_VAR: &str = "WORKTRUNK_DIRECTIVE_CD_FILE";
 
-/// Environment variable naming the directive file for arbitrary exec commands.
+/// Retired shell-command directive variable.
 ///
-/// Shell wrappers set this to a temp file; wt writes shell commands (e.g. the
-/// body of `wt switch --execute`) to it and the wrapper sources the file after
-/// wt exits, so the command runs in the user's interactive shell. Because the
-/// file contents are arbitrary shell, wt scrubs this from project-alias and
-/// hook child environments — a body authored in shared config could inject
-/// shell into the parent shell. User-source aliases re-add it (issue #2101)
-/// since the body is user-authored just like a top-level `wt --execute`.
+/// Current wrappers no longer set it. Its presence tells `--execute` that the
+/// live shell still has an old wrapper loaded, and subprocesses must not
+/// inherit it: an older parent wrapper would source anything written there
+/// after wt exits.
 pub const DIRECTIVE_EXEC_FILE_ENV_VAR: &str = "WORKTRUNK_DIRECTIVE_EXEC_FILE";
 
-/// Retired pre-split directive file env var.
+/// Retired single-file directive env var.
 ///
 /// wt never writes to or passes this file through, but still removes the
 /// variable from child environments so an old wrapper cannot expose a file
@@ -601,10 +627,9 @@ pub fn apply_cd_directive_env(cmd: &mut std::process::Command, cd_file: &std::pa
 ///
 /// - **`wt` relocated a user command into a worktree it selected** — hooks
 ///   (run in the operation's worktree), `wt step for-each` (run in each
-///   worktree in turn), and the `--execute` no-integration fallback (run in
-///   the switch target when `wt` itself executes the payload) — the cwd
-///   carries `wt`'s intent, so the inherited context is scrubbed and the
-///   command's `git` calls discover the worktree from the cwd. The inherited
+///   worktree in turn), and the `--execute` program (run in the switch target)
+///   — the cwd carries `wt`'s intent, so the inherited context is scrubbed and
+///   the command's `git` calls discover the worktree from the cwd. The inherited
 ///   context is common, not exotic: `git` exports an absolute `GIT_DIR`
 ///   pinned to the invoking worktree's private gitdir when `wt` runs as a
 ///   `!wt` alias from a **linked worktree**, and git itself exports discovery
@@ -617,23 +642,37 @@ pub fn apply_cd_directive_env(cmd: &mut std::process::Command, cd_file: &std::pa
 /// - **The child runs where the user already was** — aliases (the user's own
 ///   top-level command, run from the invoking worktree) and `commit.generation`
 ///   commands (spawned with no `current_dir`) — the inherited context *is* the
-///   user's context, so it is forwarded untouched. Under shell integration the
-///   `--execute` payload also lands here: the wrapper shell evaluates it, so
-///   it sees that shell's own environment (which never contains the vars a
-///   `!wt` git alias exports — git's exports die with `wt`'s process tree).
-///   Scrubbing the fallback therefore *converges* the two `--execute` paths
-///   for the alias case; only a `GIT_DIR` the user globally exported in their
-///   interactive shell still differs, and such an env misdirects every plain
-///   `git` command they run anyway.
+///   user's context, so it is forwarded untouched.
 ///
-/// - **`wt`'s own git plumbing** ([`Cmd`] via `Repository::run_command`) keeps
-///   the inherited context on purpose (relative values absolutized, see issue
-///   #1914): `wt` honoring the context it was handed is the point of running
-///   `wt` under `git`.
+/// - **`wt`'s own git plumbing** splits on the same question. Repo-level
+///   ([`Cmd`] via `Repository::run_command`) keeps the inherited context on
+///   purpose (relative values absolutized, see issue #1914): `wt` honoring
+///   the context it was handed is the point of running `wt` under `git`. Its
+///   cwd is `discovery_path`, which is often but not always where the user
+///   invoked `wt` — `Repository::at` is handed a `wt`-chosen worktree at
+///   several sites (the post-switch hook repo, the pipeline repo, `finish`'s
+///   destination repo, the `pre-remove` render repo). The exemption rests on
+///   scope rather than cwd: repo-level questions are worktree-agnostic within
+///   one repository, and every worktree-scoped answer routes through
+///   [`crate::git::WorkingTree`], which scrubs.
+///   **Worktree-local** plumbing — [`crate::git::WorkingTree::run_command`],
+///   `TempIndex::command`, `list_ignored_entries` — relocates git into a
+///   worktree `wt` resolved, so it scrubs, the same way hooks and `for-each`
+///   do. Otherwise a `!wt` alias from a linked worktree (`GIT_DIR` pinned to
+///   that worktree's private gitdir) makes `status` / `read-tree` on a
+///   *different* worktree use the invoking tree's index.
 ///
-/// Any new spawn site that relocates a user command into a `wt`-chosen
-/// worktree must apply this scrub, via this helper or
-/// [`Cmd::scrub_git_discovery_env`].
+/// Every site uses this one list; a site that needs its own value for a
+/// scrubbed var sets it *after* the scrub rather than subsetting the list
+/// ([`Cmd::scrub_git_discovery_env`]). That includes `GIT_OBJECT_DIRECTORY`:
+/// a redirected repository re-sets its own immediately after, so the only
+/// value a worktree-local scrub drops is an **inherited** one — which git
+/// supplies to push-quarantine hooks, and which is pinned to the invoking
+/// context exactly as `GIT_DIR` is. Dropping it is the deliberate call, not
+/// an artifact of reusing the list.
+///
+/// Any new spawn site whose cwd names a `wt`-chosen worktree must apply this
+/// scrub, via this helper or [`Cmd::scrub_git_discovery_env`].
 pub fn scrub_git_discovery_env_vars(cmd: &mut std::process::Command) {
     for var in INHERITED_GIT_PATH_VARS {
         cmd.env_remove(var);
@@ -688,81 +727,20 @@ pub fn apply_hermetic_test_env(cmd: &mut std::process::Command) {
 }
 
 // ============================================================================
-// Directive-Payload Shell Escaping
+// Shell Escaping
 // ============================================================================
 
-/// Environment variable a shell wrapper sets to identify itself.
+/// How to expand a value into a command template.
 ///
-/// The PowerShell wrapper sets `WORKTRUNK_SHELL=powershell` and the fish
-/// wrapper sets `WORKTRUNK_SHELL=fish`; bash, zsh, and nushell leave it unset.
-/// Absence therefore means "POSIX", which is correct for those three wrappers
-/// *and* for the non-integration path where wt runs the `--execute` payload
-/// itself through `sh -c`.
-pub const WORKTRUNK_SHELL_ENV_VAR: &str = "WORKTRUNK_SHELL";
-
-/// How to single-quote a value spliced into a directive payload.
-///
-/// `wt switch --execute` builds one command string and hands it to the active
-/// shell — directly (`sh -c`) or, under shell integration, by writing it to the
-/// EXEC directive file the wrapper evaluates. POSIX shells, PowerShell, and
-/// fish all single-quote, but escape the string body differently — POSIX takes
-/// `\` literally inside `'…'` while fish treats it as an escape — so the
-/// escaper must be keyed on which shell will parse the payload.
-///
-/// `Literal` is the no-escaping mode for filesystem-path templates that are
-/// never spliced into a shell command line.
+/// Hooks and aliases are POSIX shell command lines. Filesystem paths and
+/// `--execute` argv elements use literal expansion because no shell parses
+/// them.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ShellEscapeMode {
     /// Substitute values verbatim — used for filesystem paths.
     Literal,
-    /// POSIX single-quoting (`'it'\''s'`). The wrapper-independent default for
-    /// bash, zsh, and nushell, plus `Cmd::shell` (hooks, aliases).
+    /// POSIX single-quoting (`'it'\''s'`) for hooks and aliases.
     Posix,
-    /// PowerShell single-quoting (`'it''s'`), for the PowerShell wrapper's
-    /// `Invoke-Expression` of the EXEC directive file.
-    PowerShell,
-    /// fish single-quoting (`'it\'s'`), for the fish wrapper's `eval` of the
-    /// EXEC directive file. fish — unlike POSIX — treats `\` as an escape
-    /// inside `'…'`, so the POSIX escaper corrupts backslashes there.
-    Fish,
-}
-
-/// Escape mode for a payload the *active directive shell* will parse.
-///
-/// Reads [`WORKTRUNK_SHELL_ENV_VAR`] — the single source of truth for the
-/// per-shell escaping decision shared by the `--execute` command template and
-/// its trailing args. `powershell` ⇒
-/// [`ShellEscapeMode::PowerShell`], `fish` ⇒ [`ShellEscapeMode::Fish`], any
-/// other value or absent ⇒ [`ShellEscapeMode::Posix`].
-pub fn directive_shell_escape_mode() -> ShellEscapeMode {
-    match std::env::var(WORKTRUNK_SHELL_ENV_VAR) {
-        Ok(v) if v.eq_ignore_ascii_case("powershell") => ShellEscapeMode::PowerShell,
-        Ok(v) if v.eq_ignore_ascii_case("fish") => ShellEscapeMode::Fish,
-        _ => ShellEscapeMode::Posix,
-    }
-}
-
-/// Single-quote `s` for PowerShell: wrap in `'…'`, doubling every embedded `'`.
-///
-/// PowerShell's literal string is `'…'` with `''` as the escape for one quote
-/// (`'can''t'` is `can't`). The POSIX `'\''` idiom is invalid here — that is
-/// the bug B1 fixes for the PowerShell wrapper's `Invoke-Expression` path.
-/// Empty input yields `''`.
-pub fn powershell_escape(s: &str) -> String {
-    format!("'{}'", s.replace('\'', "''"))
-}
-
-/// Single-quote `s` for fish: wrap in `'…'`, backslash-escaping `\` and `'`.
-///
-/// fish's single-quoted string — unlike POSIX — treats `\` as an escape
-/// character, with only `\\` and `\'` recognized inside `'…'`. So `\` must be
-/// doubled and `'` backslash-escaped; backslash *before* quote, since escaping
-/// the quote introduces a backslash that must not be doubled again. The POSIX
-/// `'\''` idiom would corrupt backslashes (and leave a trailing-`\` argument
-/// as an unterminated string) under the fish wrapper's `eval`. Empty input
-/// yields `''`.
-pub fn fish_escape(s: &str) -> String {
-    format!("'{}'", s.replace('\\', r"\\").replace('\'', r"\'"))
 }
 
 /// Shell-escape `s` for the given [`ShellEscapeMode`].
@@ -774,8 +752,6 @@ pub fn shell_escape_for(mode: ShellEscapeMode, s: &str) -> String {
         ShellEscapeMode::Posix => {
             shell_escape::unix::escape(std::borrow::Cow::Borrowed(s)).into_owned()
         }
-        ShellEscapeMode::PowerShell => powershell_escape(s),
-        ShellEscapeMode::Fish => fish_escape(s),
     }
 }
 
@@ -808,6 +784,7 @@ pub const SUBPROCESS_BOUNDED_TARGET: &str = "worktrunk::subprocess_bounded";
 /// that [`log_output`] prepends to each block in `subprocess.log`, so the two
 /// render the command identically.
 fn command_header(cmd: &str, context: Option<&str>) -> String {
+    let context = crate::trace::emit::diagnostic_context().or(context);
     match context {
         Some(ctx) => format!("$ {cmd} [{ctx}]"),
         None => format!("$ {cmd}"),
@@ -968,15 +945,15 @@ fn run_with_timeout_impl(
         cmd.process_group(0);
     }
 
-    let mut child = cmd
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()?;
-    let _tracked = track_if_cancellable(&child);
+    let child = SharedChild::spawn(
+        cmd.stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped()),
+    )?;
+    let _tracked = track_if_cancellable(child.id());
 
-    let mut child_stdout = child.stdout.take();
-    let mut child_stderr = child.stderr.take();
+    let mut child_stdout = child.take_stdout();
+    let mut child_stderr = child.take_stderr();
 
     std::thread::scope(|s| {
         let stdout_thread = s.spawn(|| {
@@ -996,8 +973,8 @@ fn run_with_timeout_impl(
             Ok::<_, std::io::Error>(buf)
         });
 
-        match child.wait_timeout(timeout)? {
-            Some(status) => {
+        match child.wait_timeout(timeout) {
+            Ok(Some(status)) => {
                 let stdout = stdout_thread.join().unwrap()?;
                 let stderr = stderr_thread.join().unwrap()?;
                 Ok(std::process::Output {
@@ -1006,14 +983,18 @@ fn run_with_timeout_impl(
                     stderr,
                 })
             }
-            None => {
+            // Timed out, or the wait itself failed. A failed wait has to tear the
+            // tree down too: propagating it instead would leave the child running,
+            // and the scope's join then blocks on `read_to_end` until the child
+            // closes its pipes — the caller waits out the full runtime the timeout
+            // exists to bound, and gets back an error that isn't `TimedOut`.
+            outcome => {
                 kill_timed_out_tree(child.id());
                 let _ = child.kill();
                 let _ = child.wait();
-                Err(std::io::Error::new(
-                    ErrorKind::TimedOut,
-                    "command timed out",
-                ))
+                Err(outcome.err().unwrap_or_else(|| {
+                    std::io::Error::new(ErrorKind::TimedOut, "command timed out")
+                }))
             }
         }
     })
@@ -1025,6 +1006,18 @@ fn run_with_timeout_impl(
 /// pid is the pgid and the TERM → KILL escalation reaches every member. SIGTERM
 /// first for the same reason [`signal_background_pid`] uses it: git's lockfile
 /// handlers run on TERM, so an interrupted git cleans up after itself.
+///
+/// Signalling by pid is safe here because the caller still holds an unreaped
+/// [`shared_child::SharedChild`]: a timed wait uses `waitid(WNOWAIT)`, so a child
+/// that exited on the deadline's other side is a zombie that keeps its pid
+/// reserved until the caller's own `wait()`. The pid cannot name a different
+/// process group by the time the signal lands.
+///
+/// The same unreaped zombie means the escalation's liveness probe reads the
+/// group as alive for the entire grace, so its final SIGKILL fires even when
+/// every member exited on the TERM. Accepted: that sweep is a no-op against a
+/// dead group (see [`forward_signal_with_escalation`]), and holding the zombie
+/// is what pins the pgid.
 #[cfg(unix)]
 fn kill_timed_out_tree(pid: u32) {
     forward_signal_with_escalation(pid as i32, signal_hook::consts::SIGTERM);
@@ -1089,8 +1082,14 @@ pub struct Cmd {
     context: Option<String>,
     stdin_data: Option<Vec<u8>>,
     timeout: Option<std::time::Duration>,
-    envs: Vec<(OsString, OsString)>,
-    env_removes: Vec<OsString>,
+    /// Environment mutations in call order: `Some(value)` sets, `None`
+    /// removes. One ordered list rather than a set list plus a remove list, so
+    /// the last builder call naming a variable wins — the property
+    /// [`Cmd::scrub_git_discovery_env`] relies on when a caller drops the whole
+    /// inherited git context and then supplies its own value for one of those
+    /// vars (`TempIndex`'s `GIT_INDEX_FILE`, a redirected repository's
+    /// `GIT_OBJECT_DIRECTORY`).
+    env_ops: Vec<(OsString, Option<OsString>)>,
     /// If true, wrap command through ShellConfig (for stream())
     shell_wrap: bool,
     /// Stdout configuration for stream() (defaults to inherit)
@@ -1104,6 +1103,10 @@ pub struct Cmd {
     share_parent_pgroup: bool,
     /// If true, forward signals to child process group (for stream(), Unix only)
     forward_signals: bool,
+    /// If true, treat a SIGPIPE exit as success. This is the default for pager
+    /// producers, where the consumer closing early is expected. Direct user
+    /// programs can opt out with [`Cmd::propagate_sigpipe`].
+    ignore_sigpipe: bool,
     /// When set, log this command to the command log after execution.
     /// The label identifies what triggered the command (e.g., "pre-merge user:lint").
     external_label: Option<String>,
@@ -1112,12 +1115,6 @@ pub struct Cmd {
     /// shell bodies may emit cd directives (the file holds a raw path, no shell
     /// injection surface).
     directive_cd_file: Option<std::path::PathBuf>,
-    /// When set, re-adds `WORKTRUNK_DIRECTIVE_EXEC_FILE` after the security
-    /// scrub. Set only by user-source aliases (issue #2101): the body is the
-    /// user's own config, so a nested `wt --execute` is no different from the
-    /// user typing it at the top level. Project aliases and hooks must NEVER
-    /// set this — they could inject arbitrary shell into the parent session.
-    directive_exec_file: Option<std::path::PathBuf>,
 }
 
 struct ExternalCommandLog {
@@ -1195,17 +1192,34 @@ impl std::fmt::Display for StreamCommandError {
 
 impl std::error::Error for StreamCommandError {}
 
+/// Shared state between [`Cmd::delayed_stream`] and its two reader threads.
+///
+/// `streaming` lives *inside* the mutex rather than beside it as an atomic so
+/// that a reader cannot consult it without also holding the buffer. The
+/// ordering guarantee this type exists for depends on the check and the write
+/// being one critical section (see [`spawn_delayed_reader`]), and an atomic
+/// makes a lock-free read the natural thing to write.
+#[derive(Default)]
+struct DelayedOutput {
+    /// Once set, readers write to stderr instead of buffering.
+    streaming: bool,
+    /// Lines held back before the switch: drained to stderr behind the
+    /// progress message, or joined into the error body when the command fails
+    /// before streaming ever starts.
+    lines: Vec<String>,
+}
+
 /// Convert a finished child's exit status into `Ok(())` or a
 /// [`StreamCommandError`] carrying the buffered output.
 fn stream_exit_result(
     status: std::process::ExitStatus,
-    buffer: &Arc<Mutex<Vec<String>>>,
+    state: &Arc<Mutex<DelayedOutput>>,
     cmd_str: &str,
 ) -> anyhow::Result<()> {
     if status.success() {
         return Ok(());
     }
-    let lines = buffer.lock().unwrap();
+    let lines = &state.lock().unwrap().lines;
     let exit_info = status
         .code()
         .map(|c| format!("exit code {c}"))
@@ -1219,22 +1233,30 @@ fn stream_exit_result(
 }
 
 /// Spawn a reader thread for [`Cmd::delayed_stream`]: each line is written to
-/// stderr live once `streaming` is set, or buffered (for the quiet-fast and
-/// pre-threshold cases) until then. Both the child's stdout and stderr use
-/// this; everything routes to stderr to keep our stdout clean.
+/// stderr live once the switch to streaming has happened, or buffered (for the
+/// quiet-fast and pre-threshold cases) until then. Both the child's stdout and
+/// stderr use this; everything routes to stderr to keep our stdout clean.
+///
+/// One [`DelayedOutput`] guard covers both reading `streaming` and writing the
+/// line, and the switch sets that same field under that same lock. So each
+/// line lands on one side of the switch or the other: it is either buffered,
+/// and so drained in order behind the progress message, or written after that
+/// drain has finished. Were the flag readable without the lock, a reader could
+/// observe the flip and print between the progress message and the drain — or
+/// ahead of the progress message entirely, which is what a zero delay makes
+/// routine, since nothing has to be buffered first.
 fn spawn_delayed_reader<R: Read + Send + 'static>(
     stream: R,
-    streaming: Arc<AtomicBool>,
-    buffer: Arc<Mutex<Vec<String>>>,
+    state: Arc<Mutex<DelayedOutput>>,
 ) -> std::thread::JoinHandle<()> {
     std::thread::spawn(move || {
         let reader = BufReader::new(stream);
         for line in reader.lines().map_while(Result::ok) {
-            if streaming.load(Ordering::Relaxed) {
-                let _ = writeln!(std::io::stderr(), "{}", line);
-                let _ = std::io::stderr().flush();
+            let mut state = state.lock().unwrap();
+            if state.streaming {
+                eprintln!("{}", line);
             } else {
-                buffer.lock().unwrap().push(line);
+                state.lines.push(line);
             }
         }
     })
@@ -1249,16 +1271,15 @@ impl Cmd {
             context: None,
             stdin_data: None,
             timeout: None,
-            envs: Vec::new(),
-            env_removes: Vec::new(),
+            env_ops: Vec::new(),
             shell_wrap,
             stdout_cfg: None,
             stdin_cfg: None,
             share_parent_pgroup: false,
             forward_signals: false,
+            ignore_sigpipe: true,
             external_label: None,
             directive_cd_file: None,
-            directive_exec_file: None,
         }
     }
 
@@ -1326,21 +1347,21 @@ impl Cmd {
             cmd.env(key, val);
         }
 
-        // Before `self.envs`, so a per-command env can override the floor.
+        // Before `self.env_ops`, so a per-command env can override the floor.
         apply_hermetic_test_env(cmd);
 
-        for (key, val) in &self.envs {
-            cmd.env(key, val);
-        }
-        for key in &self.env_removes {
-            cmd.env_remove(key);
+        // In builder-call order, so the last mutation naming a variable wins.
+        for (key, val) in &self.env_ops {
+            match val {
+                Some(val) => cmd.env(key, val),
+                None => cmd.env_remove(key),
+            };
         }
 
         // Prevent subprocesses from writing shell directives (security).
         // Applied last so it can't be re-added by user-provided envs.
         // `stream()` selectively re-adds `WORKTRUNK_DIRECTIVE_CD_FILE` for
-        // trusted contexts, and `WORKTRUNK_DIRECTIVE_EXEC_FILE` only for
-        // trusted user-source aliases.
+        // trusted contexts.
         scrub_directive_env_vars(cmd);
     }
 
@@ -1419,30 +1440,39 @@ impl Cmd {
     /// Accepts the same types as [`Command::env`]: string literals, `String`,
     /// `&Path`, `PathBuf`, `OsString`, etc.
     pub fn env(mut self, key: impl AsRef<OsStr>, val: impl AsRef<OsStr>) -> Self {
-        self.envs
-            .push((key.as_ref().to_os_string(), val.as_ref().to_os_string()));
+        self.env_ops.push((
+            key.as_ref().to_os_string(),
+            Some(val.as_ref().to_os_string()),
+        ));
         self
     }
 
     /// Remove an environment variable.
+    ///
+    /// A later [`Cmd::env`] for the same variable overrides this.
     pub fn env_remove(mut self, key: impl AsRef<OsStr>) -> Self {
-        self.env_removes.push(key.as_ref().to_os_string());
+        self.env_ops.push((key.as_ref().to_os_string(), None));
         self
     }
 
     /// Scrub inherited git-discovery vars ([`INHERITED_GIT_PATH_VARS`]) from the
-    /// child environment. Applied by spawn sites that relocate a user command
-    /// into a `wt`-chosen worktree (hooks, `wt step for-each`) so the command's
-    /// `git` calls discover the repository from the working directory `wt` sets,
-    /// not a `GIT_DIR`/`GIT_WORK_TREE` `wt` inherited. See
+    /// child environment. Applied by every spawn site whose `current_dir` names
+    /// a worktree `wt` chose — relocated user commands (hooks, `wt step
+    /// for-each`, the `--execute` program) and `wt`'s own worktree-local
+    /// plumbing ([`crate::git::WorkingTree::run_command`], `TempIndex`) alike —
+    /// so git discovers the repository from that working directory, not a
+    /// `GIT_DIR`/`GIT_WORK_TREE` `wt` inherited. See
     /// [`scrub_git_discovery_env_vars`] for the site classification (issue #3373).
     ///
     /// Applied after the inherited-`GIT_*` absolutization in
-    /// `apply_common_settings` (env-removes run last), so it also overrides the
-    /// relative-path absolutization that would otherwise re-add these vars.
+    /// `apply_common_settings`, so it also drops the relative-path
+    /// absolutization that would otherwise re-add these vars.
+    ///
+    /// A site that supplies its own value for one of the scrubbed vars calls
+    /// [`Cmd::env`] *after* this: `env_ops` is call-ordered, so the set wins.
     pub fn scrub_git_discovery_env(mut self) -> Self {
         for var in INHERITED_GIT_PATH_VARS {
-            self.env_removes.push(OsString::from(*var));
+            self.env_ops.push((OsString::from(*var), None));
         }
         self
     }
@@ -1514,6 +1544,17 @@ impl Cmd {
         self
     }
 
+    /// Preserve SIGPIPE as exit status 141 instead of treating it as pager
+    /// completion.
+    ///
+    /// `Cmd::stream()` historically ignores SIGPIPE because many callers feed
+    /// a pager that may quit before consuming all output. Use this for a child
+    /// whose status belongs to the user, such as `wt switch --execute`.
+    pub fn propagate_sigpipe(mut self) -> Self {
+        self.ignore_sigpipe = false;
+        self
+    }
+
     /// Mark this command as an external (user-configured) command for logging.
     ///
     /// When set, the command execution is logged to `.git/wt/logs/commands.jsonl`
@@ -1535,20 +1576,6 @@ impl Cmd {
         self
     }
 
-    /// Pass the EXEC directive file through to the child process.
-    ///
-    /// Re-adds `WORKTRUNK_DIRECTIVE_EXEC_FILE`, allowing the child to request
-    /// arbitrary shell execution in the parent shell (the wrapper sources the
-    /// file after wt exits). This is only safe when the child's command body
-    /// is itself trusted user-authored input — currently just user-source
-    /// aliases, where the alias body lives in the user's own config and
-    /// nesting `wt --execute` is no different from the user typing it. Project
-    /// aliases and hooks must not call this — see issue #2101.
-    pub fn directive_exec_file(mut self, path: impl Into<std::path::PathBuf>) -> Self {
-        self.directive_exec_file = Some(path.into());
-        self
-    }
-
     /// Execute the command and return its output.
     ///
     /// Captures stdout/stderr and returns them in `Output`. For interactive
@@ -1565,7 +1592,7 @@ impl Cmd {
             "Cmd::shell() commands must use .stream(), not .run()"
         );
         debug_assert!(
-            self.directive_cd_file.is_none() && self.directive_exec_file.is_none(),
+            self.directive_cd_file.is_none(),
             "directive_*_file is only applied by .stream(), not .run()"
         );
 
@@ -1611,7 +1638,7 @@ impl Cmd {
 
             match cmd.spawn() {
                 Ok(mut child) => {
-                    let _tracked = track_if_cancellable(&child);
+                    let _tracked = track_if_cancellable(child.id());
                     // Write stdin data in an inner scope so the handle DROPS
                     // (closing the pipe) before `wait_with_output` — otherwise a
                     // child that reads stdin to EOF (e.g. `git … --stdin`) blocks
@@ -1641,7 +1668,7 @@ impl Cmd {
                 .stderr(Stdio::piped());
             match cmd.spawn() {
                 Ok(child) => {
-                    let _tracked = track_if_cancellable(&child);
+                    let _tracked = track_if_cancellable(child.id());
                     child.wait_with_output()
                 }
                 Err(e) => Err(e),
@@ -1702,10 +1729,7 @@ impl Cmd {
             "pipe_into does not support external() logging"
         );
         debug_assert!(
-            self.directive_cd_file.is_none()
-                && self.directive_exec_file.is_none()
-                && next.directive_cd_file.is_none()
-                && next.directive_exec_file.is_none(),
+            self.directive_cd_file.is_none() && next.directive_cd_file.is_none(),
             "directive_*_file is only applied by .stream(), not pipe_into"
         );
 
@@ -1774,7 +1798,7 @@ impl Cmd {
                 return Err(e);
             }
         };
-        let _first_tracked = track_if_cancellable(&first_child);
+        let _first_tracked = track_if_cancellable(first_child.id());
         let first_stdout = first_child
             .stdout
             .take()
@@ -1814,7 +1838,7 @@ impl Cmd {
                 return Err(e);
             }
         };
-        let _second_tracked = track_if_cancellable(&second_child);
+        let _second_tracked = track_if_cancellable(second_child.id());
 
         // `first`'s stderr must be drained concurrently with `second`'s
         // execution; otherwise pathological stderr volume (~64 KiB pipe
@@ -1915,15 +1939,9 @@ impl Cmd {
         self.apply_common_settings(&mut cmd);
 
         // Re-add directive files after security scrub for trusted contexts.
-        // CD file is always safe to pass through (raw path, no shell). EXEC
-        // file is only re-added for user-source aliases (issue #2101); project
-        // aliases and hooks leave it scrubbed so their bodies cannot inject
-        // shell into the parent session.
+        // The CD file is safe to pass through because it contains a raw path.
         if let Some(ref path) = self.directive_cd_file {
             apply_cd_directive_env(&mut cmd, path);
-        }
-        if let Some(ref path) = self.directive_exec_file {
-            cmd.env(DIRECTIVE_EXEC_FILE_ENV_VAR, path);
         }
 
         if let Err(e) = self.check_spawn_preconditions() {
@@ -2061,7 +2079,7 @@ impl Cmd {
         if let Some(sig) = std::os::unix::process::ExitStatusExt::signal(&status) {
             // SIGPIPE (13) is expected when a pager (less, bat) exits before the
             // child finishes writing — not an error from the user's perspective.
-            if sig == SIGPIPE {
+            if sig == SIGPIPE && self.ignore_sigpipe {
                 trace.complete(true);
                 external_log.record(Some(0));
                 return Ok(());
@@ -2103,7 +2121,15 @@ impl Cmd {
     /// to never switch to streaming (always buffer); `0` streams immediately.
     ///
     /// `progress_message`, when set, prints to stderr at the moment streaming
-    /// starts (the delay threshold is crossed).
+    /// starts. It arrives pre-rendered with its ANSI already in it, so — like
+    /// every relayed line — it goes out through [`crate::styling`]'s
+    /// `eprintln!` rather than a raw handle: anstream is the only thing that
+    /// strips those escapes when stderr is redirected and honors `NO_COLOR`,
+    /// and a single raw write here is enough to make one line of a log
+    /// disagree with the rest. No `flush()` follows, and none did any work
+    /// before: `AutoStream<Stderr>` writes through a locked `std::io::Stderr`,
+    /// which is unbuffered. anstream's macro does not flush either, so a
+    /// buffered stream would still need one.
     ///
     /// Like [`Cmd::stream`], this does **not** acquire the concurrency
     /// semaphore: a delayed-stream command runs in the foreground and would
@@ -2129,8 +2155,7 @@ impl Cmd {
             self.stdin_data.is_none()
                 && self.timeout.is_none()
                 && self.external_label.is_none()
-                && self.directive_cd_file.is_none()
-                && self.directive_exec_file.is_none(),
+                && self.directive_cd_file.is_none(),
             "delayed_stream does not support stdin/timeout/external/directive options"
         );
 
@@ -2152,7 +2177,7 @@ impl Cmd {
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
 
-        let mut child = match cmd.spawn() {
+        let child = match SharedChild::spawn(&mut cmd) {
             Ok(child) => child,
             Err(e) => {
                 trace.fail(&e);
@@ -2160,14 +2185,14 @@ impl Cmd {
             }
         };
 
-        let stdout = child.stdout.take().expect("stdout was piped");
-        let stderr = child.stderr.take().expect("stderr was piped");
+        let stdout = child.take_stdout().expect("stdout was piped");
+        let stderr = child.take_stderr().expect("stderr was piped");
 
-        // Shared state: when true, output streams directly; when false, buffers.
-        let streaming = Arc::new(AtomicBool::new(false));
-        let buffer = Arc::new(Mutex::new(Vec::new()));
-        let stdout_handle = spawn_delayed_reader(stdout, streaming.clone(), buffer.clone());
-        let stderr_handle = spawn_delayed_reader(stderr, streaming.clone(), buffer.clone());
+        // Shared state: readers stream directly once `streaming` is set, and
+        // buffer until then.
+        let state = Arc::new(Mutex::new(DelayedOutput::default()));
+        let stdout_handle = spawn_delayed_reader(stdout, state.clone());
+        let stderr_handle = spawn_delayed_reader(stderr, state.clone());
 
         let start = Instant::now();
 
@@ -2185,28 +2210,36 @@ impl Cmd {
                         let _ = stdout_handle.join();
                         let _ = stderr_handle.join();
                         trace.complete(status.success());
-                        return stream_exit_result(status, &buffer, &cmd_str);
+                        return stream_exit_result(status, &state, &cmd_str);
                     }
-                    // Threshold exceeded — fall through to streaming.
-                    Ok(None) => {}
-                    Err(e) => {
-                        let _ = stdout_handle.join();
-                        let _ = stderr_handle.join();
-                        trace.fail(&e);
-                        return Err(e).context("Failed to wait for command");
+                    // No status yet: the threshold passed, or the timed wait
+                    // itself failed. Both fall through to streaming. A failed
+                    // wait means the deadline machinery broke — `sigchld`
+                    // allocates a pipe and registers a handler per call, which
+                    // a sandbox or an fd limit can deny — not that the child
+                    // misbehaved, and Phase 2's `wait()` is a bare `waitid`
+                    // with neither, so it still returns the real status.
+                    // Failing here would turn a denied syscall into a failed
+                    // command, which is the shape of #3856.
+                    outcome => {
+                        tracing::debug!(?outcome, "No exit status yet; switching to streaming");
                     }
                 }
             }
 
-            // Delay threshold exceeded — switch to streaming.
-            streaming.store(true, Ordering::Relaxed);
-            if let Some(ref msg) = progress_message {
-                let _ = writeln!(std::io::stderr(), "{}", msg);
+            // Delay threshold exceeded — switch to streaming. The flip, the
+            // progress message, and the drain happen under the same lock the
+            // readers take per line, so no reader can print between them.
+            {
+                let mut state = state.lock().unwrap();
+                state.streaming = true;
+                if let Some(ref msg) = progress_message {
+                    eprintln!("{}", msg);
+                }
+                for line in state.lines.drain(..) {
+                    eprintln!("{}", line);
+                }
             }
-            for line in buffer.lock().unwrap().drain(..) {
-                let _ = writeln!(std::io::stderr(), "{}", line);
-            }
-            let _ = std::io::stderr().flush();
         }
 
         // Phase 2: Block until the child exits (no polling).
@@ -2221,7 +2254,7 @@ impl Cmd {
             }
         };
         trace.complete(status.success());
-        stream_exit_result(status, &buffer, &cmd_str)
+        stream_exit_result(status, &state, &cmd_str)
     }
 }
 
@@ -2229,6 +2262,12 @@ impl Cmd {
 // Signal forwarding helpers (Unix only)
 // ============================================================================
 
+/// One `killpg(pgid, 0)` liveness probe. Only `ESRCH` proves the group empty;
+/// everything else counts as alive. That makes the probe conservative in one
+/// specific way: an exited-but-unreaped member (a zombie) still registers —
+/// Linux answers `Ok`, macOS `EPERM` — so a group whose members all exited
+/// keeps reading alive until someone reaps them. See
+/// [`forward_signal_with_escalation`] for why that over-report is safe.
 #[cfg(unix)]
 fn process_group_alive(pgid: i32) -> bool {
     match nix::sys::signal::killpg(nix::unistd::Pid::from_raw(pgid), None) {
@@ -2238,10 +2277,25 @@ fn process_group_alive(pgid: i32) -> bool {
     }
 }
 
+/// Poll [`process_group_alive`] until the group is gone or `grace` expires,
+/// returning `true` when the group died within the grace. The first probe is
+/// immediate, so an already-empty group costs no sleep at all, and a group
+/// whose members exit (and are reaped) mid-grace is noticed within one poll
+/// interval rather than at the deadline.
 #[cfg(unix)]
-fn wait_for_exit(pgid: i32, grace: std::time::Duration) -> bool {
-    std::thread::sleep(grace);
-    !process_group_alive(pgid)
+fn group_died_within(pgid: i32, grace: Duration) -> bool {
+    const POLL_INTERVAL: Duration = Duration::from_millis(20);
+    let deadline = Instant::now() + grace;
+    loop {
+        if !process_group_alive(pgid) {
+            return true;
+        }
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        if remaining.is_zero() {
+            return false;
+        }
+        std::thread::sleep(remaining.min(POLL_INTERVAL));
+    }
 }
 
 /// Single-shot signal delivery to a specific PID. Used in shared-pgroup mode
@@ -2260,41 +2314,116 @@ pub fn forward_signal_to_pid(pid: i32, sig: i32) {
     let _ = nix::sys::signal::kill(nix::unistd::Pid::from_raw(pid), nix_sig);
 }
 
+/// Signal a child process group and sweep stragglers: send `sig` (SIGINT or
+/// SIGTERM; anything else is ignored), give the group a 200 ms grace to exit,
+/// and SIGKILL whatever still remains. SIGINT inserts a SIGTERM round (with
+/// its own grace) before the SIGKILL, so an interrupted git still runs its
+/// TERM-time lockfile cleanup before force-kill.
+///
+/// "Still remains" is `process_group_alive`'s answer, and that probe counts
+/// an exited-but-unreaped member as alive — it cannot tell a zombie from live
+/// work. The over-report errs in the safe direction on both sides:
+///
+/// - Every member already exited, the leader just isn't reaped yet: the grace
+///   runs to its deadline and the final SIGKILL lands on a dead group, which
+///   is a no-op — a signal to a fully-exited process is discarded and cannot
+///   change its recorded exit status, so TERM-time cleanup that already ran is
+///   not undone. `kill_timed_out_tree` is permanently in this position: its
+///   caller holds the group leader unreaped throughout (see its doc), so on
+///   that path the sweep always fires, harmlessly.
+/// - A member is genuinely alive at the deadline: the probe is accurate and
+///   the SIGKILL is the intended escalation. For a SIGSTOP'd member it is the
+///   only signal that works — a stopped process runs no TERM handler, so the
+///   sweep is what keeps teardown bounded.
+///
+/// Callers whose children are reaped concurrently — `Cmd::stream`'s main
+/// thread waiting while the signal-forwarder thread runs this, tether's
+/// supervisor — get the accurate reading: the poll loop returns at the first
+/// probe after the reap, so escalating over a cooperative child costs one
+/// poll interval, not the full grace. A reap does unpin the pgid, leaving the
+/// microseconds between a probe that read alive and the following `killpg` as
+/// the accepted recycling exposure — unchanged from the fixed-sleep
+/// predecessor, and shared by every killpg-after-grace design.
 #[cfg(unix)]
 pub fn forward_signal_with_escalation(pgid: i32, sig: i32) {
+    use nix::sys::signal::Signal;
+
     let pgid = nix::unistd::Pid::from_raw(pgid);
-    let initial_signal = match sig {
-        signal_hook::consts::SIGINT => nix::sys::signal::Signal::SIGINT,
-        signal_hook::consts::SIGTERM => nix::sys::signal::Signal::SIGTERM,
+    let chain: &[Signal] = match sig {
+        signal_hook::consts::SIGINT => &[Signal::SIGINT, Signal::SIGTERM],
+        signal_hook::consts::SIGTERM => &[Signal::SIGTERM],
         _ => return,
     };
 
-    let _ = nix::sys::signal::killpg(pgid, initial_signal);
-
-    let grace = std::time::Duration::from_millis(200);
-    // Escalate if process doesn't exit gracefully
-    if sig == signal_hook::consts::SIGINT {
-        if !wait_for_exit(pgid.as_raw(), grace) {
-            let _ = nix::sys::signal::killpg(pgid, nix::sys::signal::Signal::SIGTERM);
-            if !wait_for_exit(pgid.as_raw(), grace) {
-                let _ = nix::sys::signal::killpg(pgid, nix::sys::signal::Signal::SIGKILL);
-            }
-        }
-    } else {
-        // SIGTERM - escalate directly to SIGKILL
-        if !wait_for_exit(pgid.as_raw(), grace) {
-            let _ = nix::sys::signal::killpg(pgid, nix::sys::signal::Signal::SIGKILL);
+    let grace = Duration::from_millis(200);
+    for step in chain {
+        let _ = nix::sys::signal::killpg(pgid, *step);
+        if group_died_within(pgid.as_raw(), grace) {
+            return;
         }
     }
+    let _ = nix::sys::signal::killpg(pgid, Signal::SIGKILL);
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
+    /// The property the worktree-local scrub sites rest on: `TempIndex` and a
+    /// redirected repository's object store scrub the whole
+    /// [`INHERITED_GIT_PATH_VARS`] list and then set their own value for one of
+    /// those vars. If `Cmd` ever applies removes after sets again, that set is
+    /// silently dropped and those sites fall back to the ambient index / object
+    /// store — so pin call order rather than the split-vector shape.
+    #[test]
+    fn test_env_mutations_apply_in_call_order() {
+        let scrubbed = Cmd::new("child")
+            .scrub_git_discovery_env()
+            .env("GIT_INDEX_FILE", "chosen-index");
+        let mut cmd = std::process::Command::new("child");
+        scrubbed.apply_common_settings(&mut cmd);
+
+        let env = |var: &str| {
+            cmd.get_envs()
+                .find(|(key, _)| *key == std::ffi::OsStr::new(var))
+                .map(|(_, value)| value)
+        };
+
+        assert_eq!(
+            env("GIT_INDEX_FILE"),
+            Some(Some(std::ffi::OsStr::new("chosen-index"))),
+            "a set after the scrub must win"
+        );
+        for var in INHERITED_GIT_PATH_VARS
+            .iter()
+            .filter(|var| **var != "GIT_INDEX_FILE")
+        {
+            assert_eq!(
+                env(var),
+                Some(None),
+                "{var} should be removed from the child environment"
+            );
+        }
+
+        // And the reverse order still removes, so `env_remove` isn't inert.
+        let set_then_removed = Cmd::new("child")
+            .env("GIT_INDEX_FILE", "chosen-index")
+            .scrub_git_discovery_env();
+        let mut cmd = std::process::Command::new("child");
+        set_then_removed.apply_common_settings(&mut cmd);
+        assert_eq!(
+            cmd.get_envs()
+                .find(|(key, _)| *key == std::ffi::OsStr::new("GIT_INDEX_FILE"))
+                .map(|(_, value)| value),
+            Some(None),
+            "a scrub after the set must win"
+        );
+    }
+
     #[test]
     fn test_scrub_directive_env_vars_covers_every_directive_variable() {
         assert_eq!(RETIRED_DIRECTIVE_FILE_ENV_VAR, "WORKTRUNK_DIRECTIVE_FILE");
+        assert_eq!(DIRECTIVE_EXEC_FILE_ENV_VAR, "WORKTRUNK_DIRECTIVE_EXEC_FILE");
 
         let mut cmd = std::process::Command::new("child");
         for var in [
@@ -2367,45 +2496,6 @@ mod tests {
     }
 
     #[test]
-    fn test_powershell_escape() {
-        // Plain word: wrapped but unchanged inside the quotes.
-        assert_eq!(powershell_escape("rg"), "'rg'");
-        // Embedded single quote: doubled (PowerShell's only escape).
-        assert_eq!(powershell_escape("can't"), "'can''t'");
-        // `$(...)` is inert inside a PowerShell single-quoted string — no
-        // expansion, no doubling needed.
-        assert_eq!(powershell_escape("$(whoami)"), "'$(whoami)'");
-        // Spaces are covered by the surrounding quotes.
-        assert_eq!(powershell_escape("with space"), "'with space'");
-        // Empty string still produces a valid empty literal.
-        assert_eq!(powershell_escape(""), "''");
-        // Multiple quotes each double independently.
-        assert_eq!(powershell_escape("a'b'c"), "'a''b''c'");
-    }
-
-    #[test]
-    fn test_fish_escape() {
-        // Plain word: wrapped but unchanged inside the quotes.
-        assert_eq!(fish_escape("rg"), "'rg'");
-        // Two consecutive backslashes: each doubled, so fish's `eval`
-        // collapses `\\\\` back to `\\` — POSIX `'…'` would corrupt this.
-        assert_eq!(fish_escape(r"a\\b"), r"'a\\\\b'");
-        // Trailing backslash: doubled, so the closing `'` is not swallowed
-        // (the POSIX form `'end\'` is an unterminated string for fish).
-        assert_eq!(fish_escape(r"end\"), r"'end\\'");
-        // Embedded single quote: backslash-escaped (fish's escape inside `'…'`).
-        assert_eq!(fish_escape("can't"), r"'can\'t'");
-        // `$(...)` and backticks are inert inside a fish single-quoted string.
-        assert_eq!(fish_escape("$(whoami)"), "'$(whoami)'");
-        assert_eq!(fish_escape("`whoami`"), "'`whoami`'");
-        // Empty string still produces a valid empty literal.
-        assert_eq!(fish_escape(""), "''");
-        // Backslash then quote: `\` doubled first, then `'` escaped, so the
-        // escaping backslash of `\'` is not itself doubled.
-        assert_eq!(fish_escape(r"\'"), r"'\\\''");
-    }
-
-    #[test]
     fn test_shell_escape_for_dispatch() {
         // Literal passes the value through untouched.
         assert_eq!(shell_escape_for(ShellEscapeMode::Literal, "can't"), "can't");
@@ -2413,16 +2503,6 @@ mod tests {
         assert_eq!(
             shell_escape_for(ShellEscapeMode::Posix, "can't"),
             r"'can'\''t'"
-        );
-        // PowerShell doubles the embedded quote.
-        assert_eq!(
-            shell_escape_for(ShellEscapeMode::PowerShell, "can't"),
-            "'can''t'"
-        );
-        // Fish backslash-escapes the embedded quote.
-        assert_eq!(
-            shell_escape_for(ShellEscapeMode::Fish, "can't"),
-            r"'can\'t'"
         );
     }
 
@@ -2644,6 +2724,42 @@ mod tests {
         assert_eq!(result.unwrap_err().kind(), std::io::ErrorKind::TimedOut);
     }
 
+    /// The `wait-timeout` crate has to stay out of the dependency graph, however
+    /// it gets there.
+    ///
+    /// Its `SIGCHLD` handler pokes a socketpair with `send()` and `panic!`s on any
+    /// errno but `WouldBlock`. That handler is `extern "C"`, so the panic cannot
+    /// unwind — it goes straight to `abort()`. Under a sandbox that denies the send
+    /// (the Codex CLI's `workspace-write` mode), every timed wait in `wt` became an
+    /// uncatchable `SIGABRT` with no diagnostic (#3856). `shared_child` wakes
+    /// through `signal_hook`, which discards wake-write errors by design.
+    ///
+    /// The lockfile is read at runtime, not `include_str!`d: a compile-time embed
+    /// has to ship in every packaged build, which `embedded_assets_ship_in_package`
+    /// enforces and `Cargo.lock` doesn't satisfy. Tests only ever run from the
+    /// source tree, so the manifest dir is always there.
+    #[test]
+    fn test_wait_timeout_crate_stays_out_of_the_dependency_graph() {
+        let lockfile = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("Cargo.lock");
+        let lockfile = std::fs::read_to_string(&lockfile).expect("read Cargo.lock");
+        assert!(
+            !lockfile.contains("name = \"wait-timeout\""),
+            "wait-timeout is back in the dependency graph; its SIGCHLD handler \
+             aborts wt when the self-pipe write fails (#3856)"
+        );
+    }
+
+    /// A command that can't be spawned at all fails as a spawn error, not as a
+    /// timeout — the deadline path never starts, so the caller doesn't wait it out.
+    #[test]
+    fn test_cmd_timeout_surfaces_a_spawn_failure() {
+        let err = Cmd::new("worktrunk-no-such-program-3856")
+            .timeout(Duration::from_secs(30))
+            .run()
+            .unwrap_err();
+        assert_ne!(err.kind(), std::io::ErrorKind::TimedOut);
+    }
+
     /// The timeout has to bound wall-clock, not just signal the direct child.
     /// A grandchild inherits the child's stderr pipe, so one that survives the
     /// kill holds the write end open and the output readers block on it — which
@@ -2731,6 +2847,27 @@ mod tests {
             result.is_ok(),
             "SIGPIPE should not be treated as an error: {result:?}"
         );
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn test_cmd_stream_can_propagate_sigpipe() {
+        use crate::git::WorktrunkError;
+
+        let err = Cmd::new("sh")
+            .args(["-c", "kill -PIPE $$"])
+            .propagate_sigpipe()
+            .stream()
+            .unwrap_err();
+        let wt_err = err.downcast_ref::<WorktrunkError>().unwrap();
+        assert!(matches!(
+            wt_err,
+            WorktrunkError::ChildProcessExited {
+                code: 141,
+                signal: Some(13),
+                ..
+            }
+        ));
     }
 
     #[test]
@@ -2846,6 +2983,77 @@ mod tests {
         // A fast command under a generous threshold exits during phase 1
         // (wait_timeout returns Some) and stays buffered/quiet.
         Cmd::new("true").delayed_stream(5_000, None).unwrap();
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn test_cmd_delayed_stream_crosses_the_threshold() {
+        // A command that outlives the threshold leaves phase 1 with no status
+        // (`wait_timeout` returns `Ok(None)`), which switches the readers to
+        // streaming, and phase 2 then reports the real exit.
+        //
+        // What pins the switch is where the late output goes: a streamed line
+        // is written to stderr instead of the buffer, so the error carries
+        // none of it. Had phase 1 returned a status instead, `late` would
+        // still be buffered and would show up here. The other thresholds never
+        // reach this arm — `0` streams without waiting, `-1` skips phase 1.
+        //
+        // The child writes 450 ms after the threshold passes. Only the switch
+        // has to land in that window, and it follows the wait immediately, so
+        // the margin covers a deschedule far longer than anything the suite
+        // produces. The threshold stays well above zero for the opposite
+        // reason: were `remaining` to reach it already spent, phase 1 would
+        // skip the wait entirely and the test would pass without reaching the
+        // arm it exists to cover.
+        let err = Cmd::new("sh")
+            .args(["-c", "sleep 0.5; echo late 1>&2; exit 3"])
+            .delayed_stream(50, None)
+            .unwrap_err();
+        let stream_err = err
+            .downcast_ref::<StreamCommandError>()
+            .expect("non-zero delayed_stream exit should be a StreamCommandError");
+        assert_eq!(stream_err.exit_info, "exit code 3");
+        assert_eq!(
+            stream_err.output, "",
+            "output written after the switch must stream, not buffer"
+        );
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn test_cmd_delayed_stream_flushes_what_it_buffered() {
+        // Output written *before* the threshold is buffered, and the switch to
+        // streaming drains that buffer to stderr before phase 2 begins. This
+        // ordering is what reaches the drain loop:
+        // `test_cmd_delayed_stream_crosses_the_threshold` writes after the
+        // switch, so its line streams from the reader thread and the buffer
+        // stays empty throughout.
+        //
+        // The error's `output` is empty either way — the reader relays a line
+        // it picks up after the switch, and the drain empties one it picked up
+        // before — so the assertion pins the switch, not the drain itself. A
+        // unit test cannot capture stderr, so the window is the only lever on
+        // which of the two runs; the integration test next door
+        // (`test_delayed_stream_progress_strips_ansi_when_piped`) is what
+        // asserts on the relayed text.
+        //
+        // The threshold is the whole window the reader has to get `early` into
+        // the buffer: spawning `sh` and reading its first line has to land
+        // inside it, or the switch goes first and the drain runs over nothing.
+        // 250 ms absorbs a slow spawn on a loaded runner, and the child's
+        // 500 ms still outlasts the threshold by the same margin.
+        let err = Cmd::new("sh")
+            .args(["-c", "echo early 1>&2; sleep 0.5; exit 3"])
+            .delayed_stream(250, None)
+            .unwrap_err();
+        let stream_err = err
+            .downcast_ref::<StreamCommandError>()
+            .expect("non-zero delayed_stream exit should be a StreamCommandError");
+        assert_eq!(stream_err.exit_info, "exit code 3");
+        assert_eq!(
+            stream_err.output, "",
+            "output buffered before the switch must be drained to stderr, not reported"
+        );
     }
 
     #[test]
@@ -3037,6 +3245,80 @@ mod tests {
         // Use a signal number that's not SIGINT or SIGTERM
         super::forward_signal_with_escalation(1, 999);
         // No panic = success (function returns early for unknown signals)
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn test_group_died_within_immediate_for_reaped_group() {
+        // A reaped child leaves an empty group: the first (immediate) probe
+        // reads ESRCH and the grace loop returns without sleeping. This pins
+        // the early exit that keeps escalation cheap for the callers whose
+        // children are reaped concurrently (signal forwarder, tether).
+        use std::os::unix::process::CommandExt;
+        let mut cmd = std::process::Command::new("sh");
+        cmd.args(["-c", ":"]).process_group(0);
+        let mut child = cmd.spawn().unwrap();
+        let pgid = child.id() as i32;
+        child.wait().unwrap();
+
+        let start = Instant::now();
+        // Grace far longer than any plausible scheduling stall, so returning
+        // early is structurally distinguishable from having slept it, and the
+        // bound below is a safety net rather than a race.
+        assert!(super::group_died_within(pgid, Duration::from_secs(30)));
+        assert!(
+            start.elapsed() < Duration::from_secs(5),
+            "an empty group must exit the grace loop on the first probe; took {:?}",
+            start.elapsed()
+        );
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn test_group_died_within_times_out_on_live_group() {
+        // Probing our own (live) process group runs the full grace and
+        // reports the group still alive.
+        let pgid = nix::unistd::getpgrp().as_raw();
+        let grace = Duration::from_millis(50);
+        let start = Instant::now();
+        assert!(!super::group_died_within(pgid, grace));
+        assert!(start.elapsed() >= grace);
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn test_escalation_full_grace_and_inert_sweep_when_leader_unreaped() {
+        // Replays `kill_timed_out_tree`'s position: the caller holds the group
+        // leader unreaped while escalating. The child has already exited when
+        // escalation starts (stdout EOF is the barrier — the pipe closes when
+        // the process exits, so this needs no scheduling assumptions), but
+        // nobody reaps it, so the liveness probe counts the zombie, the grace
+        // runs to its deadline, and the final group SIGKILL fires against the
+        // dead group. The recorded exit must come through untouched — signals
+        // to a fully-exited group are discarded.
+        use std::os::unix::process::CommandExt;
+        let mut cmd = std::process::Command::new("sh");
+        cmd.args(["-c", "exit 7"])
+            .stdout(std::process::Stdio::piped())
+            .process_group(0);
+        let mut child = cmd.spawn().unwrap();
+        let pid = child.id() as i32;
+        let mut eof = Vec::new();
+        child.stdout.take().unwrap().read_to_end(&mut eof).unwrap();
+
+        let start = Instant::now();
+        super::forward_signal_with_escalation(pid, signal_hook::consts::SIGTERM);
+        assert!(
+            start.elapsed() >= Duration::from_millis(200),
+            "with the leader unreaped the group must read alive for the whole grace"
+        );
+
+        let status = child.wait().unwrap();
+        assert_eq!(
+            status.code(),
+            Some(7),
+            "the TERM and the post-grace SIGKILL must not alter the recorded exit"
+        );
     }
 
     #[test]

@@ -9,7 +9,7 @@ use std::fs;
 use std::io::{BufRead, BufReader};
 use std::path::PathBuf;
 
-use super::paths::{home_dir_required, powershell_profile_paths};
+use super::paths::{home_dir_required, powershell_profile_paths, zsh_config_dir};
 
 /// Detect if a line contains shell integration for a specific command.
 ///
@@ -548,19 +548,20 @@ pub fn scan_for_detection_details(cmd: &str) -> Result<Vec<FileDetectionResult>,
         home.join(".profile"),
         // Zsh
         home.join(".zshrc"),
-        std::env::var("ZDOTDIR")
-            .map(PathBuf::from)
-            .unwrap_or_else(|_| home.clone())
-            .join(".zshrc"),
-        // Fish functions/ (current location)
-        home.join(".config/fish/functions")
+        zsh_config_dir(&home).join(".zshrc"),
+        // Fish functions/ (current location) — fish's own config dir, so
+        // detection reads the file install wrote.
+        super::paths::fish_config_dir(&home)
+            .join("functions")
             .join(format!("{cmd}.fish")),
-        // Fish conf.d (legacy location - for detecting existing installs)
+        // Fish conf.d (legacy location - for detecting existing installs).
+        // Pinned to `~/.config`, matching `legacy_fish_conf_d_path`: that is
+        // where worktrunk wrote it, and `wt config show` compares the two.
         home.join(".config/fish/conf.d").join(format!("{cmd}.fish")),
     ];
 
     // Add Nushell vendor autoload paths (check all candidate locations)
-    config_files.extend(super::config_paths(super::Shell::Nushell, cmd).unwrap_or_default());
+    config_files.extend(super::Shell::Nushell.config_paths(cmd).unwrap_or_default());
 
     // Add PowerShell profiles
     config_files.extend(powershell_profile_paths(&home));

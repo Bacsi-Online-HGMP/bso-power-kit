@@ -28,6 +28,10 @@ type Engine struct {
 	store    *ccr.Store
 }
 
+// Capabilities exposes the active registry, including any explicitly configured
+// strategy. Middleware uses this authority rather than maintaining a second list.
+func (e *Engine) Capabilities() []compressors.Capability { return e.registry.Capabilities() }
+
 // New builds an engine with the default compressor registry. store backs CCR
 // recovery and stats and may be nil — without it the engine still detects and
 // pass-through-compresses, but it will never run a lossy compressor, because a
@@ -66,7 +70,7 @@ func defaultRegistry(counter tokens.Counter) *compressors.Registry {
 // result is not smaller, or when a lossy result cannot be made recoverable, it
 // passes the original bytes through unchanged (no handle, zero ratio).
 func (e *Engine) Compress(input []byte, opts Options) (Result, error) {
-	body, listing := unwrapListing(input)
+	body, wrappers := unwrapInput(input)
 	ct := opts.Type
 	if ct == "" {
 		ct = e.Detect(body)
@@ -105,7 +109,7 @@ func (e *Engine) Compress(input []byte, opts Options) (Result, error) {
 	if !ok || out == nil {
 		return res, nil // parse problem → pass-through
 	}
-	out = listing.rewrap(out)
+	out = wrappers.rewrap(out)
 	after := e.counter.Count(out)
 	if after >= before || bytes.Equal(out, input) {
 		return res, nil // not actually smaller → pass-through, claim nothing
@@ -151,7 +155,7 @@ func (e *Engine) Compress(input []byte, opts Options) (Result, error) {
 // before the transform can be emitted. The caller buckets by
 // SafetyClass/Recoverable; the number is a token count of compressor output.
 func (e *Engine) Simulate(input []byte, opts Options) SimResult {
-	body, listing := unwrapListing(input)
+	body, wrappers := unwrapInput(input)
 	ct := opts.Type
 	if ct == "" {
 		ct = e.Detect(body)
@@ -181,7 +185,7 @@ func (e *Engine) Simulate(input []byte, opts Options) SimResult {
 	if !ok || out == nil {
 		return res // parse problem → pass-through
 	}
-	out = listing.rewrap(out)
+	out = wrappers.rewrap(out)
 	after := e.counter.Count(out)
 	if after >= before || bytes.Equal(out, input) {
 		return res // not actually smaller → claim nothing

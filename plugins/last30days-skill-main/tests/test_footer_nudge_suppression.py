@@ -33,6 +33,13 @@ class FooterNudgeSuppressionTests(unittest.TestCase):
             # BRAVE/EXA/SERPER/PARALLEL key doesn't make grounding "available"
             # and suppress the promo we're checking for.
             "LAST30DAYS_CONFIG_DIR": "",
+            # Keychain is a THIRD credential source, independent of the env
+            # stripping below and of LAST30DAYS_CONFIG_DIR. On a contributor's
+            # Mac a stored `last30days-BRAVE_API_KEY` item sets
+            # native_web_backend, _missing_sources_for_promo returns None, and
+            # this test fails for a reason that has nothing to do with promo
+            # selection. Seal that source too.
+            "LAST30DAYS_SKIP_KEYCHAIN": "1",
             # Pin X as available so _missing_sources_for_promo selects "web"
             # (otherwise the "x" promo wins and the BRAVE_API_KEY string never
             # appears).
@@ -48,6 +55,14 @@ class FooterNudgeSuppressionTests(unittest.TestCase):
         # Run from a tmpdir so _find_project_env() can't walk up into any
         # .claude/last30days.env above the repo on the contributor's machine.
         with tempfile.TemporaryDirectory() as tmp:
+            # pass(1) is a FOURTH credential source (_load_pass): a stored
+            # last30days/BRAVE_API_KEY entry leaks in exactly like the
+            # Keychain item sealed above. pass honors PASSWORD_STORE_DIR, so
+            # point it at an empty store inside the tmpdir — every lookup
+            # misses without touching the contributor's real store.
+            empty_pass_store = Path(tmp) / "empty-pass-store"
+            empty_pass_store.mkdir()
+            env["PASSWORD_STORE_DIR"] = str(empty_pass_store)
             return subprocess.run(
                 cmd, capture_output=True, text=True, encoding="utf-8", env=env, cwd=tmp,
             )

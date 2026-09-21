@@ -1,7 +1,8 @@
 //! Integration tests for `wt step prune`
 
 use crate::common::{
-    BareRepoTest, TestRepo, make_snapshot_cmd, repo, repo_with_remote, setup_temp_snapshot_settings,
+    BareRepoTest, TEST_EPOCH, TestRepo, make_snapshot_cmd, repo, repo_with_remote,
+    setup_temp_snapshot_settings,
 };
 use ansi_str::AnsiStr;
 use insta::assert_snapshot;
@@ -396,12 +397,19 @@ fn test_prune_orphan_branches(mut repo: TestRepo) {
 
 /// Orphan branches (no worktree) respect the min-age guard via reflog timestamps.
 ///
-/// GIT_COMMITTER_DATE=2025-01-01T00:00:00Z makes the branch reflog timestamp
-/// epoch 1735689600. Setting TEST_EPOCH to 30 minutes later (1735691400) means
-/// the branch appears 30 minutes old, which is younger than the default 1d.
+/// The branch is created at GIT_COMMITTER_DATE=2025-01-01T00:00:00Z, so its
+/// reflog entry is epoch 1735689600, and TEST_EPOCH 30 minutes later
+/// (1735691400) makes it 30 minutes old, younger than the default 1d. The
+/// commit it points at is a month older: the guard ages the branch, not the
+/// commit, so `git branch <name> main` on a days-old tip still counts as new.
 #[rstest]
 fn test_prune_orphan_branch_min_age(repo: TestRepo) {
-    repo.commit("initial");
+    repo.git_command()
+        .env("GIT_AUTHOR_DATE", "2024-12-01T00:00:00Z")
+        .env("GIT_COMMITTER_DATE", "2024-12-01T00:00:00Z")
+        .args(["commit", "--allow-empty", "-m", "initial"])
+        .run()
+        .unwrap();
 
     // Create a branch at HEAD (integrated) without a worktree
     repo.create_branch("orphan-integrated");
@@ -411,6 +419,125 @@ fn test_prune_orphan_branch_min_age(repo: TestRepo) {
     cmd.env("WORKTRUNK_TEST_EPOCH", "1735691400"); // 2025-01-01T00:30:00Z
 
     assert_cmd_snapshot!(cmd);
+}
+
+/// Bare-clone `repo` into `clone.git` beside it. Like any `git clone --bare`,
+/// the clone stores its branches in `packed-refs` and writes them no reflogs.
+fn bare_clone(repo: &TestRepo) -> std::path::PathBuf {
+    let clone = repo.home_path().join("clone.git");
+    repo.run_git(&["clone", "--bare", ".", clone.to_str().unwrap()]);
+    clone
+}
+
+/// Set a file's mtime to `age_secs` before `TEST_EPOCH`.
+fn set_age(path: &std::path::Path, age_secs: u64) {
+    let written = std::time::UNIX_EPOCH + std::time::Duration::from_secs(TEST_EPOCH - age_secs);
+    std::fs::File::options()
+        .write(true)
+        .open(path)
+        .unwrap()
+        .set_modified(written)
+        .unwrap();
+}
+
+/// Orphan branches without a reflog are aged by when their ref was last written.
+///
+/// `git clone --bare` writes no reflogs and stores the branches it brings down
+/// in `packed-refs`; a later fetch into `refs/heads/*` writes a new branch as a
+/// loose ref, also without a reflog. The two files are dated a month and an
+/// hour before TEST_EPOCH, so each branch's age shows which file it was read
+/// from: `cloned` is a candidate, and `fetched` is skipped as younger than 1d.
+#[rstest]
+fn test_prune_orphan_branch_min_age_without_reflog(repo: TestRepo) {
+    repo.create_branch("cloned");
+    let clone = bare_clone(&repo);
+    repo.run_git_in(
+        &clone,
+        &[
+            "config",
+            "remote.origin.fetch",
+            "+refs/heads/*:refs/heads/*",
+        ],
+    );
+    repo.create_branch("fetched");
+    repo.run_git_in(&clone, &["fetch", "origin"]);
+
+    for branch in ["cloned", "fetched"] {
+        let ref_name = format!("refs/heads/{branch}");
+        let output = repo
+            .git_command()
+            .args(["reflog", "exists", &ref_name])
+            .current_dir(&clone)
+            .run()
+            .unwrap();
+        assert!(!output.status.success(), "{branch} should have no reflog");
+    }
+
+    set_age(&clone.join("packed-refs"), 30 * 24 * 60 * 60);
+    set_age(&clone.join("refs/heads/fetched"), 60 * 60);
+
+    assert_cmd_snapshot!(make_snapshot_cmd(
+        &repo,
+        "step",
+        &["prune", "--dry-run"],
+        Some(&clone)
+    ));
+}
+
+/// Prune's own removals don't re-date the branches it has yet to check.
+///
+/// Deleting a packed branch rewrites `packed-refs`, which dates every branch
+/// without a reflog, and removals run while the scan is still checking later
+/// candidates. Two month-old packed branches in a bare clone go through a
+/// `git` shim that holds `packed-b`'s reflog read until `packed-a`'s deletion
+/// has finished, so `packed-b` is aged after that rewrite; both must still be
+/// removed. Unix-only for the same `CreateProcess` shim reason as the canary
+/// below.
+#[cfg(unix)]
+#[rstest]
+fn test_prune_removals_keep_packed_branch_ages(repo: TestRepo) {
+    repo.create_branch("packed-a");
+    repo.create_branch("packed-b");
+    let clone = bare_clone(&repo);
+    set_age(&clone.join("packed-refs"), 30 * 24 * 60 * 60);
+
+    let mut cmd = repo.wt_command();
+    // Two scan threads, so `packed-a`'s check can finish while `packed-b`'s
+    // waits in the shim whichever order the scan takes them in.
+    cmd.current_dir(&clone).env("RAYON_NUM_THREADS", "2");
+    let git_wrapper_dir = repo.home_path().join("git-wrapper");
+    std::fs::create_dir_all(&git_wrapper_dir).unwrap();
+    write_deletion_ordering_git_wrapper(&git_wrapper_dir, &which::which("git").unwrap());
+    prepend_path(&mut cmd, &git_wrapper_dir);
+    let barrier_dir = repo.home_path().join("barrier");
+    std::fs::create_dir_all(&barrier_dir).unwrap();
+    cmd.env("WT_TEST_BARRIER_DIR", &barrier_dir);
+
+    let output = cmd.args(["step", "prune", "--yes"]).output().unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    assert!(output.status.success(), "prune should succeed:\n{stderr}");
+    assert!(
+        barrier_dir.join("deleted-packed-a").exists(),
+        "the shim never saw packed-a deleted:\n{stderr}"
+    );
+    assert!(
+        !barrier_dir.join("timeout").exists(),
+        "packed-b's reflog read waited out the shim, so it was aged before packed-a's deletion:\n{stderr}"
+    );
+    let output = repo
+        .git_command()
+        .args(["branch", "--format=%(refname:short)"])
+        .current_dir(&clone)
+        .run()
+        .unwrap();
+    let branches = String::from_utf8_lossy(&output.stdout);
+    for name in ["packed-a", "packed-b"] {
+        assert!(
+            !branches.lines().any(|branch| branch == name),
+            "{name} should have been pruned:\n{stderr}"
+        );
+    }
 }
 
 /// Prune can remove a mix of branch-only and worktree candidates in one run.
@@ -581,14 +708,26 @@ fn test_prune_min_age_passes(mut repo: TestRepo) {
     assert_cmd_snapshot!(cmd);
 }
 
-/// Prune skips worktrees with uncommitted changes
+/// Prune skips worktrees with uncommitted changes even when the user's status
+/// display preference hides the only untracked file.
 #[rstest]
 fn test_prune_skips_dirty(mut repo: TestRepo) {
     repo.commit("initial");
+    repo.run_git(&["config", "status.showUntrackedFiles", "no"]);
 
-    // Merged worktree with uncommitted changes — should be skipped
+    // Merged worktree with an untracked file hidden from bare status.
     let wt_path = repo.add_worktree("dirty-merged");
     std::fs::write(wt_path.join("scratch.txt"), "wip").unwrap();
+    let status = repo
+        .git_command()
+        .args(["status", "--porcelain"])
+        .current_dir(&wt_path)
+        .run()
+        .unwrap();
+    assert!(
+        status.stdout.is_empty(),
+        "the fixture must demonstrate that the user setting hides the file"
+    );
 
     // Clean merged worktree — should be pruned
     repo.add_worktree("clean-merged");
@@ -602,6 +741,11 @@ fn test_prune_skips_dirty(mut repo: TestRepo) {
 
     // Dirty worktree still exists
     assert!(wt_path.exists(), "Dirty worktree should be skipped");
+    assert_eq!(
+        std::fs::read_to_string(wt_path.join("scratch.txt")).unwrap(),
+        "wip",
+        "the hidden untracked file must remain recoverable"
+    );
 
     // Clean worktree removed (non-current — no placeholder)
     let clean_path = repo.root_path().parent().unwrap().join("repo.clean-merged");
@@ -1711,8 +1855,8 @@ fn test_prune_removals_run_concurrently(repo: TestRepo) {
     }
 }
 
-/// The removals that unregister stale worktree metadata serialize behind
-/// `registry_lock` — one `git worktree remove` teardown at a time.
+/// The removals that unregister stale worktree metadata serialize through the
+/// repository registry lock — one `git worktree remove` teardown at a time.
 ///
 /// Four stale entries: two carrying a branch (`BranchOnly` plans whose
 /// `prune_entry` executes the prune) and two detached (`StaleDetached`, which
@@ -1730,7 +1874,7 @@ fn test_prune_removals_run_concurrently(repo: TestRepo) {
 /// `--foreground` runs both ways. It reserves `check_lock`'s write side for the
 /// TTY trash-cleanup spinner, which only a worktree removal paints; every
 /// candidate here plans a branch deletion or a bare prune, so the flag changes
-/// nothing — the registry teardowns serialize on `registry_lock` regardless.
+/// nothing — the registry teardowns serialize inside `Repository` regardless.
 #[cfg(unix)]
 #[rstest]
 fn test_prune_metadata_removals_serialize(
@@ -1762,7 +1906,7 @@ fn test_prune_metadata_removals_serialize(
 
     let mut cmd = repo.wt_command();
     // The removal pool is sized from the rayon thread count; pin it to four so
-    // all four teardowns would run at once if `registry_lock` regressed (the
+    // all four teardowns would run at once if the registry lock regressed (the
     // workers block in subprocess waits, so four threads don't need four CPUs).
     cmd.env("RAYON_NUM_THREADS", "4");
     let git_wrapper_dir = repo.home_path().join("git-wrapper");
@@ -1801,8 +1945,8 @@ fn test_prune_metadata_removals_serialize(
         .collect();
     assert!(
         overlaps.is_empty(),
-        "two `git worktree remove` teardowns overlapped — `registry_lock` did \
-         not serialize them (issue #3661): {overlaps:?}"
+        "two `git worktree remove` teardowns overlapped — the repository registry \
+         lock did not serialize them (issue #3661): {overlaps:?}"
     );
     let list = repo.git_output(&["worktree", "list", "--porcelain"]);
     assert!(
@@ -1985,7 +2129,7 @@ exit 1
     std::fs::set_permissions(&path, permissions).unwrap();
 }
 
-/// A `git` shim whose `worktree remove` arms probe for overlap (see
+/// A `git` shim whose `worktree remove` arms a probe for overlap (see
 /// `test_prune_metadata_removals_serialize`): each records that it started,
 /// then takes an atomic `mkdir` lock for a fixed window. Under the registry
 /// serialization this is testing, no two teardowns ever hold it at once, so a
@@ -2010,6 +2154,48 @@ if mkdir "$WT_TEST_BARRIER_DIR/active" 2>/dev/null; then
   rmdir "$WT_TEST_BARRIER_DIR/active"
 else
   : > "$WT_TEST_BARRIER_DIR/overlap-$own"
+fi
+exec {real_git} "$@"
+"#
+    );
+    let path = dir.join("git");
+    std::fs::write(&path, script).unwrap();
+    let mut permissions = std::fs::metadata(&path).unwrap().permissions();
+    permissions.set_mode(0o755);
+    std::fs::set_permissions(&path, permissions).unwrap();
+}
+
+/// A `git` shim that holds the reflog read for `refs/heads/packed-b` until
+/// `update-ref -d refs/heads/packed-a` has finished (see
+/// `test_prune_removals_keep_packed_branch_ages`); everything else passes
+/// through to the real git.
+#[cfg(unix)]
+fn write_deletion_ordering_git_wrapper(dir: &std::path::Path, real_git: &std::path::Path) {
+    use std::os::unix::fs::PermissionsExt;
+
+    let real_git = shell_escape::unix::escape(real_git.to_string_lossy());
+    let script = format!(
+        r#"#!/bin/sh
+if [ "$1 $2 $3" = "update-ref -d refs/heads/packed-a" ]; then
+  {real_git} "$@"
+  status=$?
+  : > "$WT_TEST_BARRIER_DIR/deleted-packed-a"
+  exit $status
+fi
+if [ "$1 $2" = "reflog show" ]; then
+  case " $* " in
+    *" refs/heads/packed-b "*)
+      i=0
+      while [ ! -e "$WT_TEST_BARRIER_DIR/deleted-packed-a" ]; do
+        i=$((i+1))
+        if [ "$i" -gt 300 ]; then
+          : > "$WT_TEST_BARRIER_DIR/timeout"
+          break
+        fi
+        sleep 0.05
+      done
+      ;;
+  esac
 fi
 exec {real_git} "$@"
 "#
