@@ -16,6 +16,7 @@ use crate::commands::hooks::HookAnnouncer;
 use crate::commands::process::{
     HookLog, InternalOp, build_remove_command, build_remove_command_staged, spawn_detached,
 };
+use crate::commands::template_vars::TemplateVars;
 use crate::commands::worktree::hooks::PostRemoveContext;
 use crate::commands::worktree::{
     BranchFate, RemovalPlan, RetainedReason, SharedBranchCheckout, SwitchBranchInfo, SwitchResult,
@@ -30,7 +31,7 @@ use worktrunk::git::{
     BranchDeletionMode, BranchDeletionOutcome, BranchDeletionResult, RemoveOptions,
     execute_branch_deletion, remove_worktree_with_cleanup, stage_worktree_removal,
 };
-use worktrunk::path::format_path_for_display;
+use worktrunk::path::{canonicalize_with_parents, format_path_for_display};
 use worktrunk::progress::{Progress, format_stats_paren};
 use worktrunk::remove_dir::remove_dir_with_progress;
 use worktrunk::styling::{
@@ -178,7 +179,7 @@ fn spawn_background_removal(
             main_path,
             &remove_command,
             log_label,
-            &HookLog::internal(InternalOp::Remove),
+            &HookLog::Internal(InternalOp::Remove),
             None,
         )?;
     }
@@ -925,7 +926,12 @@ fn flag_note(
 ///
 /// # Warning Message Format
 ///
-/// Uses the standard "Cannot change directory — {reason}" pattern.
+/// Uses the standard "Worktree for X @ path, but cannot change directory —
+/// {reason}" pattern, the same shape `wt switch` uses for an existing worktree.
+/// Naming the destination matters more here than anywhere else: the removal
+/// deleted the directory the caller is standing in, and unless a post-merge or
+/// post-remove hook announcement happens to name its working directory, no
+/// other line of the run prints a path to move to.
 /// See [`compute_shell_warning_reason`] for the full list of reasons.
 fn print_switch_message_if_changed(
     changed_directory: bool,
@@ -958,9 +964,9 @@ fn print_switch_message_if_changed(
         // Running as `git wt` - explain why cd can't work
         eprintln!(
             "{}",
-            warning_message(
-                "Cannot change directory — ran git wt; running through git prevents cd",
-            )
+            warning_message(cformat!(
+                "Worktree for <bold>{dest_branch}</> @ <bold>{path_display}</>, but cannot change directory — ran git wt; running through git prevents cd"
+            ))
         );
         eprintln!("{}", hint_message(git_subcommand_warning()));
     } else {
@@ -968,7 +974,9 @@ fn print_switch_message_if_changed(
         let reason = compute_shell_warning_reason();
         eprintln!(
             "{}",
-            warning_message(cformat!("Cannot change directory — {reason}"))
+            warning_message(cformat!(
+                "Worktree for <bold>{dest_branch}</> @ <bold>{path_display}</>, but cannot change directory — {reason}"
+            ))
         );
         // Show appropriate hint based on invocation mode
         if super::retired_shell_wrapper_active() {
@@ -998,10 +1006,13 @@ pub(crate) fn resolve_subdir_in_target(
     cwd: &Path,
 ) -> PathBuf {
     if let Some(source_root) = source_root {
-        // Canonicalize both paths to handle symlinks (e.g., /var -> /private/var on macOS)
-        let cwd = dunce::canonicalize(cwd).unwrap_or_else(|_| cwd.to_path_buf());
-        let source_root =
-            dunce::canonicalize(source_root).unwrap_or_else(|_| source_root.to_path_buf());
+        // Canonicalize both paths to handle symlinks (e.g., /var -> /private/var
+        // on macOS). Through `canonicalize_with_parents` rather than `dunce`
+        // directly, so a cwd past Windows' 260-character limit is spelled like
+        // the short worktree root containing it — otherwise `strip_prefix` below
+        // fails and the shell silently lands at the target root (#3898).
+        let cwd = canonicalize_with_parents(cwd);
+        let source_root = canonicalize_with_parents(source_root);
         if let Ok(relative) = cwd.strip_prefix(&source_root)
             && !relative.as_os_str().is_empty()
         {
@@ -1012,6 +1023,26 @@ pub(crate) fn resolve_subdir_in_target(
         }
     }
     target_root.to_path_buf()
+}
+
+/// Where a switch's follow-on work runs, and which of those directories its
+/// output should annotate with "@ path".
+///
+/// The `--execute` program always starts in the switch target — the worktree
+/// root, or the subdirectory position [`resolve_subdir_in_target`] preserved —
+/// so `execute_dir` is unconditional. The two `Option`s are the annotations,
+/// `Some` only when the user's shell won't be where that work runs: background
+/// hooks always run at the worktree root, and `--no-cd` leaves the shell behind
+/// while the program still goes to the worktree (#4042).
+pub struct SwitchDisplayPaths {
+    /// Where the background `post-switch` / `post-start` hooks run, when that
+    /// isn't where the user's shell is (or will be).
+    pub hooks: Option<PathBuf>,
+    /// Where the `--execute` program starts.
+    pub execute_dir: PathBuf,
+    /// [`Self::execute_dir`], when that isn't where the user's shell is (or
+    /// will be).
+    pub execute: Option<PathBuf>,
 }
 
 /// Handle output for a switch operation
@@ -1028,7 +1059,10 @@ pub(crate) fn resolve_subdir_in_target(
 /// - `AlreadyAt` — user is already in the target directory
 /// - Shell integration IS active — cd will happen automatically
 ///
-/// **Warning format:** `Cannot change directory — {reason}`
+/// **Warning format:** `Existing` shares the switch-to-existing shape,
+/// `Worktree for X @ path, but cannot change directory — {reason}`; `Created`
+/// warns with the bare `Cannot change directory — {reason}`, because the
+/// success line printed above it already names the path.
 ///
 /// See [`compute_shell_warning_reason`] for the full list of reasons.
 ///
@@ -1041,26 +1075,23 @@ pub(crate) fn resolve_subdir_in_target(
 ///
 /// # Return Value
 ///
-/// Returns `Some(path)` when post-switch hooks should show "@ path" in their
-/// announcements (because the user's shell won't be in that directory). This happens when:
-/// - Shell integration is not active (user's shell stays in original directory)
-/// - `change_dir` is false (user explicitly requested no directory change)
-///
-/// Returns `None` when the user will be in the worktree directory (shell integration
-/// active or already at the worktree), so no path annotation needed.
+/// See [`SwitchDisplayPaths`] — the two annotations differ, because the hooks
+/// and the `--execute` program don't always run in the same directory.
 pub fn handle_switch_output(
     result: &SwitchResult,
     branch_info: &SwitchBranchInfo,
     change_dir: bool,
     source_worktree_root: Option<&Path>,
     cwd: &Path,
-) -> anyhow::Result<Option<std::path::PathBuf>> {
-    // Set target directory for command execution, preserving subdirectory position.
-    // If the user is in apps/gateway/ in the source worktree and that directory exists
-    // in the target, cd to apps/gateway/ in the target instead of the root.
+) -> anyhow::Result<SwitchDisplayPaths> {
+    // Where the switch points, preserving subdirectory position: if the user is
+    // in apps/gateway/ in the source worktree and that directory exists in the
+    // target, that's apps/gateway/ in the target rather than its root. The
+    // `--execute` program starts there either way; `--no-cd` only declines to
+    // take the user's shell along.
+    let destination = resolve_subdir_in_target(result.path(), source_worktree_root, cwd);
     if change_dir {
-        let cd_target = resolve_subdir_in_target(result.path(), source_worktree_root, cwd);
-        super::change_directory(&cd_target)?;
+        super::change_directory(&destination)?;
     }
 
     // Translate to the user's logical (symlink-preserved) path for display messages.
@@ -1083,25 +1114,38 @@ pub fn handle_switch_output(
         ),
     };
 
+    // The program runs in `destination`, which is the worktree root only when
+    // the user was at the source worktree's root: otherwise
+    // `resolve_subdir_in_target` kept their subdirectory position, and the
+    // hooks' path names a directory one level out from the program's. Annotate
+    // it only when the user's shell won't be there — it follows the program
+    // only when the switch cd'd and shell integration carried it (#4042).
+    let shell_follows = change_dir && super::is_shell_integration_active();
+    let display_path_for_execute = (!shell_follows)
+        .then(|| destination.clone())
+        .filter(|dir| super::global::compute_hooks_display_path(dir, cwd).is_some());
+
     stderr().flush()?;
-    Ok(display_path_for_hooks)
+    Ok(SwitchDisplayPaths {
+        hooks: display_path_for_hooks,
+        execute_dir: destination,
+        execute: display_path_for_execute.map(|dir| super::to_logical_path(&dir)),
+    })
 }
 
 /// Execute the --execute command after hooks have run.
 ///
-/// `display_path` is shown when the user's shell won't be in the worktree
-/// directory (shell integration not active). This helps users understand where
-/// the command runs.
-///
-/// When execution will be refused (the conservative EXEC scrub or a retired
-/// wrapper), no `Executing` header is printed — `execute()` emits its own
-/// warning explaining the skip, and a contradictory header would read as a
-/// broken promise.
-pub fn execute_user_command(command: &str, display_path: Option<&Path>) -> anyhow::Result<()> {
-    if super::exec_would_be_refused() {
-        // execute() will emit the refusal warning and return Ok.
-        return super::execute(command);
-    }
+/// The program runs in `dir` ([`SwitchDisplayPaths::execute_dir`]).
+/// `display_path` is that same directory ([`SwitchDisplayPaths::execute`]), and
+/// is `Some` only when the user's shell won't be there — otherwise the header
+/// has nothing to annotate.
+pub fn execute_user_command(
+    argv: &[String],
+    display_path: Option<&Path>,
+    dir: &Path,
+) -> anyhow::Result<()> {
+    super::global::print_outdated_execute_wrapper_warning();
+    let command = super::global::format_exec_argv(argv);
 
     // Show what command is being executed (section header + gutter content)
     // Include path when user's shell won't be there (shell integration not active)
@@ -1113,9 +1157,9 @@ pub fn execute_user_command(command: &str, display_path: Option<&Path>) -> anyho
         None => "Executing (--execute):".to_string(),
     };
     eprintln!("{}", progress_message(header));
-    eprintln!("{}", format_bash_with_gutter(command));
+    eprintln!("{}", format_bash_with_gutter(&command));
 
-    super::execute(command)?;
+    super::execute(argv.to_vec(), dir)?;
 
     Ok(())
 }
@@ -1360,13 +1404,22 @@ fn handle_branch_only_output(
 /// flushes — multi-phase callers (e.g. `wt merge`) batch with later phases,
 /// standalone callers (e.g. `wt remove`) flush immediately after.
 ///
-/// Only runs if `ctx.verify` is true (hooks approved).
+/// Hook selection is the frozen `ctx.hook_plan`, so an empty plan
+/// (`--no-hooks`, declined approval, or no project config) registers nothing.
+/// The removed-worktree mark below is not part of that: it records what the
+/// removal did, which no approval decision changes.
 fn spawn_hooks_after_remove(
     repo: &Repository,
     ctx: &WorktreeRemovalContext<'_>,
-    removed_branch: &str,
+    removed_branch: Option<&str>,
     announcer: &mut HookAnnouncer<'_>,
 ) -> anyhow::Result<()> {
+    // The worktree is gone (or, on the fallback path, being deleted by the
+    // detached `git worktree remove` this call follows), so a pipeline anchored
+    // on it must not be spawned into it. Recorded before the config load, which
+    // returns early on an unreadable user config.
+    announcer.mark_worktree_removed(ctx.worktree_path);
+
     let Ok(config) = UserConfig::load() else {
         return Ok(());
     };
@@ -1388,7 +1441,7 @@ fn spawn_hooks_after_remove(
 
     // All hooks use remove_ctx for spawning: log files are named after the removed
     // branch since both post-remove and post-switch are consequences of that removal.
-    let remove_ctx = CommandContext::new(repo, &config, Some(removed_branch), ctx.main_path, false);
+    let remove_ctx = CommandContext::new(repo, &config, removed_branch, ctx.main_path, false);
 
     // `post-remove` is *about* the removed worktree (gone by now); it was
     // selected and frozen into `hook_plan` at the gate, anchored at the removed
@@ -1717,17 +1770,15 @@ fn execute_pre_remove_hooks_if_needed(
     } else {
         Some(ctx.worktree_path)
     };
-    let target_branch = repo
-        .worktree_at(ctx.main_path)
-        .branch()
-        .ok()
-        .flatten()
-        .unwrap_or_default();
-    let target_path_str = worktrunk::path::to_posix_path(&ctx.main_path.to_string_lossy());
-    let extra_vars: Vec<(&str, &str)> = vec![
-        ("target", &target_branch),
-        ("target_worktree_path", &target_path_str),
-    ];
+    // `TemplateVars` rather than a hand-rolled vec: `as_extra_vars` omits an
+    // absent `target` instead of pushing `""`, so a detached primary worktree
+    // renders the same here as it does for the `post-remove` half of the same
+    // removal (issue #4009).
+    let target_branch = repo.worktree_at(ctx.main_path).branch().ok().flatten();
+    let vars = TemplateVars::new()
+        .with_target_opt(target_branch.as_deref())
+        .with_target_worktree_path(ctx.main_path);
+    let extra_vars = vars.as_extra_vars();
 
     execute_planned_hook(
         ctx.hook_plan,
@@ -1841,8 +1892,9 @@ fn handle_detached_removed_worktree_output(
         )?;
     }
 
-    // Post-remove hooks for detached HEAD use "HEAD" as the branch identifier
-    spawn_hooks_after_remove(repo, ctx, "HEAD", announcer)?;
+    // A detached worktree was on no branch, so `{{ branch }}` stays unset for
+    // the post-remove hooks (issue #4009).
+    spawn_hooks_after_remove(repo, ctx, None, announcer)?;
     stderr().flush()?;
     Ok(BranchFate::NotAttempted)
 }
@@ -1901,7 +1953,7 @@ fn handle_named_removed_worktree_foreground(
     }
     print_switch_message_if_changed(ctx.changed_directory, ctx.main_path)?;
 
-    spawn_hooks_after_remove(repo, ctx, branch_name, announcer)?;
+    spawn_hooks_after_remove(repo, ctx, Some(branch_name), announcer)?;
     stderr().flush()?;
     Ok(fate)
 }
@@ -1949,7 +2001,7 @@ fn handle_named_removed_worktree_background(
         ctx.background_fallback(),
     )?;
 
-    spawn_hooks_after_remove(repo, ctx, branch_name, announcer)?;
+    spawn_hooks_after_remove(repo, ctx, Some(branch_name), announcer)?;
     stderr().flush()?;
     Ok(fate)
 }
@@ -2030,7 +2082,7 @@ fn remove_removed_worktree_silently(
 
     // Post-remove (and post-switch when the picker cd'd away) hooks — registered
     // onto the caller's announcer, which `flush`es after this returns.
-    spawn_hooks_after_remove(repo, ctx, ctx.branch_name.unwrap_or("HEAD"), announcer)?;
+    spawn_hooks_after_remove(repo, ctx, ctx.branch_name, announcer)?;
     Ok(fate)
 }
 
@@ -2043,25 +2095,18 @@ fn remove_removed_worktree_silently(
 ///
 /// Capabilities: optional stdout→stderr redirect for deterministic ordering,
 /// SIGINT/SIGTERM forwarding to child process group, ANSI reset before child
-/// runs, `Cmd` tracing/logging, and directive file control.
+/// runs, `Cmd` tracing/logging, and CD directive control.
 ///
 /// ## Directive files
 ///
 /// `directives` controls whether the child can write shell-integration
-/// directives back to the parent shell. The CD file is always safe to pass
-/// through (raw path, no injection surface); the EXEC file is normally scrubbed
-/// because alias/hook bodies must not inject arbitrary shell into the parent
-/// session — see [`DirectivePassthrough::inherit_from_env_with_exec`] for the
-/// one exception.
+/// directives back to the parent shell. The CD file holds a raw path and is
+/// safe to pass through.
 ///
 /// - `DirectivePassthrough::default()` — scrubs all directive env vars from
 ///   the child. Used by background hooks (outlive the parent shell).
-/// - `DirectivePassthrough::inherit_from_env()` — re-adds CD but scrubs EXEC.
-///   Used by project aliases and foreground hooks, which may emit `cd`
-///   directives but must not be able to inject shell.
-/// - `DirectivePassthrough::inherit_from_env_with_exec()` — also re-adds EXEC.
-///   Used only for user-source aliases, where the alias body is already user-
-///   authored just like a top-level `wt switch --execute` invocation.
+/// - `DirectivePassthrough::inherit_from_env()` — re-adds CD. Used by aliases
+///   and foreground hooks, which may emit `cd` directives.
 ///
 /// ## Stdout routing
 ///
@@ -2142,9 +2187,6 @@ pub fn execute_shell_command(
     if let Some(path) = directives.cd_file {
         cmd = cmd.directive_cd_file(path);
     }
-    if let Some(path) = directives.exec_file {
-        cmd = cmd.directive_exec_file(path);
-    }
 
     cmd.stream()?;
 
@@ -2158,39 +2200,20 @@ pub fn execute_shell_command(
 ///
 /// `Default` (no fields set) scrubs all directive env vars from the child;
 /// [`DirectivePassthrough::inherit_from_env`] reads the current process
-/// environment and re-adds CD only; [`DirectivePassthrough::inherit_from_env_with_exec`]
-/// re-adds CD and EXEC. The EXEC file is only included by the `_with_exec`
-/// variant — every other path scrubs it so alias/hook shell bodies cannot
-/// inject arbitrary shell into the parent session.
+/// environment and re-adds CD.
 #[derive(Debug, Default, Clone)]
 pub struct DirectivePassthrough {
     pub cd_file: Option<std::path::PathBuf>,
-    pub exec_file: Option<std::path::PathBuf>,
 }
 
 impl DirectivePassthrough {
     /// Pass the CD directive file through to the child, reading the current
     /// process environment. Used by project aliases and foreground hooks that
-    /// may legitimately emit a `cd` directive. The EXEC file is deliberately
-    /// omitted — a project-config body could otherwise inject arbitrary shell
-    /// into the parent session.
+    /// may legitimately emit a `cd` directive.
     pub fn inherit_from_env() -> Self {
         use worktrunk::shell_exec::DIRECTIVE_CD_FILE_ENV_VAR;
         Self {
             cd_file: read_directive_env(DIRECTIVE_CD_FILE_ENV_VAR),
-            exec_file: None,
-        }
-    }
-
-    /// Like [`Self::inherit_from_env`] but also passes the EXEC directive
-    /// file through. Used only for user-source aliases: the body lives in the
-    /// user's own config, so a nested `wt --execute` is no different from the
-    /// user typing the same command at the top level. See issue #2101.
-    pub fn inherit_from_env_with_exec() -> Self {
-        use worktrunk::shell_exec::DIRECTIVE_EXEC_FILE_ENV_VAR;
-        Self {
-            exec_file: read_directive_env(DIRECTIVE_EXEC_FILE_ENV_VAR),
-            ..Self::inherit_from_env()
         }
     }
 }
@@ -2547,6 +2570,28 @@ prunable gitdir file points to non-existent location
         let cwd = source.join("apps/gateway");
         let result = resolve_subdir_in_target(&target, Some(&source), &cwd);
         assert_eq!(result, target.join("apps/gateway"));
+    }
+
+    #[test]
+    fn test_resolve_subdir_in_target_subdir_deeper_than_windows_max_path() {
+        // A cwd nested past Windows' 260-character path limit comes back from
+        // `dunce` spelled `\\?\C:\…` while its short worktree root stays `C:\…`,
+        // so `strip_prefix` fails and the shell lands at the target root with no
+        // error rather than at the mirrored subdirectory (#3898). Off Windows
+        // the depth is unremarkable and this just exercises a deep tree.
+        let dir = tempfile::tempdir().unwrap();
+        let source = dir.path().join("source");
+        let target = dir.path().join("target");
+
+        let mut relative = PathBuf::from("node_modules");
+        while source.join(&relative).as_os_str().len() < 320 {
+            relative.push("nested-dependency-directory");
+        }
+        std::fs::create_dir_all(source.join(&relative)).unwrap();
+        std::fs::create_dir_all(target.join(&relative)).unwrap();
+
+        let result = resolve_subdir_in_target(&target, Some(&source), &source.join(&relative));
+        assert_eq!(result, target.join(&relative));
     }
 
     #[test]

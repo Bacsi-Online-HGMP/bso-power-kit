@@ -2,7 +2,42 @@ import type { ITranscriptEntry } from '../types.js';
 
 const TIMESTAMP_LINE = /^(\d{2}:\d{2}:\d{2}\.\d{3})\s*-->\s*(\d{2}:\d{2}:\d{2}\.\d{3})/;
 const SPEAKER_TAG = /^<v\s+([^>]+)>(.*)<\/v>$/s;
-const HTML_TAGS = /<[^>]+>/g;
+// A tag only matches with its closing '>', so a single pass leaves an
+// unterminated `<script src=x` fully intact (CodeQL
+// js/incomplete-multi-character-sanitization). The second branch is what
+// removes it. It covers '<' ONLY: WebVTT requires a literal '<' in cue text to
+// be escaped as &lt;, so an unescaped one is always markup, but a literal '>'
+// is legal unescaped cue text — '>> SPEAKER:' is the standard caption
+// speaker-change marker, and '=>' / 'x > 3' are ordinary screencast prose.
+const MARKUP_OR_STRAY_LT = /<[^>]*>|</g;
+
+// The entities WebVTT allows in cue text. Decoded AFTER the strip, so an
+// author-escaped `&lt;script&gt;` survives as literal text instead of being
+// re-read as markup — and so text round-trips through transcriptToVtt(), which
+// escapes '&' and '<' on the way out.
+const CUE_ENTITIES = /&(amp|lt|gt|nbsp|lrm|rlm);/g;
+const ENTITY_VALUES: Record<string, string> = {
+  amp: '&',
+  lt: '<',
+  gt: '>',
+  nbsp: '\u00a0',
+  lrm: '\u200e',
+  rlm: '\u200f',
+};
+
+function stripCueMarkup(value: string): string {
+  // Strip to a fixed point: feeding the result back into the receiver is the
+  // shape CodeQL js/incomplete-multi-character-sanitization requires, since it
+  // flags any regex that can match `<script...>` regardless of the other
+  // alternation branches. The '<' branch is what actually removes an
+  // unterminated tag — the loop does not, and must not be relied on for it.
+  let previous: string;
+  do {
+    previous = value;
+    value = value.replace(MARKUP_OR_STRAY_LT, '');
+  } while (value !== previous);
+  return value.replace(CUE_ENTITIES, (_, name: string) => ENTITY_VALUES[name]);
+}
 const SEQUENCE_NUMBER = /^\d+$/;
 
 export function parseVtt(vttContent: string): ITranscriptEntry[] {
@@ -73,13 +108,17 @@ function buildEntry(
 
   const speakerMatch = joinedText.match(SPEAKER_TAG);
   if (speakerMatch) {
-    speaker = speakerMatch[1].trim();
+    // SPEAKER_TAG's `[^>]+` capture excludes '>' but not '<', so the speaker
+    // name can carry a `<script` of its own. It is public output too — it
+    // reaches the MCP/CLI JSON and is written back out by transcriptToVtt —
+    // so it goes through the same strip as the cue text.
+    speaker = stripCueMarkup(speakerMatch[1]).trim();
     text = speakerMatch[2].trim();
   } else {
     text = joinedText;
   }
 
-  text = text.replace(HTML_TAGS, '').trim();
+  text = stripCueMarkup(text).trim();
 
   const entry: ITranscriptEntry = {
     time: formatTimestamp(startTimestamp),

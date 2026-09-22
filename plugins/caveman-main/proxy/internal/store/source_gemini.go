@@ -89,6 +89,10 @@ func (s geminiSessionSource) scanSession(ref sessionRef, since time.Time, emit f
 		}
 		if typeName == "gemini" {
 			event.ContextTotal, event.ContextUsagePresent = geminiContextTotal(asMap(message["tokens"]))
+			// CacheUsagePresent is deliberately NOT set: Gemini reports cache
+			// reads but never cache writes, and telling the churn detector
+			// "zero writes" would be a fabricated observation.
+			event.InputFreshTokens, event.CacheReadInputTokens, event.OutputTokens, event.BillingUsagePresent = geminiBillingUsage(asMap(message["tokens"]))
 			event.UsageMessageID = firstString(message["id"])
 			event.Model = firstString(message["model"])
 			event.ProviderKey = "gemini"
@@ -96,6 +100,32 @@ func (s geminiSessionSource) scanSession(ref sessionRef, since time.Time, emit f
 		emit(event)
 	}
 	return false
+}
+
+// geminiBillingUsage normalizes Gemini CLI's INCLUSIVE prompt count the same
+// way codexBillingUsage does: `cached` is a subset of `input`, so fresh input
+// is the difference. `thoughts` bills at the output rate and is added to it;
+// `tool` is already counted inside input.
+func geminiBillingUsage(tokens map[string]any) (fresh, cached, output int, present bool) {
+	if len(tokens) == 0 {
+		return 0, 0, 0, false
+	}
+	_, hasInput := tokens["input"]
+	_, hasOutput := tokens["output"]
+	if !hasInput && !hasOutput {
+		return 0, 0, 0, false
+	}
+	input64 := int64FromAny(tokens["input"])
+	cached64 := int64FromAny(tokens["cached"])
+	out64, ok := checkedNonNegativeSum(int64FromAny(tokens["output"]), int64FromAny(tokens["thoughts"]))
+	if !ok || input64 < 0 || cached64 < 0 || cached64 > input64 {
+		return 0, 0, 0, false
+	}
+	fresh64 := input64 - cached64
+	if uint64(fresh64) > uint64(^uint(0)>>1) || uint64(cached64) > uint64(^uint(0)>>1) || uint64(out64) > uint64(^uint(0)>>1) {
+		return 0, 0, 0, false
+	}
+	return int(fresh64), int(cached64), int(out64), true
 }
 
 func geminiContextTotal(tokens map[string]any) (int, bool) {

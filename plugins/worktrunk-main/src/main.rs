@@ -4,7 +4,8 @@ use color_print::cformat;
 use std::process;
 use worktrunk::config::{set_config_overrides, set_config_path};
 use worktrunk::git::{
-    ErrorExt, Repository, WorktrunkError, current_or_recover, cwd_removed_hint, set_base_path,
+    ErrorExt, Repository, WorktrunkError, current_or_recover, cwd_removed_hint,
+    require_minimum_git, set_base_path,
 };
 use worktrunk::styling::{
     eprintln, error_message, format_with_gutter, hint_message, info_message, warning_message,
@@ -43,26 +44,27 @@ use commands::worktree::{PushKind, PushOutcome, PushResult, handle_no_ff_merge, 
 use commands::{
     HookCliArgs, MergeFlagOverrides, MergeOptions, RebaseResult, SquashResult, add_approvals,
     clear_approvals, flag_pair, handle_alias_dry_run, handle_alias_show, handle_cache_clear,
-    handle_cache_get, handle_claude_install, handle_claude_install_statusline,
-    handle_claude_uninstall, handle_codex_install, handle_codex_uninstall, handle_completions,
-    handle_config_create, handle_config_show, handle_config_update, handle_configure_shell,
-    handle_custom_command, handle_hints_clear, handle_hints_get, handle_hook_show, handle_init,
-    handle_list, handle_logs_list, handle_logs_profile, handle_merge, handle_opencode_install,
-    handle_opencode_uninstall, handle_promote, handle_rebase, handle_remove_command,
-    handle_show_theme, handle_squash, handle_state_clear, handle_state_clear_all, handle_state_get,
-    handle_state_set, handle_state_show, handle_switch_command, handle_unconfigure_shell,
-    handle_vars_clear, handle_vars_get, handle_vars_list, handle_vars_set, list_approvals,
-    run_hook, step_commit, step_copy_ignored, step_diff, step_eval, step_for_each, step_prune,
-    step_relocate, step_tether,
+    handle_cache_get, handle_claude_approve_enter_worktree, handle_claude_install,
+    handle_claude_install_statusline, handle_claude_uninstall, handle_codex_install,
+    handle_codex_uninstall, handle_completions, handle_config_create, handle_config_show,
+    handle_config_update, handle_configure_shell, handle_custom_command, handle_hints_clear,
+    handle_hints_get, handle_hook_show, handle_init, handle_list, handle_logs_list,
+    handle_logs_profile, handle_merge, handle_omp_install, handle_omp_uninstall,
+    handle_opencode_install, handle_opencode_uninstall, handle_pi_install, handle_pi_uninstall,
+    handle_promote, handle_rebase, handle_remove_command, handle_show_theme, handle_squash,
+    handle_state_clear, handle_state_clear_all, handle_state_get, handle_state_set,
+    handle_state_show, handle_switch_command, handle_unconfigure_shell, handle_vars_clear,
+    handle_vars_get, handle_vars_list, handle_vars_set, list_approvals, run_hook, step_commit,
+    step_copy_ignored, step_diff, step_eval, step_for_each, step_prune, step_relocate, step_tether,
 };
 
 use cli::{
     ApprovalsCommand, CacheAction, CiStatusAction, Cli, Commands, ConfigAliasCommand,
     ConfigCommand, ConfigPluginsClaudeCommand, ConfigPluginsCodexCommand, ConfigPluginsCommand,
-    ConfigPluginsOpencodeCommand, ConfigShellCommand, DefaultBranchAction, GlobalFormatFlag,
-    HintsAction, HookCommand, HookOptions, ListArgs, ListSubcommand, LogsAction, MarkerAction,
-    MergeArgs, PreviousBranchAction, StateCommand, StateWrite, StepCommand, SwitchFormat,
-    VarsAction,
+    ConfigPluginsOmpCommand, ConfigPluginsOpencodeCommand, ConfigPluginsPiCommand,
+    ConfigShellCommand, DefaultBranchAction, GlobalFormatFlag, HintsAction, HookCommand,
+    HookOptions, ListArgs, ListSubcommand, LogsAction, MarkerAction, MergeArgs,
+    PreviousBranchAction, StateCommand, StateWrite, StepCommand, SwitchFormat, VarsAction,
 };
 
 /// Render a clap error to stderr, appending a wt-specific nested-subcommand
@@ -235,9 +237,9 @@ fn handle_step_command(
             }
             // --show-prompt and --dry-run skip the squash and exit after preview output.
             if args.show_prompt {
-                commands::step_show_squash_prompt(args.target.as_deref())
+                commands::step_show_squash_prompt(args.target.as_deref(), args.stage)
             } else if args.dry_run {
-                commands::step_dry_run_squash(args.target.as_deref(), yes)
+                commands::step_dry_run_squash(args.target.as_deref(), args.stage, yes)
             } else {
                 // Approval is handled inside handle_squash (like step_commit).
                 let repo = Repository::current()?;
@@ -638,7 +640,7 @@ fn handle_config_command(action: ConfigCommand, yes: bool) -> anyhow::Result<()>
         ConfigCommand::Shell { action } => handle_config_shell_command(action, yes),
         ConfigCommand::Create { project } => handle_config_create(project),
         ConfigCommand::Show { full, format } => handle_config_show(full, format),
-        ConfigCommand::Update { print } => handle_config_update(yes, print),
+        ConfigCommand::Update { output } => handle_config_update(yes, output),
         ConfigCommand::Approvals { action } => match action {
             ApprovalsCommand::List { format } => list_approvals(format),
             ApprovalsCommand::Add { all } => add_approvals(all, yes),
@@ -659,14 +661,25 @@ fn handle_plugins_command(action: ConfigPluginsCommand, yes: bool) -> anyhow::Re
             ConfigPluginsClaudeCommand::Install => handle_claude_install(yes),
             ConfigPluginsClaudeCommand::Uninstall => handle_claude_uninstall(yes),
             ConfigPluginsClaudeCommand::InstallStatusline => handle_claude_install_statusline(yes),
+            ConfigPluginsClaudeCommand::ApproveEnterWorktree => {
+                handle_claude_approve_enter_worktree()
+            }
         },
         ConfigPluginsCommand::Codex { action } => match action {
             ConfigPluginsCodexCommand::Install => handle_codex_install(yes),
             ConfigPluginsCodexCommand::Uninstall => handle_codex_uninstall(yes),
         },
+        ConfigPluginsCommand::Omp { action } => match action {
+            ConfigPluginsOmpCommand::Install => handle_omp_install(yes),
+            ConfigPluginsOmpCommand::Uninstall => handle_omp_uninstall(yes),
+        },
         ConfigPluginsCommand::Opencode { action } => match action {
             ConfigPluginsOpencodeCommand::Install => handle_opencode_install(yes),
             ConfigPluginsOpencodeCommand::Uninstall => handle_opencode_uninstall(yes),
+        },
+        ConfigPluginsCommand::Pi { action } => match action {
+            ConfigPluginsPiCommand::Install => handle_pi_install(yes),
+            ConfigPluginsPiCommand::Uninstall => handle_pi_uninstall(yes),
         },
     }
 }
@@ -918,6 +931,17 @@ fn command_suppresses_warnings(command: Option<&Commands>) -> bool {
         }) => true,
         _ => false,
     }
+}
+
+/// Shell setup is Git-independent and may be evaluated or redirected during
+/// shell startup, so it remains available while the user upgrades Git.
+fn command_requires_supported_git(command: Option<&Commands>) -> bool {
+    !matches!(
+        command,
+        None | Some(Commands::Config {
+            action: ConfigCommand::Shell { .. },
+        })
+    )
 }
 
 fn dispatch_command(
@@ -1174,16 +1198,30 @@ fn main() {
         logging::init(verbose);
     }
 
-    // Fold the two cold-path rev-parses (`--git-common-dir` from
-    // `init_command_log`, the `prewarm_info` batch from `try_alias` →
-    // `project_config_path`) into one fork. Best-effort — failure leaves both
-    // on-demand callers unchanged.
-    Repository::prewarm();
-
     let command_line = std::env::args_os()
         .map(|arg| arg.to_string_lossy().into_owned())
         .collect::<Vec<_>>()
         .join(" ");
+    let git_version_result = std::thread::scope(|scope| {
+        let git_version_check = command_requires_supported_git(command.as_ref())
+            .then(|| scope.spawn(require_minimum_git));
+
+        // Fold the two cold-path rev-parses (`--git-common-dir` from
+        // `init_command_log`, the `prewarm_info` batch from `try_alias` →
+        // `project_config_path`) into one fork. Best-effort — failure leaves
+        // both on-demand callers unchanged. The independent version probe
+        // runs alongside it so the minimum-version gate adds no serial fork.
+        Repository::prewarm();
+
+        git_version_check.map(|check| match check.join() {
+            Ok(result) => result,
+            Err(panic) => std::panic::resume_unwind(panic),
+        })
+    });
+    if let Some(Err(error)) = git_version_result {
+        handle_command_failure(error, verbose, &command_line);
+    }
+
     {
         let _span = worktrunk::trace::Span::new("init_command_log");
         init_command_log(&command_line);

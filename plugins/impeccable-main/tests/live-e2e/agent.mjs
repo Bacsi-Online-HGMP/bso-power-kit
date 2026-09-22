@@ -26,9 +26,10 @@ import { readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { completionTypeForAcceptResult } from '../../skill/scripts/live/completion.mjs';
+import { engineEnv } from '../lib/engine-bin.mjs';
 
 const execFileP = promisify(execFile);
+const CARBONIZE_HMR_BOUNDARY_MS = 250;
 
 export const STEER_MARKER_ATTR = 'data-impeccable-steer';
 export const STEER_MARKER_VALUE = 'e2e';
@@ -1832,8 +1833,8 @@ function braceDelta(line) {
 
 /**
  * @param {object} opts
- * @param {string} opts.tmp        Project tmp dir (cwd for live-* scripts).
- * @param {string} opts.scriptsDir Path to the impeccable scripts dir.
+ * @param {string} opts.tmp        Project tmp dir (cwd for the live-* verbs).
+ * @param {string} opts.engineBin  Path to the impeccable engine binary.
  * @param {number} opts.port       live-server port.
  * @param {string} opts.token      live-server token.
  * @param {LiveAgent} opts.agent
@@ -1844,7 +1845,7 @@ function braceDelta(line) {
  */
 export async function runAgentLoop({
   tmp,
-  scriptsDir,
+  engineBin,
   port,
   token,
   agent,
@@ -1945,7 +1946,7 @@ export async function runAgentLoop({
           const insertTarget = insertTargetFromEvent(event);
           wrapInfo = await runInsert({
             tmp,
-            scriptsDir,
+            engineBin,
             id: event.id,
             count: event.count,
             ...insertTarget,
@@ -1965,7 +1966,7 @@ export async function runAgentLoop({
           const text = target.text ?? (event.element?.textContent || '').trim();
           wrapInfo = await runWrap({
             tmp,
-            scriptsDir,
+            engineBin,
             id: event.id,
             count: event.count,
             ...target,
@@ -2101,13 +2102,13 @@ export async function runAgentLoop({
           throw new Error('agent does not implement applyManualEdits');
         }
         log("Using source hints first; I'll only touch the hinted copy.");
-        const result = await agent.applyManualEdits(event, { tmp, scriptsDir });
+        const result = await agent.applyManualEdits(event, { tmp, engineBin });
         if (process.env.IMPECCABLE_E2E_DEBUG) {
           log(`manual_edit_apply result: ${JSON.stringify(result)}`);
         }
         await runPollReply({
           tmp,
-          scriptsDir,
+          engineBin,
           id: event.id,
           status: 'done',
           data: result,
@@ -2132,7 +2133,7 @@ export async function runAgentLoop({
         })).filter((item) => item.entryId);
         await runPollReply({
           tmp,
-          scriptsDir,
+          engineBin,
           id: event.id,
           status: 'done',
           data: {
@@ -2153,7 +2154,7 @@ export async function runAgentLoop({
       try {
         const acceptResult = await runAccept({
           tmp,
-          scriptsDir,
+          engineBin,
           id: event.id,
           variant: event.variantId,
           paramValues: event.paramValues,
@@ -2172,6 +2173,13 @@ export async function runAgentLoop({
             const post = await fs.readFile(path.join(tmp, acceptResult.file), 'utf-8');
             log(`--- post-accept (pre-carbonize) ---\n${post}`);
           }
+          // live-accept writes the intermediate carbonize tree, then a real
+          // agent reads its cleanup instructions before writing the final
+          // source. The deterministic agent otherwise collapses both writes
+          // into the same filesystem watcher tick, so Vite can observe the
+          // carbonize state but miss the clean state entirely. Preserve the
+          // real protocol boundary instead of relying on browser DOM cleanup.
+          await new Promise((resolve) => setTimeout(resolve, CARBONIZE_HMR_BOUNDARY_MS));
           await runCarbonizeCleanup({ tmp, file: acceptResult.file, sessionId: event.id, variant: event.variantId });
           log(`carbonize cleanup done on ${acceptResult.file}`);
         }
@@ -2192,7 +2200,7 @@ export async function runAgentLoop({
           signal,
         });
         if (completionType === 'agent_done' && acceptResult.handled === true && acceptResult.carbonize === true) {
-          await runLiveComplete({ tmp, scriptsDir, id: event.id });
+          await runLiveComplete({ tmp, engineBin, id: event.id });
           log(`completed carbonize session ${event.id}`);
         }
       } catch (err) {
@@ -2205,7 +2213,7 @@ export async function runAgentLoop({
     if (event.type === 'discard') {
       log(`discard id=${event.id}`);
       try {
-        const discardResult = await runAccept({ tmp, scriptsDir, id: event.id, discard: true, pageUrl: event.pageUrl });
+        const discardResult = await runAccept({ tmp, engineBin, id: event.id, discard: true, pageUrl: event.pageUrl });
         const completionType = completionTypeForAcceptResult('discard', discardResult);
         await fetch(`${base}/poll`, {
           method: 'POST',
@@ -2236,11 +2244,32 @@ export function isExpectedGenerationCancellation(error) {
   return /(?:^|\b)stale_generation_epoch(?:\b|$)/.test(String(error?.message || error || ''));
 }
 
-async function runPollReply({ tmp, scriptsDir, id, status, message, data }) {
-  const args = [path.join(scriptsDir, 'live-poll.mjs'), '--reply', id, status];
+async function runPollReply({ tmp, engineBin, id, status, message, data }) {
+  const args = ['--reply', id, status];
   if (data !== undefined) args.push('--data', JSON.stringify(data));
   if (message) args.push(message);
-  await execFileP(process.execPath, args, { cwd: tmp });
+  await runEngine(engineBin, 'live-poll', args, tmp);
+}
+
+/** Run one engine verb from `cwd`, the way an agent shell would. */
+async function runEngine(engineBin, verb, args, cwd) {
+  return execFileP(engineBin, [verb, ...args], { cwd, env: engineEnv(engineBin) });
+}
+
+// Mirrors the engine's completion typing for an accept/discard result (the
+// JS lived in skill/scripts/live/completion.mjs; the harness keeps a copy so
+// the fake agent replies with the same completion type a real one would).
+// A preview whose variants live in component modules leaves no markers in the
+// user's source, so a failed accept there is an error, not a manual handoff.
+const PREVIEW_MODES_WITHOUT_SOURCE_MARKERS = new Set(['svelte-component']);
+
+export function completionTypeForAcceptResult(eventType, acceptResult) {
+  if (eventType === 'discard') return acceptResult?.handled === true ? 'discarded' : 'error';
+  if (acceptResult?.handled === true && acceptResult?.carbonize === true) return 'agent_done';
+  if (acceptResult?.handled === true) return 'complete';
+  if (acceptResult?.mode === 'error') return 'error';
+  if (eventType === 'accept' && PREVIEW_MODES_WITHOUT_SOURCE_MARKERS.has(acceptResult?.previewMode)) return 'error';
+  return 'agent_done';
 }
 
 function formatManualApplyFiles(batch) {
@@ -2383,30 +2412,25 @@ function findSteerTargetFileSync(tmp, target) {
   return null;
 }
 
-async function runWrap({ tmp, scriptsDir, id, count, classes, tag, elementId, text, pageUrl }) {
-  const args = [path.join(scriptsDir, 'live-wrap.mjs'), '--id', id, '--count', String(count)];
+async function runWrap({ tmp, engineBin, id, count, classes, tag, elementId, text, pageUrl }) {
+  const args = ['--id', id, '--count', String(count)];
   if (elementId) args.push('--element-id', elementId);
   if (classes) args.push('--classes', classes);
   if (tag) args.push('--tag', tag);
   if (text) args.push('--text', text);
   if (pageUrl) args.push('--page-url', pageUrl);
-  const { stdout } = await execFileP(process.execPath, args, { cwd: tmp });
+  const { stdout } = await runEngine(engineBin, 'live-wrap', args, tmp);
   const last = stdout.trim().split('\n').filter(Boolean).pop();
   return JSON.parse(last);
 }
 
-async function runInsert({ tmp, scriptsDir, id, count, position, classes, tag, elementId, text }) {
-  const args = [
-    path.join(scriptsDir, 'live-insert.mjs'),
-    '--id', id,
-    '--count', String(count),
-    '--position', position,
-  ];
+async function runInsert({ tmp, engineBin, id, count, position, classes, tag, elementId, text }) {
+  const args = ['--id', id, '--count', String(count), '--position', position];
   if (elementId) args.push('--element-id', elementId);
   if (classes) args.push('--classes', classes);
   if (tag) args.push('--tag', tag);
   if (text) args.push('--text', text);
-  const { stdout } = await execFileP(process.execPath, args, { cwd: tmp });
+  const { stdout } = await runEngine(engineBin, 'live-insert', args, tmp);
   const last = stdout.trim().split('\n').filter(Boolean).pop();
   return JSON.parse(last);
 }
@@ -2455,7 +2479,12 @@ async function runCarbonizeCleanup({ tmp, file, sessionId /* , variant */ }) {
   // element is now dead weight.
   body = body.replace(/\s+data-impeccable-hoist-id="[^"]*"/g, '');
 
-  await fs.writeFile(filePath, body, 'utf-8');
+  // Publish the clean source atomically. A direct write briefly exposes a
+  // zero-byte file, which can make the harness (and Vite) observe cleanup as
+  // complete before the accepted source has actually landed.
+  const temporaryPath = `${filePath}.impeccable-carbonize-${sessionId}.tmp`;
+  await fs.writeFile(temporaryPath, body, 'utf-8');
+  await fs.rename(temporaryPath, filePath);
 }
 
 function unwrapDivAttributeWrapper(body, attrName, { expandSingleLineContainer = false } = {}) {
@@ -2567,17 +2596,17 @@ function escapeRegExp(value) {
   return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
-async function runAccept({ tmp, scriptsDir, id, variant, discard, paramValues, pageUrl }) {
-  const args = [path.join(scriptsDir, 'live-accept.mjs'), '--id', id];
+async function runAccept({ tmp, engineBin, id, variant, discard, paramValues, pageUrl }) {
+  const args = ['--id', id];
   if (discard) args.push('--discard');
   else args.push('--variant', String(variant));
   if (paramValues) args.push('--param-values', JSON.stringify(paramValues));
   if (pageUrl) args.push('--page-url', pageUrl);
-  const { stdout } = await execFileP(process.execPath, args, { cwd: tmp });
+  const { stdout } = await runEngine(engineBin, 'live-accept', args, tmp);
   const last = stdout.trim().split('\n').filter(Boolean).pop();
   return JSON.parse(last);
 }
 
-async function runLiveComplete({ tmp, scriptsDir, id }) {
-  await execFileP(process.execPath, [path.join(scriptsDir, 'live-complete.mjs'), '--id', id], { cwd: tmp });
+async function runLiveComplete({ tmp, engineBin, id }) {
+  await runEngine(engineBin, 'live-complete', ['--id', id], tmp);
 }

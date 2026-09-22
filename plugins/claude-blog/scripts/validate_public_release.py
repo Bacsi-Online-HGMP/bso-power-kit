@@ -16,7 +16,7 @@ import sys
 from pathlib import Path
 
 PUBLIC_REPOSITORY = "https://github.com/AgriciDaniel/claude-blog"
-PUBLIC_VERSION = "2.1.1"
+PUBLIC_VERSION = "2.2.0"
 PUBLIC_SLUG = "claude-blog@agricidaniel-blog"
 PUBLIC_OWNER = "AgriciDaniel"
 PUBLIC_OWNER_URL = "https://github.com/AgriciDaniel"
@@ -34,6 +34,9 @@ PUBLIC_PINNED_INSTALL_SH = (
 PUBLIC_DISCUSSIONS = f"{PUBLIC_REPOSITORY}/discussions"
 PUBLIC_SECURITY_ADVISORY = f"{PUBLIC_REPOSITORY}/security/advisories/new"
 PUBLIC_DOCUMENTATION = f"{PUBLIC_REPOSITORY}/tree/main/docs"
+SECURITY_CHECKOUT_RE = re.compile(
+    r"\bgit checkout v([0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?)\b"
+)
 SURFACES = (
     "README.md",
     "CLAUDE.md",
@@ -42,6 +45,7 @@ SURFACES = (
     ".claude-plugin/plugin.json",
     ".claude-plugin/marketplace.json",
     ".github/ISSUE_TEMPLATE/config.yml",
+    ".github/SECURITY.md",
     "install.sh",
     "install.ps1",
     "skills/blog/SKILL.md",
@@ -166,6 +170,18 @@ def validate(root: Path) -> dict:
                 )
 
     citation = contents.get("CITATION.cff", "")
+    security = contents.get(".github/SECURITY.md", "")
+    security_versions = sorted(set(SECURITY_CHECKOUT_RE.findall(security)))
+    if security_versions != [PUBLIC_VERSION]:
+        errors.append(
+            {
+                "kind": "invalid_public_security_version",
+                "file": ".github/SECURITY.md",
+                "expected": PUBLIC_VERSION,
+                "actual": security_versions,
+            }
+        )
+
     expected_citation_repository = f'repository-code: "{PUBLIC_REPOSITORY}"'
     if expected_citation_repository not in citation:
         errors.append(

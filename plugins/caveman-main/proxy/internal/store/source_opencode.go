@@ -84,11 +84,13 @@ func (s opencodeSessionSource) scanSession(ref sessionRef, since time.Time, emit
 			tokens := asMap(message.object["tokens"])
 			ctx, hasUsage := opencodeContextTotal(tokens)
 			cacheRead, cacheCreation, hasCacheUsage := opencodeCacheUsage(tokens)
+			fresh, out, hasBilling := opencodeBillingUsage(tokens)
 			emit(turnEvent{
 				Timestamp: ts, ContextTotal: ctx, ContextUsagePresent: hasUsage,
 				CacheReadInputTokens: cacheRead, CacheCreationInputTokens: cacheCreation,
 				CacheUsagePresent: hasCacheUsage,
-				UsageMessageID:    firstString(message.object["id"]), Model: firstString(message.object["modelID"]),
+				InputFreshTokens:  fresh, OutputTokens: out, BillingUsagePresent: hasBilling,
+				UsageMessageID: firstString(message.object["id"]), Model: firstString(message.object["modelID"]),
 				ProviderKey: firstString(message.object["providerID"]), RelPath: ref.relPath, Repo: repo,
 			})
 		}
@@ -262,6 +264,25 @@ func readOpenCodeObject(path string) (map[string]any, error) {
 	var object map[string]any
 	err = decoder.Decode(&object)
 	return object, err
+}
+
+// opencodeBillingUsage reads opencode's DISJOINT shape: tokens.input excludes
+// the cache buckets, so it is already the fresh-input figure.
+func opencodeBillingUsage(tokens map[string]any) (fresh, output int, present bool) {
+	if len(tokens) == 0 {
+		return 0, 0, false
+	}
+	_, hasInput := tokens["input"]
+	_, hasOutput := tokens["output"]
+	if !hasInput && !hasOutput {
+		return 0, 0, false
+	}
+	fresh64 := int64FromAny(tokens["input"])
+	out64 := int64FromAny(tokens["output"])
+	if fresh64 < 0 || out64 < 0 || uint64(fresh64) > uint64(^uint(0)>>1) || uint64(out64) > uint64(^uint(0)>>1) {
+		return 0, 0, false
+	}
+	return int(fresh64), int(out64), true
 }
 
 func opencodeContextTotal(tokens map[string]any) (int, bool) {

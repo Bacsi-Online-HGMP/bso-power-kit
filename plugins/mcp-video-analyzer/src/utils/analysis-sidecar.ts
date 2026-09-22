@@ -4,6 +4,7 @@ import { basename, dirname, extname, join } from 'node:path';
 import type { IAnalysisResult, ITranscriptEntry } from '../types.js';
 import { envFlag } from './env.js';
 import { toLocalPath } from './url-detector.js';
+import { warningReason } from './warnings.js';
 
 /**
  * Persistent, resumable analysis cache written *next to the source video* —
@@ -154,7 +155,7 @@ export async function writeAnalysisSidecars(
   result: IAnalysisResult,
   params: ResultDefiningParams,
   opts: { transcriptFromWhisper: boolean },
-): Promise<{ written: string[]; failed: boolean }> {
+): Promise<{ written: string[]; failed: boolean; reason?: string }> {
   if (!sidecarsEnabled()) return { written: [], failed: false };
 
   const videoPath = toLocalPath(url);
@@ -203,15 +204,29 @@ export async function writeAnalysisSidecars(
     // already on disk.
     if (opts.transcriptFromWhisper && result.transcript.length > 0) {
       const vtt = vttPath(videoPath);
-      if (!existsSync(vtt)) {
-        await writeFile(vtt, transcriptToVtt(result.transcript), 'utf8');
+      try {
+        // 'wx' = create-exclusive. An external transcription pipeline shares
+        // this directory with us by design (see the file header), so a .vtt can
+        // appear between a check and a write — let the filesystem decide, in one
+        // atomic step (CodeQL js/file-system-race).
+        await writeFile(vtt, transcriptToVtt(result.transcript), {
+          encoding: 'utf8',
+          flag: 'wx',
+        });
         written.push(vtt);
+      } catch (e) {
+        // A .vtt that already exists is the documented no-op, not a failed
+        // write; only a real error reaches the outer catch and sets failed.
+        if ((e as NodeJS.ErrnoException).code !== 'EEXIST') throw e;
       }
     }
-  } catch {
-    // A write failed partway. Report it so the caller can warn the user rather
-    // than claiming the run was checkpointed when the .analysis.json is missing.
-    return { written, failed: true };
+  } catch (e) {
+    // A write failed partway. Carry the reason out: collapsing ENOSPC, EACCES
+    // and EROFS into one boolean left the user with advice ("a re-run will
+    // recompute") that does not apply when the disk is full. `written` tells
+    // the caller how far we got — the .vtt is written last, so a failure there
+    // still leaves a valid .analysis.json on disk.
+    return { written, failed: true, reason: warningReason(e) };
   }
 
   return { written, failed: false };
@@ -237,6 +252,15 @@ function secondsToVtt(total: number): string {
 }
 
 /**
+ * WebVTT requires '&' and '<' to be escaped in cue text ('>' is legal raw).
+ * Without this the writer emits markup-looking text that parseVtt then strips,
+ * so a transcript containing '<' came back changed on the next sidecar read.
+ */
+function escapeCue(value: string): string {
+  return value.replaceAll('&', '&amp;').replaceAll('<', '&lt;');
+}
+
+/**
  * Serialize transcript entries to a minimal WEBVTT document. Cue end times use
  * the entry's `endTime` when present, otherwise the next entry's start (or +3s
  * for the last cue). Speakers are emitted as `<v Name>` so the existing VTT
@@ -252,7 +276,11 @@ export function transcriptToVtt(entries: ITranscriptEntry[]): string {
     const endSec = entry.endTime ? tsToSeconds(entry.endTime) : nextStart;
 
     lines.push(`${secondsToVtt(startSec)} --> ${secondsToVtt(Math.max(endSec, startSec + 1))}`);
-    lines.push(entry.speaker ? `<v ${entry.speaker}>${entry.text}</v>` : entry.text);
+    lines.push(
+      entry.speaker
+        ? `<v ${escapeCue(entry.speaker)}>${escapeCue(entry.text)}</v>`
+        : escapeCue(entry.text),
+    );
     lines.push('');
   }
 

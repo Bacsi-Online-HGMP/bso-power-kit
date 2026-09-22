@@ -2,6 +2,220 @@
 
 All notable changes to brooks-lint are documented here.
 
+## [1.7.0] - 2026-09-20
+
+Maintainer-facing only — the six skills, their guides, and everything the plugin
+installs are byte-for-byte identical to 1.6.0. This release hardens how *this
+repo* cuts releases, after 1.6.0 shipped with two changes missing from its
+changelog section and both were found only by auditing after publication.
+
+### Added
+
+- **`npm run changelog:audit` — account for every commit in the release range**
+  ([`scripts/changelog-audit.mjs`](scripts/changelog-audit.mjs)). It derives the
+  range from the last release tag (`v[0-9]*`), applies the only three exemptions
+  — the release bump, a merge commit whose branch commits are listed separately,
+  and the weekly star-history refresh — and prints the rest as a checklist to
+  walk. Each line gets an entry or a stated reason it needs none. Between
+  releases it frames the same range as the next release's backlog and exits 0,
+  so it is also how you check the *version number* against what is actually
+  unreleased before choosing it.
+
+  The star-history exemption is judged by the files a commit touched, not by its
+  subject: the paths come from `STAR_HISTORY_FILES`, exported by
+  `gen-star-history.mjs` so the chart generator and the exemption share one
+  definition. Matching on `[bot]` + `chore:` instead would have exempted a
+  `dependabot[bot]` `chore(deps): bump …` for free, and a dependency bump is a
+  change this changelog records.
+
+- **A release-time coverage gate inside `npm run validate`.** `checkChangelog()`
+  only ever proved the new version's section *exists*. `checkChangelogCoverage()`
+  now also fails on the one gap a machine can prove: a pull request merged in the
+  range whose `#N` the section never cites — matched as `#N` or a `/pull/N` link.
+
+  It runs **only while a release is in progress**, derived as "`package.json`'s
+  version has no `v<version>` tag yet" — so it is a no-op during normal work and
+  unskippable at the one moment it matters, with no flag to remember.
+  `validate.yml` checks out with `fetch-depth: 0` because the gate needs tags.
+
+- **A `Changelog:` git trailer** for a commit that lands without a version bump
+  and defers its entry to the next release. The audit surfaces it on the
+  checklist. A trailer rather than a sentence in the body, because prose cannot
+  tell a commit deferring its own entry from one quoting another that did — which
+  is how 1.6.0 lost `d4b5c40` despite it asking in plain English to be logged.
+
+- **`npm run validate` says what the gate did, on every run.** A stand-down
+  names its reason (`Changelog coverage: not audited — v1.6.0 is already
+  tagged.`); an audit names its range and its scope (`… audited 4 commits in
+  v1.6.0..HEAD — pull-request citations only; walk the rest with npm run
+  changelog:audit.`). Plain `npm version <v>` tags as it commits and a
+  remotely-deleted tag survives locally — either silently disables the audit for
+  a whole release, and an unannounced off-state reads exactly like a pass.
+
+  The audited half was missing until this release was cut: the gate printed
+  nothing on the one path that actually audits, and the test covering it had
+  only ever run against this repo while it was tagged, so it exercised the
+  stand-down branch and never the other one. Bumping to 1.7.0 put the repo in
+  enforce mode for the first time and the test failed on the spot.
+
+### Fixed
+
+- **The [1.6.0] section above now covers the two changes it had missed** —
+  `d4b5c40`'s platform-validation checks, and PR #25 from **[@2233admin](https://github.com/2233admin)**,
+  who went uncredited in a release that credited two other contributors. Both
+  were added after 1.6.0 was published.
+
+### Changed
+
+- **Cutting a release now requires walking the commit range, not sampling it.**
+  `CLAUDE.md`'s Release Process, the `release` skill, and the `release-manager`
+  agent all gained an explicit audit step between writing the changelog and
+  validating, and all three now state the rule the 1.6.0 misses came from:
+  nothing is exempt beyond the three listed exemptions — internal hardening with
+  no user-visible behavior change earns an entry, and so does an outside
+  contributor's maintainer-facing fix, who gets an `@handle` credit like anyone
+  else.
+
+- **The release process documents what a green audit does not prove.** Three
+  blind spots, by construction: a bare `#N` *anywhere* in the section clears the
+  gate (it proves the number was written, not that an entry was); a rebase-merged
+  PR leaves neither a `(#N)` subject nor a merge commit, so nothing is enforced
+  behind its checklist line; and whatever is staged into the release bump itself
+  is never audited by any release — land such fixes as their own commit before
+  bumping. Recorded in `CLAUDE.md`, the `release` skill, and the
+  `release-manager` agent.
+
+## [1.6.0] - 2026-09-20
+
+### Added
+
+- **OpenCode v2 lists all six modes in its `/` menu** (#31, #34) — every
+  `SKILL.md` frontmatter now carries `metadata.opencode/slash: "true"`, the opt-in
+  OpenCode v2 reads through
+  `metadataBoolean(frontmatter.metadata, "opencode/slash")` (`skill-file.ts:45`).
+  With it, `/brooks-review`, `/brooks-audit`, `/brooks-debt`, `/brooks-test`,
+  `/brooks-health` and `/brooks-sweep` appear in the `/` popup and run the skill
+  directly; without it a skill is reachable only through `/skills` or `@name`.
+
+  Slash-command wrappers are deliberately **not** shipped. PR #34 proposed six of
+  them under `commands/opencode/`, but on v2 a command that shares a skill's name
+  *shadows* it: the TUI's `/` popup skips skills already registered as commands
+  (`autocomplete.tsx:526`) and submit resolves `isCommand` before `isSkill`
+  (`index.tsx:1292`) — so the wrapper would hide the very skill it exists to
+  expose. The frontmatter opt-in is OpenCode's own supported path and adds no
+  files to install or keep in sync.
+
+  On OpenCode 1.x the flag is ignored, and 1.x is still what npm `latest`
+  installs (`opencode-ai` `dist-tags.latest` is on the 1.18.x line, with no
+  `latest-2` tag). There, use `/skills` → pick, or type `/brooks-review`
+  **followed by a space** — a bare `/brooks-review` plus Enter is swallowed by the
+  `/` popup. All six READMEs now scope the auto-register claim to **v2**, and
+  [`docs/opencode-setup.md`](docs/opencode-setup.md) is rewritten for v2 with the
+  1.x fallback and the shadowing caveat spelled out.
+
+  Thanks to **[@rapcal](https://github.com/rapcal)**, whose screenshots disproved
+  the maintainer's claim that a bare `/brooks-review` already worked on 1.x, and
+  whose pointer to the v2 docs found the flag this release uses instead.
+
+- **`npm run validate` now fails when a skill ships without the OpenCode opt-in**
+  — `checkOpencodeSlashFlag()` in `validate-repo.mjs` reads `skills/*/SKILL.md`
+  from disk (so an unregistered skill folder is caught too, and `_shared/` is
+  skipped by construction since it has no `SKILL.md`), backed by
+  `hasOpencodeSlashFlag()` in `frontmatter.mjs`, which parses the `metadata:`
+  block and accepts both `"true"` and YAML's bare `true`. No other platform reads
+  the flag, so nothing else would fail — this check is the only thing standing
+  between a seventh skill and a silently missing `/brooks-*` on OpenCode. Seven
+  unit tests cover it, and the authoring rule is recorded in `CLAUDE.md`,
+  `AGENTS.md` and `GEMINI.md` so all three agent-facing docs carry it.
+
+- **IBM Bob (`bob`) support** (#32, #33) — `./scripts/install.sh bob` installs
+  into `~/.bob/skills` (`--project` targets `./.bob/skills`); Bob also reads
+  `AGENTS.md`, so the Iron Law and Health Score rules load with it. New guide at
+  [`docs/bob-setup.md`](docs/bob-setup.md), linked and enumerated across all six
+  READMEs and `docs/getting-started.md`. Contributed by
+  [@asotobu](https://github.com/asotobu).
+
+- **Platform docs and installer mappings are cross-checked** — `scripts/platforms.mjs`
+  parses `install.sh` so both checks derive their inputs instead of restating them.
+  `checkPlatformDocs()` requires every `docs/<name>-setup.md` to be linked from all
+  six READMEs and `docs/getting-started.md`, and every setup link in those documents
+  to resolve to a guide that exists; `checkInstallerPlatforms()` requires `PLATFORMS`
+  and the `global_dir()` / `project_dir()` case tables to cover each other, so a
+  platform can no longer be listed without a path mapping (`install.sh <platform>`
+  would die with "unknown platform") or mapped without appearing in `--list`. Adding
+  dsh had meant hand-syncing nine places with nothing checking any of them. Verified
+  by mutation rather than by a green run: dropping the dsh link from `README.ko.md`
+  and `README.es.md`, and deleting the dsh arm from `project_dir()`, each produce the
+  specific expected failure.
+
+- **`api-base-url` input on the GitHub Action** — the Anthropic SDK already reads
+  `ANTHROPIC_BASE_URL`, so `ci-review.mjs` could target any Anthropic-compatible
+  `/v1/messages` endpoint; the Action was the one path with no way to set it. The
+  input is deliberately generic rather than naming a gateway — one vendor-neutral
+  knob covers self-hosted proxies, LLM gateways and regional mirrors, and keeps
+  vendor-specific model-id remapping out of the repo. It is exported only when
+  non-empty, so an `ANTHROPIC_BASE_URL` inherited from the job environment is not
+  blanked out by an unset input. Documented in all six READMEs and the workflow
+  example, including the note that the diff is sent to whatever host is named.
+
+### Fixed
+
+- **A platform could ship half-documented with a green build** — `checkPlatformDocs`
+  only required each `docs/<name>-setup.md` to be linked from all seven platform
+  documents. IBM Bob satisfied that on arrival and still shipped with its name
+  missing from the `<platform> = …` enumeration in five of the six READMEs, plus
+  stale "nine platforms" counts. Validation now also requires every `PLATFORMS`
+  entry to appear in each document's enumeration line — the one place worth
+  checking, because a bare mention elsewhere proves nothing (a table row's
+  `~/.bob/skills` already contains "bob"). Scoping to that line meant the six
+  READMEs had to stop omitting `claude`, which was an inconsistency rather than a
+  rule, so the check needs no exemption list.
+
+- **The CI reviewer silently produced an empty report against some endpoints** —
+  `message.content[0]` is only the report when the model returns text first. An
+  endpoint that emits a thinking block ahead of it — which the new `api-base-url`
+  input makes reachable — left the report empty and the Health Score `null` with
+  no error to show for it. Both scripts now take the first *text* block.
+
+- **The star-history chart is first-party and deterministic** — GitHub restricted
+  the stargazers API to a repository's own admins and collaborators (announced
+  2026-06-30), so the third-party chart endpoint rendered as a broken panel in all
+  six READMEs. The raw `starred_at` timestamps (no usernames) now live in
+  `assets/star-history.json` and `assets/star-history.svg` is a pure function of
+  them, re-rendered and compared by `npm run validate`, so a hand-edited SVG fails
+  the build. That rewrite also fixed a real defect: `render()` anchored the time
+  axis to `Date.now()`, so every x coordinate shifted on every run and the weekly
+  workflow's "commit only when the chart moved" guard could never skip. The axis
+  now ends at the newest star.
+
+### Changed
+
+- **`commands/` is Claude Code and Gemini only again** — the six short-form
+  wrappers there are untouched and still installed by the session-start hook; the
+  OpenCode copies PR #34 added, along with the `install.sh` and `platforms.mjs`
+  plumbing that carried them, are gone in favour of the frontmatter opt-in above.
+  `frontmatterBlock()` was extracted in `frontmatter.mjs` rather than repeating the
+  fence regex a third time.
+
+- **A `claude plugin eval` suite for brooks-review** — seven cases under `evals/`
+  (two real PRs, a two-file rule drift, two tradeoff/false-positive guards and two
+  should-not-fire negatives), each run with and without the plugin, plus four
+  pilot rounds recorded in `evals/PILOT-LOG.md` as the calibration baseline. This
+  is separate from the 57-scenario `evals/evals.json` suite and the frozen parser
+  benchmark; it measures the plugin end to end in Claude Code.
+
+- **The maintainer docs no longer understate what `npm run bump` rewrites** ([#25]) —
+  four spots in `CLAUDE.md` and the release skill still called it "the README badge",
+  singular, which is the exact assumption that let the localized badges and the docs
+  JSON-LD go stale; the release instructions separately named a single README to
+  stage, which would leave six modified files out of a release commit. Both now defer
+  to `git status` and to every version-bearing text file discovered from disk by
+  `scripts/version-refs.mjs`, phrased so a new translation or docs page needs no edit
+  here. Contributed by [@2233admin](https://github.com/2233admin), with a follow-up
+  sweep of the three spots that pass missed.
+
+[#25]: https://github.com/hyhmrright/brooks-lint/pull/25
+
 ## [1.5.0] - 2026-08-14
 
 ### Added

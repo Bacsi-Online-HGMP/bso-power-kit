@@ -52,8 +52,9 @@ print(f"✓ Wrote Bing + IndexNow env to {path}")
 PY
 
     echo
-    echo "Done. Verify your IndexNow key is published:"
-    echo "  claude-seo run indexnow_submit.py --host example.com \\"
+    echo "Done. Verify your IndexNow key is published (manual install path shown;"
+    echo "plugin installs use \"\${CLAUDE_PLUGIN_ROOT}/scripts/claude-seo\" instead):"
+    echo "  \"\$HOME/.claude/skills/seo/scripts/claude-seo\" run indexnow_submit.py --host example.com \\"
     echo "    --key \$INDEXNOW_KEY --key-location \$INDEXNOW_KEY_LOCATION --verify-only"
 }
 main "$@"

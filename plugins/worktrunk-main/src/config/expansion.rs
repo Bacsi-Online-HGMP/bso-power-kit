@@ -4,8 +4,6 @@
 //! [`ShellEscapeMode`] selecting how interpolated values are escaped:
 //! - `Posix` — POSIX single-quoting, for command lines fed to `Cmd::shell`
 //!   (`sh`/Git Bash): hooks, aliases.
-//! - `PowerShell` — PowerShell single-quoting, for the `--execute` payload
-//!   when the active directive shell is the PowerShell wrapper.
 //! - `Literal` — values substituted verbatim, for filesystem paths.
 //!
 //! All templates support Jinja2 syntax including filters, conditionals, and loops.
@@ -86,20 +84,6 @@ pub fn base_vars() -> Vec<&'static str> {
 /// `{{ args }}` renders as a space-joined, shell-escaped string while
 /// indexing, iteration, and `length` behave like a sequence.
 pub const ALIAS_ARGS_KEY: &str = "args";
-
-/// Deprecated template variable aliases (still valid for backward compatibility).
-///
-/// These map to current variables and are available in every scope:
-/// - `main_worktree` → `repo`
-/// - `repo_root` → `repo_path`
-/// - `worktree` → `worktree_path`
-/// - `main_worktree_path` → `primary_worktree_path`
-pub const DEPRECATED_TEMPLATE_VARS: &[&str] = &[
-    "main_worktree",
-    "repo_root",
-    "worktree",
-    "main_worktree_path",
-];
 
 /// Variables available in `wt list` custom-column templates (plus `vars.*`).
 ///
@@ -238,9 +222,9 @@ fn hook_extras(hook_type: HookType) -> &'static [&'static str] {
     use HookType::*;
     match hook_type {
         // Switch: source branch (`base`) and destination (`target`).
-        // `pr_number`/`pr_url` are populated for `post-switch` when creating
-        // via `pr:N` / `mr:N`; pre-switch fires before the PR/MR API call,
-        // so they're never set there but remain accepted for portability.
+        // `pr_number`/`pr_url` are populated whenever the switch was named by
+        // `pr:N` / `mr:N` — the forge answers before `pre-switch` runs, so
+        // both hooks see the same values.
         PreSwitch | PostSwitch => &[
             "base",
             "base_worktree_path",
@@ -277,9 +261,13 @@ const HOOK_INFRASTRUCTURE_VARS: &[&str] = &["hook_type", "hook_name"];
 
 /// All template variables available in a given scope.
 ///
-/// The returned list is [`base_vars`] + scope-specific extras + deprecated
-/// aliases. Used by [`validate_template`] to build the placeholder context
-/// and by error messages to list what the user could have typed.
+/// The returned list is [`base_vars`] + scope-specific extras. Used by
+/// [`validate_template`] to build the placeholder context and by error
+/// messages to list what the user could have typed. Retired names
+/// (`repo_root`, `worktree`, …) are absent: the deprecation layer renames them
+/// before serde parses the config, so a template reaching here carries only
+/// current names, and one typed on the command line gets the undefined-variable
+/// error with this list attached.
 pub fn vars_available_in(scope: ValidationScope) -> Vec<&'static str> {
     let mut vars: Vec<&'static str> = base_vars();
     match scope {
@@ -295,9 +283,14 @@ pub fn vars_available_in(scope: ValidationScope) -> Vec<&'static str> {
             vars.push(ALIAS_ARGS_KEY);
         }
     }
-    vars.extend(DEPRECATED_TEMPLATE_VARS);
     vars
 }
+
+/// Cheap vars `build_hook_context` computes regardless of [`VarScope`] but
+/// which can still come out absent, so their absence is `(unset)` — a fact
+/// about the worktree — rather than `(unused)`, which claims the scope gate
+/// skipped the work. `branch` is absent in a detached worktree.
+const ALWAYS_COMPUTED_VARS: &[&str] = &["branch"];
 
 /// Shared formatter for [`format_hook_variables`] and [`format_alias_variables`].
 ///
@@ -309,14 +302,18 @@ pub fn vars_available_in(scope: ValidationScope) -> Vec<&'static str> {
 /// When `referenced` is `Some`, vars absent from `ctx` *and* not in the set
 /// render as dim `(unused)` — `build_hook_context` only skips computation for
 /// expensive vars, so this fires precisely when the gate saved real work.
-/// Cheap vars are populated unconditionally and always show their value, even
-/// when the body doesn't reference them. `(unset)` is reserved for the
-/// distinct case of a referenced var the operation couldn't supply.
+/// Cheap vars are populated unconditionally, so they show their value even
+/// when the body doesn't reference them — though a cheap var can still come
+/// out absent. `(unset)` is reserved for the distinct case of a var the
+/// operation couldn't supply — including [`ALWAYS_COMPUTED_VARS`], the cheap
+/// vars that are computed whatever the scope but can still be genuinely
+/// absent.
 ///
-/// `(unset)` relies on an invariant in `build_hook_context`: optional vars
-/// are omitted from the map rather than inserted as empty strings. If a
-/// future caller starts inserting `""`, revisit the empty-vs-absent
-/// distinction here.
+/// `(unset)` relies on an invariant in `build_hook_context` that the
+/// `extra_vars` layered on top must hold too (see
+/// `PostRemoveContext::extra_vars`): optional vars are omitted from the map
+/// rather than inserted as empty strings. If a future caller starts inserting
+/// `""`, revisit the empty-vs-absent distinction here.
 fn format_variables_table(
     vars: &[&'static str],
     ctx: &TemplateContext,
@@ -326,7 +323,9 @@ fn format_variables_table(
     vars.iter()
         .map(|var| match ctx.get(var) {
             Some(value) => format!("{var:<max_name$} = {value}"),
-            None if !scope.wants(var) => cformat!("<dim>{var:<max_name$} = (unused)</>"),
+            None if !scope.wants(var) && !ALWAYS_COMPUTED_VARS.contains(var) => {
+                cformat!("<dim>{var:<max_name$} = (unused)</>")
+            }
             None => format!("{var:<max_name$} = (unset)"),
         })
         .collect::<Vec<_>>()
@@ -429,7 +428,7 @@ pub fn alias_context_filter(mut referenced: BTreeSet<String>) -> BTreeSet<String
 ///
 /// `args` exists only in alias scope, whose bodies always run through
 /// `Cmd::shell` (POSIX) — so this rendering is unconditionally POSIX,
-/// independent of the active directive shell.
+/// independent of the user's interactive shell.
 #[derive(Debug)]
 struct ShellArgs(Vec<String>);
 
@@ -1068,13 +1067,10 @@ pub fn validate_template(
 /// * `template` - Template string using Jinja2 syntax (e.g., `{{ branch }}`)
 /// * `vars` - Variables to substitute
 /// * `escape_mode` - How to escape interpolated values:
-///   - [`ShellEscapeMode::Posix`] / [`ShellEscapeMode::PowerShell`] — escape
-///     for safe splicing into a command line of that shell. Callers that feed
-///     the result to `Cmd::shell` (hooks, aliases) always pass `Posix`; only
-///     the `--execute` payload, parsed by the active directive shell, may pass
-///     `PowerShell`.
+///   - [`ShellEscapeMode::Posix`] — escape for safe splicing into a command
+///     line passed to `Cmd::shell` (hooks and aliases).
 ///   - [`ShellEscapeMode::Literal`] — substitute values verbatim (filesystem
-///     paths).
+///     paths and `--execute` argv elements).
 /// * `repo` - Repository for looking up worktree paths
 ///
 /// # Filters
@@ -1190,8 +1186,8 @@ pub fn expand_template_with(
         .map_err(|e| build_template_error(&e, template, name, Vec::new()))?;
 
     // Inject vars data as a nested object: {{ vars.env }}, {{ vars["env"] }},
-    // {{ vars.config.port }}. When branch is present, always inject (even if
-    // empty map) so {{ vars.key | default(...) }} works in SemiStrict mode.
+    // {{ vars.config.port }}. Always inject (even as an empty map) so
+    // {{ vars.key | default(...) }} works in SemiStrict mode.
     // Only look up vars data if the parsed template references the top-level
     // `vars` object (avoids a git process spawn per expansion while supporting
     // every MiniJinja access form without false positives from literal text).
@@ -1206,12 +1202,18 @@ pub fn expand_template_with(
                 );
             }
             VarsMode::Resolve => {
-                if let Some(branch) = vars.get("branch") {
-                    context.insert(
-                        "vars".to_string(),
-                        vars_map_to_value(&repo.vars_entries(branch)),
-                    );
-                }
+                // A detached worktree leaves `branch` unset, and per-branch
+                // vars are keyed by branch — so there are none. Insert the
+                // empty map rather than nothing, so `{{ vars.key |
+                // default(…) }}` still renders under SemiStrict instead of
+                // erroring on an undefined `vars` (same reason
+                // `list::custom_columns` injects an empty map for a
+                // branchless row).
+                let entries = vars
+                    .get("branch")
+                    .map(|branch| repo.vars_entries(branch))
+                    .unwrap_or_default();
+                context.insert("vars".to_string(), vars_map_to_value(&entries));
             }
         }
     }
@@ -2739,17 +2741,20 @@ mod tests {
         let test = test_repo();
         let vars = HashMap::new(); // No branch var
 
-        // vars should be undefined (no branch to look up)
+        // A detached worktree leaves `branch` unset, and per-branch vars are
+        // keyed by branch — so there are none. `vars` is still the empty map
+        // rather than undefined, so `default` fires on the missing key instead
+        // of erroring on the missing object under SemiStrict.
         assert_eq!(
             expand_template(
-                "{{ vars | default('none') }}",
+                "{{ vars.env | default('dev') }}",
                 &vars,
                 ShellEscapeMode::Literal,
                 &test.repo,
                 "test"
             )
             .unwrap(),
-            "none"
+            "dev"
         );
     }
 
@@ -2960,8 +2965,10 @@ mod tests {
             .is_ok()
         );
 
-        // Deprecated vars still valid in every scope
-        assert!(validate_template("{{ main_worktree }}", hook, &test.repo, "test").is_ok());
+        // Retired names resolve nowhere: the deprecation layer renames them
+        // before serde parses, so one reaching validation was typed on the
+        // command line and gets the undefined-variable error.
+        assert!(validate_template("{{ main_worktree }}", hook, &test.repo, "test").is_err());
 
         // `args` validates in both Hook and Alias scopes.
         assert!(validate_template("echo {{ args }}", hook, &test.repo, "test").is_ok());

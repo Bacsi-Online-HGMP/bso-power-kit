@@ -27,7 +27,7 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/version-1.5.0-blue.svg" alt="Version">
+  <img src="https://img.shields.io/badge/version-1.7.0-blue.svg" alt="Version">
   <img src="https://img.shields.io/badge/license-MIT-green.svg" alt="MIT License">
   <img src="https://img.shields.io/badge/Claude_Code-Plugin-blueviolet.svg" alt="Claude Code Plugin">
   <img src="https://img.shields.io/badge/Codex_CLI-Skill-orange.svg" alt="Codex CLI Skill">
@@ -69,14 +69,14 @@
 /plugin marketplace add hyhmrright/brooks-lint
 /plugin install brooks-lint@brooks-lint-marketplace
 
-# 其他任意 Agent Skills 平台 —— Cursor · Codex · Gemini · Copilot · Windsurf · OpenCode · Kiro · …
+# 其他任意 Agent Skills 平台 —— Cursor · Codex · Gemini · Copilot · Windsurf · OpenCode · Kiro · Bob …
 curl -fsSL https://raw.githubusercontent.com/hyhmrright/brooks-lint/main/scripts/install.sh | bash -s -- <平台>
 ```
 
 装好后直接开口（"审查这个 PR""审计架构"），或运行六个命令之一——`/brooks-review`、`/brooks-audit`、
 `/brooks-debt`、`/brooks-test`、`/brooks-health`、`/brooks-sweep`（[各自的作用](#斜杠命令)）。
 
-每条诊断都以 **症状 → 根源 → 后果 → 对策** 返回，附书目出处和 0–100 健康分。完整安装方式（另外 9 个
+每条诊断都以 **症状 → 根源 → 后果 → 对策** 返回，附书目出处和 0–100 健康分。完整安装方式（另外 10 个
 平台）和 CI/CD 配置见[下文](#安装)。
 
 ## 十二本书
@@ -270,7 +270,7 @@ Install the brooks-lint skill from hyhmrright/brooks-lint       # 在 Codex 会�
 
 或使用下面的安装器：`./scripts/install.sh gemini` / `./scripts/install.sh codex`。
 
-### 其它所有平台——OpenCode · Cursor · Windsurf · Antigravity · pi · Copilot · Kiro · Factory Droid · DeepSeek Harness
+### 其它所有平台——OpenCode · Cursor · Windsurf · Antigravity · pi · Copilot · Kiro · Factory Droid · DeepSeek Harness · IBM Bob
 
 brooks-lint 以标准 [Agent Skills](https://agentskills.io) 形式分发。**任何加载 Agent Skills 的 agent
 都能无需任何转换运行全部六种模式**——一条命令即可安装：
@@ -278,7 +278,7 @@ brooks-lint 以标准 [Agent Skills](https://agentskills.io) 形式分发。**�
 ```bash
 # 选择你的平台；加 --project 装进当前仓库而非全局配置
 curl -fsSL https://raw.githubusercontent.com/hyhmrright/brooks-lint/main/scripts/install.sh | bash -s -- <平台>
-#   <平台> = opencode · cursor · windsurf · antigravity · pi · kiro · copilot · droid · dsh · gemini · codex · agents
+#   <平台> = opencode · cursor · windsurf · antigravity · pi · kiro · copilot · droid · dsh · gemini · codex · claude · bob · agents
 ```
 
 安装器会把技能**扁平**拷进该平台对应的文件夹，让共享框架（`../_shared/`）始终正确解析——你不可能装错布局。
@@ -295,11 +295,12 @@ curl -fsSL https://raw.githubusercontent.com/hyhmrright/brooks-lint/main/scripts
 | Kiro（AWS） | `~/.kiro/skills` | `AGENTS.md` | [配置](docs/kiro-setup.md) |
 | Factory Droid | `~/.factory/skills` | `AGENTS.md` | [配置](docs/factory-droid-setup.md) |
 | DeepSeek Harness（`dsh`） | `~/.dsh/skills` | `~/.agents/skills`、`AGENTS.md` | [配置](docs/dsh-setup.md) |
+| IBM Bob（`bob`） | `~/.bob/skills` | `AGENTS.md` | [配置](docs/bob-setup.md) |
 
-Kiro、Factory Droid 与 DeepSeek Harness 还会自动注册 `/brooks-review`。不熟悉 skills、或用的是上面
-没列出的 agent？见 **[docs/getting-started.md](docs/getting-started.md)**。
+OpenCode v2、Kiro、Factory Droid 与 DeepSeek Harness 还会自动注册 `/brooks-review`。不熟悉 skills、
+或用的是上面没列出的 agent？见 **[docs/getting-started.md](docs/getting-started.md)**。
 
-> **🧪 验证状态。** Claude Code、Gemini CLI、Codex CLI 已由维护者验证。上面九个平台依据各工具官方技能规范编写，
+> **🧪 验证状态。** Claude Code、Gemini CLI、Codex CLI 已由维护者验证。上面十个平台依据各工具官方技能规范编写，
 > 并已在文件布局层面验证（安装器经过测试），但维护者尚未在每个平台端到端实跑。在某平台试过了——无论成功**还是**失败？
 > 请[提一个 issue](https://github.com/hyhmrright/brooks-lint/issues/new)，附上平台、版本和你看到的结果。
 > 用的是其它兼容 Agent Skills 的 agent？它几乎肯定以同样方式工作——告诉我们，我们会补上。
@@ -316,8 +317,8 @@ Kiro、Factory Droid 与 DeepSeek Harness 还会自动注册 `/brooks-review`。
 | `/brooks-sweep` | 一次性扫描 R1–R6、T1–T6 与架构，然后施加修复：安全改动自动应用，跨文件改动需确认，架构决策标记为人工处理项。输出修复日志与健康分变化。 |
 
 **各平台语法。** Claude Code 也接受带命名空间的完整形式 `/brooks-lint:brooks-review`——短命令由
-session-start 钩子在首次会话启动时自动安装。Codex CLI 用 `$brooks-review`。Gemini CLI 直接用上表。
-OpenCode、Cursor、Antigravity、pi、DeepSeek Harness 依据每个技能的 `description` 自动调用 Agent
+session-start 钩子在首次会话启动时自动安装。Codex CLI 用 `$brooks-review`。Gemini CLI 与 OpenCode v2
+直接用上表。Cursor、Antigravity、pi、DeepSeek Harness 依据每个技能的 `description` 自动调用 Agent
 Skills，直接提问即可（"审查这个 PR"、"我们最糟的技术债在哪"）；需要显式调用时用各平台自己的语法
 （pi 把每个技能注册为 `/skill:brooks-review`；dsh 直接用上表，可从 `/` 菜单选或手打）。在所有平台上，
 当你讨论代码质量、架构或测试健康时，这些技能也会自动触发。
@@ -439,6 +440,18 @@ jobs:
 
 `fail-on-regression` 读取 `.brooks-lint-history.json`，因此提交该文件即可强制"无新增回归"。设置 `sarif-file` 会让诊断直接显示在 PR 的 **Files changed** 标签页，并需要 job 具备 `security-events: write` 权限。
 
+**自定义 API 端点。** `api-base-url` 让 action 改为调用任意 Anthropic 兼容的 `/v1/messages` 端点 —— 自建代理、LLM 网关或区域镜像 —— 而不是 `api.anthropic.com`。把该端点的密钥作为 `anthropic-api-key` 传入，把它期望的模型 id 作为 `model` 传入：
+
+```yaml
+        with:
+          mode: review
+          api-base-url: https://your-gateway.example.com
+          anthropic-api-key: ${{ secrets.GATEWAY_API_KEY }}
+          model: gateway-model-id
+```
+
+brooks-lint 会把你的 diff 发送到这里填写的主机，因此只应指向你信任其接触源码的一方。自己运行 `scripts/ci-review.mjs` 完全不需要参数 —— Anthropic SDK 会直接读取 `ANTHROPIC_BASE_URL`。
+
 **成本：** 每次 PR 运行约 $0.05–0.15，取决于 diff 大小和模型。建议仅在 `pull_request` 事件上运行。
 
 ## 路线图
@@ -474,7 +487,7 @@ MIT License——详见 [LICENSE](LICENSE)。
 
 ## Star 历史
 
-[![Star History Chart](https://api.star-history.com/svg?repos=hyhmrright/brooks-lint&type=Date)](https://star-history.com/#hyhmrright/brooks-lint&Date)
+[![Star History](assets/star-history.svg)](https://github.com/hyhmrright/brooks-lint/stargazers)
 
 ---
 

@@ -6,11 +6,9 @@
 //! sized like rayon's ([`RemovalJob`]). Checks and hook-free removals hold
 //! the read side of [`RemovalContext::check_lock`] and run concurrently; the
 //! exceptional removals serialize on the write side
-//! ([`removal_needs_write`]). A second lock, [`RemovalContext::registry_lock`],
-//! serializes worktree-registry teardowns (`git worktree remove`) against each
-//! other and against concurrent registry reads ([`removal_mutates_registry`]) —
-//! a git-level TOCTOU on `.git/worktrees/` that the two-locks split keeps out
-//! of the integration-check fan-out's way (issue #3661). One FIFO queue carrying
+//! ([`removal_needs_write`]). Repository operations coordinate the narrower
+//! Git worktree-registry reads and teardowns themselves, so status checks,
+//! fsmonitor shutdown, and trash renames still overlap. One FIFO queue carrying
 //! both removals and skip lines means a single worker (`RAYON_NUM_THREADS=1`)
 //! reproduces the serial total order the deterministic-output tests pin. The
 //! first failing removal
@@ -18,7 +16,7 @@
 //! current worktree is removed last, after the fan-out, because its removal
 //! cd's the shell to the primary.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::RwLock;
@@ -255,25 +253,6 @@ struct RemovalContext<'a> {
     /// unreachable here because the chain captures the snapshot immediately
     /// before consulting it.)
     check_lock: &'a RwLock<()>,
-    /// Serializes access to the worktree registry (`.git/worktrees/`),
-    /// independently of `check_lock`.
-    ///
-    /// `git worktree remove` enumerates *every* sibling entry and reads each
-    /// one's `commondir` while resolving its target, so two overlapping
-    /// teardowns — or a teardown overlapping a branch delete's
-    /// `list_worktrees` checkout probe — can read an entry another worker is
-    /// mid-way through deleting and fail (`failed to read …/commondir` /
-    /// `Invalid path …/.git/worktrees/<id>`). That is a genuine git-level
-    /// TOCTOU, not a wt bug (issue #3661). A removal that unregisters an entry
-    /// ([`removal_mutates_registry`]) holds the write side; a removal that only
-    /// reads the registry holds the read side, so those still run concurrently.
-    ///
-    /// Kept distinct from `check_lock` on purpose: the integration-check
-    /// fan-out never enumerates the registry live (it plans off the cached
-    /// `list_worktrees` snapshot), so it must keep overlapping removals rather
-    /// than serialize behind them. Removals acquire `check_lock` first, then
-    /// `registry_lock`, so the two never deadlock.
-    registry_lock: &'a RwLock<()>,
 }
 
 /// Which removals must hold the write side of [`RemovalContext::check_lock`]
@@ -297,15 +276,8 @@ struct RemovalContext<'a> {
 /// a hook body nor a spinner, whatever selected it. `StaleDetached` never
 /// reaches here — [`try_remove`] prunes its entry and returns.
 ///
-/// Everything else fans out on the read side, including both mutations that
-/// unregister stale worktree metadata: `StaleDetached`'s prune, and the one a
-/// `BranchOnly` plan carries as `prune_entry`. Naming one entry bounds what
-/// each *deletes* but not what `git worktree remove` *reads* (it enumerates
-/// every sibling), so those teardowns are not safe to overlap — that is
-/// [`RemovalContext::registry_lock`]'s job, orthogonal to `check_lock`: they
-/// take its write side via [`removal_mutates_registry`] and so serialize
-/// against each other and against the scan's registry reads. See the
-/// concurrency section on
+/// Everything else fans out on the read side. The Git worktree-registry calls
+/// inside those removals take their own repository-scoped lock; see
 /// [`prune_worktree_entry`](Repository::prune_worktree_entry).
 fn removal_needs_write(kind: CandidateKind, plan: &RemovalPlan, ctx: &RemovalContext<'_>) -> bool {
     if matches!(kind, CandidateKind::Current) {
@@ -321,25 +293,6 @@ fn removal_needs_write(kind: CandidateKind, plan: &RemovalPlan, ctx: &RemovalCon
                     .has_hooks_for(worktree_path, &[HookType::PreRemove, HookType::PostRemove])
         }
         RemovalPlan::BranchOnly { .. } => false,
-    }
-}
-
-/// Whether a removal's execution unregisters a worktree entry — a `git worktree
-/// remove` teardown, which enumerates every sibling's `commondir` and so must
-/// hold the write side of [`RemovalContext::registry_lock`].
-///
-/// A `Worktree` plan always tears down (either the rename fast path's scoped
-/// prune or the direct `git worktree remove` fallback); a `BranchOnly` plan
-/// tears down only when it carries a stale `prune_entry`. A plain `BranchOnly`
-/// deletion touches the registry just to read it (`list_worktrees`, to refuse
-/// deleting a still-checked-out branch) and then deletes the ref with a CAS
-/// `update-ref -d` that never reads the registry, so it takes the read side and
-/// keeps running concurrently with its peers. `StaleDetached` never reaches
-/// here — [`try_remove`] prunes its entry directly under the write side.
-fn removal_mutates_registry(plan: &RemovalPlan) -> bool {
-    match plan {
-        RemovalPlan::Worktree { .. } => true,
-        RemovalPlan::BranchOnly { prune_entry, .. } => prune_entry.is_some(),
     }
 }
 
@@ -366,11 +319,6 @@ fn try_remove(
         // Output side: no exclusive output here (no spinner, no hook stream),
         // so join the parallel read side of `check_lock`.
         let _read = ctx.check_lock.read().unwrap_or_else(|e| e.into_inner());
-        // Registry side: `git worktree remove` on this stale entry is a
-        // teardown that enumerates every sibling's `commondir`, so hold the
-        // write side of `registry_lock` — no concurrent teardown or registry
-        // read may overlap it (issue #3661).
-        let _registry = ctx.registry_lock.write().unwrap_or_else(|e| e.into_inner());
         // Name the stale entry rather than sweeping the repository, so a
         // sibling whose directory is merely absent right now (unmounted
         // volume, half-finished `mv`) keeps its registration. `gather_check_items`
@@ -403,24 +351,6 @@ fn try_remove(
             None,
         )
     };
-    // Registry side, acquired *after* `check_lock` (fixed order → no deadlock).
-    // A removal that unregisters a worktree entry (`git worktree remove`) takes
-    // the write side so it can't overlap another teardown's `commondir` read or
-    // a branch delete's `list_worktrees` probe; one that only reads the registry
-    // takes the read side and keeps running concurrently. See `registry_lock`'s
-    // spec and `removal_mutates_registry` (issue #3661).
-    let (_registry_read, _registry_write) = if removal_mutates_registry(&plan) {
-        (
-            None,
-            Some(ctx.registry_lock.write().unwrap_or_else(|e| e.into_inner())),
-        )
-    } else {
-        (
-            Some(ctx.registry_lock.read().unwrap_or_else(|e| e.into_inner())),
-            None,
-        )
-    };
-
     let mut announcer = HookAnnouncer::new(ctx.repo, true);
     // `SynchronousForNonCurrent`: a rename-failure fallback completes inline,
     // so the candidate counts as removed only once the worktree and branch
@@ -502,6 +432,7 @@ fn check_one(
     worktrees: &[WorktreeInfo],
     current_path: &Path,
     min_age_duration: Duration,
+    ref_write_times: &RefWriteTimes,
     now_secs: u64,
 ) -> anyhow::Result<CheckOutcome> {
     let _span = Span::new(format!("prune-check:{}", item.integration_ref));
@@ -562,7 +493,12 @@ fn check_one(
     let age = if min_age_duration > Duration::ZERO {
         match &item.source {
             CheckSource::Linked { wt_idx } => worktree_age(repo, &worktrees[*wt_idx], now_secs)?,
-            CheckSource::Orphan => orphan_branch_age(repo, &item.integration_ref, now_secs),
+            CheckSource::Orphan => Some(orphan_branch_age(
+                repo,
+                &item.integration_ref,
+                ref_write_times,
+                now_secs,
+            )?),
             CheckSource::Prunable { .. } => None,
         }
     } else {
@@ -758,21 +694,135 @@ fn worktree_age(
     )))
 }
 
-/// Resolve the age of an orphan branch via its reflog creation timestamp.
+/// Resolve the age of an orphan branch from when its oldest reflog entry was
+/// written.
 ///
-/// Returns `None` if the reflog is missing or unparsable — callers treat
-/// "unknown age" as "old enough", matching the previous inline behavior.
-fn orphan_branch_age(repo: &Repository, branch: &str, now_secs: u64) -> Option<Duration> {
+/// That is the entry's own timestamp, not the committer date of the commit it
+/// points at: `git branch <name> main` on a days-old tip creates a new branch,
+/// and aging it by the commit would prune it before the guard saw it as young.
+/// `--date=unix` renders each entry's selector as `<name>@{<epoch>}`, and git
+/// forbids `@{` inside a ref name, so the last `@{` opens the timestamp.
+///
+/// A branch with no reflog entries is aged by [`RefWriteTimes`] instead.
+/// `core.logAllRefUpdates` defaults to whether the repository is bare as seen
+/// from where git runs, so in a bare repository only a ref written from inside
+/// a linked worktree gets a reflog: `git clone --bare`, a `git fetch` into
+/// `refs/heads/*`, and `wt switch --create` run from the bare directory all
+/// leave none. Expiry (`git gc`) can also empty a reflog.
+fn orphan_branch_age(
+    repo: &Repository,
+    branch: &str,
+    ref_write_times: &RefWriteTimes,
+    now_secs: u64,
+) -> anyhow::Result<Duration> {
     let ref_name = format!("refs/heads/{branch}");
-    let stdout = repo
-        .run_command(&["reflog", "show", "--format=%ct", &ref_name])
-        .ok()?;
-    let created_epoch = stdout
-        .trim()
-        .lines()
-        .last()
-        .and_then(|s| s.parse::<u64>().ok())?;
-    Some(Duration::from_secs(now_secs.saturating_sub(created_epoch)))
+    let stdout = repo.run_command(&[
+        "reflog",
+        "show",
+        "--no-show-signature",
+        "--date=unix",
+        "--format=%gd",
+        &ref_name,
+        "--",
+    ])?;
+    let created_epoch = match stdout.trim().lines().last() {
+        Some(selector) => selector
+            .rsplit_once("@{")
+            .and_then(|(_, epoch)| epoch.strip_suffix('}'))
+            .and_then(|epoch| epoch.parse::<u64>().ok())
+            .with_context(|| format!("parsing reflog selector {selector:?}"))?,
+        None => ref_write_times.epoch(branch)?,
+    };
+    Ok(Duration::from_secs(now_secs.saturating_sub(created_epoch)))
+}
+
+/// When git last wrote the storage holding each orphan branch's ref, read
+/// once before the scan fans out.
+///
+/// Git replaces ref storage by renaming a new file into place, so a file's
+/// mtime is its last write, and the branch it holds existed by then. An age
+/// measured from it is never older than the branch, so the guard errs toward
+/// keeping it. Which file holds the ref depends on the backend:
+///
+/// - **files** (the default): a loose `refs/heads/<branch>` shadows
+///   `packed-refs`. Creating or updating a ref writes it loose, including from
+///   `git fetch`, while `git clone` writes `packed-refs`. `git pack-refs` (run
+///   by `git gc`) and deleting any packed ref rewrite `packed-refs` whole,
+///   which makes every packed branch young again and delays its pruning by up
+///   to `--min-age`.
+/// - **reftable**: tables hold many refs, and every ref update rewrites
+///   `reftable/tables.list`, so a branch counts as no older than the
+///   repository's last ref update.
+///
+/// Prune's own removals are among those rewrites, and they run while the scan
+/// is still checking later candidates, so the times are captured before any
+/// removal starts. The loose refs are read before the shared file: a
+/// concurrent `git pack-refs` that packs a loose ref in between leaves that
+/// branch dated by the rewritten `packed-refs`, never by an older one.
+struct RefWriteTimes {
+    /// Loose `refs/heads/<branch>` mtimes, for the orphan branches that have one.
+    loose: HashMap<String, u64>,
+    /// The `packed-refs` or `reftable/tables.list` mtime, if the file exists.
+    shared: Option<u64>,
+}
+
+impl RefWriteTimes {
+    fn capture(repo: &Repository, check_items: &[CheckItem]) -> anyhow::Result<Self> {
+        let reftable = repo.config_value("extensions.refStorage")?.as_deref() == Some("reftable");
+        let orphans = check_items
+            .iter()
+            .filter(|item| matches!(item.source, CheckSource::Orphan))
+            .map(|item| item.integration_ref.as_str());
+        Self::read(repo.git_common_dir(), reftable, orphans)
+    }
+
+    /// Read the times for `branches` from a git common directory whose refs
+    /// use the reftable backend if `reftable`, else the files backend.
+    fn read<'a>(
+        common_dir: &Path,
+        reftable: bool,
+        branches: impl IntoIterator<Item = &'a str>,
+    ) -> anyhow::Result<Self> {
+        let mut loose = HashMap::new();
+        if !reftable {
+            for branch in branches {
+                if let Some(epoch) = mtime_epoch(&common_dir.join("refs/heads").join(branch))? {
+                    loose.insert(branch.to_string(), epoch);
+                }
+            }
+        }
+        let shared = if reftable {
+            common_dir.join("reftable").join("tables.list")
+        } else {
+            common_dir.join("packed-refs")
+        };
+        Ok(Self {
+            loose,
+            shared: mtime_epoch(&shared)?,
+        })
+    }
+
+    /// The Unix epoch of the last write to `branch`'s ref storage.
+    fn epoch(&self, branch: &str) -> anyhow::Result<u64> {
+        self.loose
+            .get(branch)
+            .copied()
+            .or(self.shared)
+            .with_context(|| format!("finding the ref storage for branch {branch}"))
+    }
+}
+
+/// A file's mtime as a Unix epoch, or `None` if the file doesn't exist.
+fn mtime_epoch(path: &Path) -> anyhow::Result<Option<u64>> {
+    match fs::metadata(path).and_then(|metadata| metadata.modified()) {
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        modified => {
+            let modified = modified.with_context(|| format!("reading {}", path.display()))?;
+            Ok(Some(
+                modified.duration_since(std::time::UNIX_EPOCH)?.as_secs(),
+            ))
+        }
+    }
 }
 
 /// Render dry-run output (text or JSON) and the `Skipped (younger than ...)`
@@ -940,7 +990,7 @@ pub fn step_prune(
         humantime::parse_duration(min_age).context("Invalid --min-age duration")?;
 
     let repo = Repository::current()?;
-    let config = UserConfig::load()?;
+    let config = UserConfig::load().context("Failed to load config")?;
 
     // Capture once at command entry. Reused for every per-branch
     // `integration_reason` probe later in this function.
@@ -971,6 +1021,10 @@ pub fn step_prune(
         let _span = Span::new("prune-gather");
         gather_check_items(&repo, worktrees, default_branch.as_deref())?
     };
+    // Read before any removal, since prune's own deletions rewrite the files
+    // these times come from.
+    let ref_write_times =
+        RefWriteTimes::capture(&repo, &check_items).context("reading ref write times")?;
 
     let mut skipped_young: Vec<String> = Vec::new();
 
@@ -991,6 +1045,7 @@ pub fn step_prune(
             let integration_target_ref = integration_target.as_str();
             let current_path_ref = current_root.as_path();
             let check_lock_ref = &check_lock;
+            let ref_write_times_ref = &ref_write_times;
             s.spawn(move || {
                 check_items_ref
                     .par_iter()
@@ -1006,6 +1061,7 @@ pub fn step_prune(
                                 worktrees,
                                 current_path_ref,
                                 min_age_duration,
+                                ref_write_times_ref,
                                 now_secs,
                             )
                         };
@@ -1136,13 +1192,11 @@ pub fn step_prune(
     let mut skipped_approval: Vec<SkippedApproval> = Vec::new();
 
     let check_lock = RwLock::new(());
-    let registry_lock = RwLock::new(());
     let removal_ctx = RemovalContext {
         repo: &repo,
         foreground,
         hook_plan: &hook_plan,
         check_lock: &check_lock,
-        registry_lock: &registry_lock,
     };
     // Flipped by the first failing removal: the rest of the queue drains
     // without executing (matching the serial loop's abort-on-first-error),
@@ -1169,6 +1223,7 @@ pub fn step_prune(
             let integration_target_ref = integration_target.as_str();
             let current_path_ref = current_root.as_path();
             let check_lock_ref = &check_lock;
+            let ref_write_times_ref = &ref_write_times;
             s.spawn(move || {
                 check_items_ref
                     .par_iter()
@@ -1184,6 +1239,7 @@ pub fn step_prune(
                                 worktrees,
                                 current_path_ref,
                                 min_age_duration,
+                                ref_write_times_ref,
                                 now_secs,
                             )
                         };
@@ -1480,6 +1536,41 @@ mod tests {
             deletes_branch: !matches!(kind, CandidateKind::StaleDetached),
             fate: None,
         }
+    }
+
+    #[test]
+    fn ref_write_times_follow_the_ref_backend() {
+        let dir = tempfile::tempdir().unwrap();
+        let write = |relative: &str, epoch: u64| {
+            let path = dir.path().join(relative);
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            fs::File::create(&path)
+                .unwrap()
+                .set_modified(std::time::UNIX_EPOCH + Duration::from_secs(epoch))
+                .unwrap();
+        };
+        write("packed-refs", 100);
+        write("refs/heads/loose", 200);
+        write("refs/heads/nested/loose", 300);
+        write("reftable/tables.list", 400);
+
+        // A loose ref shadows `packed-refs`, which dates every other branch.
+        let files =
+            RefWriteTimes::read(dir.path(), false, ["loose", "nested/loose", "packed"]).unwrap();
+        let epochs = ["loose", "nested/loose", "packed"].map(|branch| files.epoch(branch).unwrap());
+        assert_eq!(epochs, [200, 300, 100]);
+
+        // Reftable keeps no per-ref files, so a stray loose file is not read.
+        let reftable = RefWriteTimes::read(dir.path(), true, ["loose"]).unwrap();
+        assert_eq!(reftable.epoch("loose").unwrap(), 400);
+
+        // With neither a loose ref nor shared storage, nothing dates the branch.
+        let empty = tempfile::tempdir().unwrap();
+        let none = RefWriteTimes::read(empty.path(), false, ["gone"]).unwrap();
+        assert_eq!(
+            none.epoch("gone").unwrap_err().to_string(),
+            "finding the ref storage for branch gone"
+        );
     }
 
     #[test]

@@ -4,6 +4,30 @@
 
 All Claude SEO commands start with `/seo` followed by a subcommand.
 
+## Page-fetching script
+
+Use `"${CLAUDE_PLUGIN_ROOT}/scripts/claude-seo" run fetch_page.py https://example.com --json` for structured
+retrieval. Both the raw path (default, `--render never`) and the rendered path
+(`--render auto` or `--render always`) emit JSON through the same
+`render_page._json_summary` contract, so the two share one key set: `url`,
+`status_code`, `content`, `raw_content`, `is_spa`, `extracted_text`,
+`publication_date`, `accessibility_tree`, `accessibility_error`,
+`accessibility_partial`, `headers`, `redirect_chain`, `console_errors`,
+`render_diagnostics`, `render_engine`, `render_ms`, `mode_used`, `error`,
+`structured_data`, and `truncation`. The raw path fills renderer-only fields
+(`is_spa`, `extracted_text`, `render_engine`, ...) with `None`/empty defaults.
+Fetch errors still emit JSON and exit 1; successful fetches exit 0. HTTP status
+codes are reported without changing this behavior.
+
+Pass `--max-text N` to cap the `content`, `raw_content`, and `extracted_text`
+fields at N characters each; `truncation.fields` reports the original and
+returned character counts per field. `--max-text 0` (default) keeps full text.
+
+Combine `--json --output page.html` to save successful HTML while keeping JSON
+on stdout. `output_written` indicates whether HTML was saved. On fetch errors,
+the output file is left untouched. Without `--json`, existing text output is
+unchanged.
+
 ## Command List
 
 ### `/seo setup`

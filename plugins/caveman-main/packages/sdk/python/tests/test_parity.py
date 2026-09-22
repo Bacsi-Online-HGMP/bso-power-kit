@@ -32,7 +32,7 @@ from caveman_cloud import (
     RetryLoopError,
 )
 
-FIXTURES = json.loads((Path(__file__).resolve().parents[2] / "parity" / "fixtures.json").read_text())
+FIXTURES = json.loads((Path(__file__).resolve().parents[2] / "parity" / "fixtures.json").read_text(encoding="utf-8"))
 CONFIG = FIXTURES["config"]
 OPS = FIXTURES["operations"]
 
@@ -373,7 +373,7 @@ def test_parity(op: dict[str, Any]) -> None:
             raise urllib.error.URLError("simulated transport error")
         return _fake_response(op.get("response", {}))
 
-    with patch("urllib.request.urlopen", side_effect=fake_urlopen):
+    with patch("caveman_cloud.core._urlopen", side_effect=fake_urlopen):
         actual = handler(_make_cave(), op["input"])
 
     wire = op["expect"].get("wire")

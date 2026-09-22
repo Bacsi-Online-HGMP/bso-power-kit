@@ -11,6 +11,7 @@ credential-bearing settings file atomically with ``0600`` perms.
 from __future__ import annotations
 
 import json
+import os
 import re
 import subprocess
 import sys
@@ -47,6 +48,9 @@ def test_installer_uses_safe_credential_pattern(rel: str, argc: int) -> None:
     assert "0o600" in text, f"{rel} not writing settings with 0600 perms"
 
 
+@pytest.mark.skipif(
+    os.name != "posix", reason="asserts 0o600 mode bits, which Windows does not represent"
+)
 @pytest.mark.parametrize("rel,argc", INSTALLERS.items())
 def test_installer_credential_injection_is_inert(tmp_path: Path, rel: str, argc: int) -> None:
     writer = _extract_writer((ROOT / rel).read_text(encoding="utf-8"))

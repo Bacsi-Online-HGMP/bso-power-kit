@@ -1,12 +1,8 @@
 //! `wt step commit` — commit working tree changes.
 
-use std::fs;
-
 use anyhow::Context;
 use worktrunk::HookType;
 use worktrunk::config::UserConfig;
-use worktrunk::git::Repository;
-use worktrunk::shell_exec::Cmd;
 use worktrunk::styling::println;
 
 use super::super::command_approval::{approve_or_skip, resolve_template_for_preview};
@@ -30,7 +26,7 @@ pub fn step_commit(
     // mirrors --stage against a temp index so the previewed prompt matches what a real
     // run would send the LLM. Neither path produces a CommitOutcome.
     if show_prompt || dry_run {
-        preview_commit(stage, dry_run, yes)?;
+        preview_commit(branch.as_deref(), stage, dry_run, yes)?;
         return Ok(None);
     }
 
@@ -39,10 +35,7 @@ pub fn step_commit(
     // One-time LLM setup prompt (errors logged internally; don't block commit)
     let _ = crate::output::prompt_commit_generation(&mut config);
 
-    let env = match branch {
-        Some(ref b) => CommandEnv::for_selector(config, b)?,
-        None => CommandEnv::for_action(config)?,
-    };
+    let env = resolve_env(config, branch.as_deref())?;
     let ctx = env.context(yes);
 
     // CLI flag overrides config value
@@ -69,6 +62,16 @@ pub fn step_commit(
     Ok(Some(outcome))
 }
 
+/// Resolve the environment `wt step commit` acts in: the worktree named by
+/// `--branch`, or the invoking one. `for_selector` re-roots `repo` at that
+/// worktree, so the commit, its hooks, and its project config all follow.
+fn resolve_env(config: UserConfig, branch: Option<&str>) -> anyhow::Result<CommandEnv> {
+    match branch {
+        Some(b) => CommandEnv::for_selector(config, b),
+        None => CommandEnv::for_action(config),
+    }
+}
+
 /// Handle `wt step commit` in `--show-prompt` or `--dry-run` mode.
 ///
 /// Both modes skip hooks and the commit itself. `--show-prompt` outputs only the
@@ -76,88 +79,54 @@ pub fn step_commit(
 /// `--stage` against a temp index — so the previewed prompt matches what a real run
 /// would send — then calls the LLM and prints the command and message in three labeled
 /// sections. The user's real index is never modified.
-fn preview_commit(stage: Option<StageMode>, dry_run: bool, yes: bool) -> anyhow::Result<()> {
-    let env = CommandEnv::for_action(UserConfig::load().context("Failed to load config")?)?;
+///
+/// `branch` selects the previewed worktree exactly as it selects the committed
+/// one, so a preview describes the commit the same flags would make.
+fn preview_commit(
+    branch: Option<&str>,
+    stage: Option<StageMode>,
+    dry_run: bool,
+    yes: bool,
+) -> anyhow::Result<()> {
+    let env = resolve_env(UserConfig::load().context("Failed to load config")?, branch)?;
     let commit_config = env.resolved().commit_generation.clone();
+    let wt = env.repo.worktree_at(&env.worktree_path);
 
     // For --dry-run, stage to a copy of the index so the preview reflects what a real
     // run would send. --show-prompt skips this — it's the cheap "what's already staged"
     // path. StageMode::None has nothing to stage, so we use the existing index as-is.
+    let stage_mode = stage.unwrap_or(env.resolved().commit.stage());
     let temp_index = if dry_run {
-        stage
-            .unwrap_or(env.resolved().commit.stage())
-            .add_args()
-            .map(|args| stage_to_temp_index(&env.repo, args))
+        (stage_mode != StageMode::None)
+            .then(|| {
+                let temp = wt.temp_index()?;
+                temp.stage(stage_mode)?;
+                Ok::<_, anyhow::Error>(temp)
+            })
             .transpose()?
     } else {
         None
     };
-    let index_override = temp_index.as_deref();
+    let staging_index = temp_index.as_ref();
 
     let ctx = env.context(yes);
     let project_append = resolve_template_for_preview(&ctx, &commit_config, dry_run)?;
 
-    let prompt =
-        crate::llm::build_commit_prompt(&commit_config, index_override, project_append.as_deref())?;
+    let prompt = crate::llm::build_commit_prompt(
+        &commit_config,
+        &wt,
+        staging_index,
+        project_append.as_deref(),
+    )?;
     if !dry_run {
         println!("{}", prompt);
         return Ok(());
     }
     let message = crate::llm::generate_commit_message(
         &commit_config,
-        index_override,
+        &wt,
+        staging_index,
         project_append.as_deref(),
     )?;
     print_dry_run(&prompt, &commit_config, &message)
-}
-
-/// Copy the current worktree's index to a temp file and run `git <add_args>` against it.
-///
-/// Returns the [`tempfile::TempPath`] so the caller controls its lifetime — when
-/// dropped, the temp file is removed without ever touching the user's real index.
-fn stage_to_temp_index(repo: &Repository, add_args: &[&str]) -> anyhow::Result<tempfile::TempPath> {
-    let wt = repo.current_worktree();
-    let real_index = wt.git_dir()?.join("index");
-    // Close the freshly-created 0-byte tempfile's handle (Windows leaves
-    // the name delete-pending if it's still open) and clear the file; if a
-    // real index exists, copy it back, otherwise let `git add` create a
-    // fresh index at the reserved path. Mirrors `WorkingTree::temp_index`.
-    let temp = tempfile::NamedTempFile::new()
-        .context("Failed to create temporary index")?
-        .into_temp_path();
-    fs::remove_file(&temp).context("Failed to clear temporary index")?;
-    if real_index.exists() {
-        fs::copy(&real_index, &temp).context("Failed to copy index file")?;
-    }
-
-    let output = Cmd::new("git")
-        .args(add_args.iter().copied())
-        .current_dir(wt.root()?)
-        .env("GIT_INDEX_FILE", &temp)
-        .run()
-        .context("Failed to stage changes into temp index")?;
-    if !output.status.success() {
-        return Err(
-            worktrunk::git::CommandError::from_failed_output("git", add_args, &output).into(),
-        );
-    }
-    Ok(temp)
-}
-
-#[cfg(test)]
-mod tests {
-    use worktrunk::git::{CommandError, Repository};
-    use worktrunk::testing::TestRepo;
-
-    /// A failing `git add` into the temp index (here: an invalid pathspec)
-    /// must surface as a typed `CommandError`.
-    #[test]
-    fn stage_to_temp_index_failure_is_command_error() {
-        let test = TestRepo::with_initial_commit();
-        let repo = Repository::at(test.root_path()).unwrap();
-
-        let err = super::stage_to_temp_index(&repo, &["add", "--", ":(bad"]).unwrap_err();
-        let cmd_err = CommandError::find_in(&err).expect("error should carry a CommandError");
-        assert_eq!(cmd_err.command_string(), "git add -- :(bad");
-    }
 }

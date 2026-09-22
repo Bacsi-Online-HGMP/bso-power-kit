@@ -79,8 +79,50 @@ crates.io publishing holds no stored token — it uses Trusted Publishing.
 crates.io mints a short-lived one only for an OIDC claim from `release.yaml`
 running in that same `release` environment.
 
+## Sandbox toolchain
+
+The agent runs as `tend-sandbox`, whose PATH tend derives from the runner's by
+rewriting a leading `/home/runner` to `/home/tend-sandbox` and keeping an entry
+only where the rewritten directory exists and the sandbox UID can traverse it.
+`useradd -m` seeds the sandbox home from `/etc/skel`, so an image-baked
+toolchain has a sibling there and survives; anything `tend-setup` installs at
+runtime into the runner's home has none and is dropped, unlogged. From tend
+0.2.5 the runner's home isn't merely off-PATH but unreadable: the Sandbox
+Runtime denies reads across it and the runner's checkout, so a `sandbox_setup:`
+line that copies a binary out of `/home/runner` fails the whole lifecycle
+before the harness starts.
+
+So a tool the agent needs has to land in a system location, which carries
+across verbatim: `/opt/hostedtoolcache/...` for `nu`,
+`/nix/var/nix/profiles/default/bin` for `nix`, and `/usr/local/bin` for
+`cargo-insta` and `cargo-nextest`, which `tend-setup` `sudo install`s there
+after building them in the runner's home. Only `pre-commit` still comes from
+`.config/tend.yaml`'s `sandbox_setup:`, because it installs into the sandbox's
+own home and reads nothing runner-owned to do it. The block's closing probe
+asserts every tool on both routes.
+
+A system location gets the *binary* across, not what it talks to. `nix`
+resolves on the agent's PATH but cannot reach the daemon: the sandbox blocks
+`socket(AF_UNIX, …)`, so the weekly `flake.lock` refresh needs an upstream
+lever (max-sixty/tend#1197). `command -v` can't see that distinction, which is
+why the probe stays green while the weekly job would not.
+
 ## Build environment
 
 `Swatinem/rust-cache` hashes `CARGO*` and `RUST*` env vars into the cache key.
 All workflows sharing a cache must set the same env vars, or they'll get
 different keys and miss each other's caches.
+
+It hashes the vars **visible at its own step**, so a var exported by a later
+step is invisible and a var the writers don't set poisons the key. ci.yaml and
+nightly.yaml carry theirs in a workflow-level `env:` block, always in place
+first. A miss is silent — the step succeeds having restored nothing — so drift
+here shows up only as slow jobs.
+
+The `tend-*.yaml` workflows are out of this scheme entirely. They can't carry a
+workflow-level `env:` block, and from tend 0.2.5 there is nothing for one to
+serve: the agent builds in a disposable `/tmp` clone, so a cache restored into
+the runner's checkout and home is both unreachable and at the wrong path.
+`tend-setup` therefore restores nothing and sets none of the three vars, and
+tend sessions compile cold until max-sixty/tend#1198 gives the agent's own tree
+a supported way to warm.

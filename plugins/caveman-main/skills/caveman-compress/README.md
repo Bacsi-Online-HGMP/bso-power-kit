@@ -108,7 +108,7 @@ Examples:
 
 | Type | Compress? |
 |------|-----------|
-| `.md`, `.txt`, `.rst`, `.typ`, `.typst`, `.tex` | Yes |
+| `.md`, `.mdc`, `.txt`, `.rst`, `.typ`, `.typst`, `.tex` | Yes |
 | Extensionless natural language | Yes |
 | `.py`, `.js`, `.ts`, `.json`, `.yaml` | ❌ Skip (code/config) |
 | `*.original.md` | ❌ Skip (backup files) |
@@ -117,6 +117,10 @@ Examples:
 
 ```
 /caveman-compress CLAUDE.md
+        ↓
+basic checks: file exists, under 500KB, not a sensitive filename
+        ↓
+acquire cross-session lock on the file  (waits up to 15 min if another run holds it, then errors)
         ↓
 detect file type        (no tokens)
         ↓

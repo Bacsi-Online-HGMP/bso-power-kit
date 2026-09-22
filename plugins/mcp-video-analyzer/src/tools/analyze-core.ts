@@ -33,6 +33,7 @@ import { filterAnalysisResult } from '../utils/field-filter.js';
 import type { AnalysisField } from '../utils/field-filter.js';
 import { cleanupTempDir, createTempDir } from '../utils/temp-files.js';
 import { toLocalPath } from '../utils/url-detector.js';
+import { warningReason } from '../utils/warnings.js';
 import { maxWidthParam } from './frame-options.js';
 
 /** Shared analysis cache (used by both analyze_video and analyze_videos). */
@@ -221,7 +222,7 @@ async function runAnalysisPipeline(
 
     const [metadata, transcript, comments, chapters, aiSummary] = await Promise.all([
       adapter.getMetadata(url).catch((e: unknown): IVideoMetadata => {
-        warnings.push(`Failed to fetch metadata: ${e instanceof Error ? e.message : String(e)}`);
+        warnings.push(`Failed to fetch metadata: ${warningReason(e)}`);
         return {
           platform: adapter.name,
           title: 'Unknown',
@@ -231,19 +232,19 @@ async function runAnalysisPipeline(
         };
       }),
       adapter.getTranscript(url).catch((e: unknown) => {
-        warnings.push(`Failed to fetch transcript: ${e instanceof Error ? e.message : String(e)}`);
+        warnings.push(`Failed to fetch transcript: ${warningReason(e)}`);
         return [];
       }),
       adapter.getComments(url).catch((e: unknown) => {
-        warnings.push(`Failed to fetch comments: ${e instanceof Error ? e.message : String(e)}`);
+        warnings.push(`Failed to fetch comments: ${warningReason(e)}`);
         return [];
       }),
       adapter.getChapters(url).catch((e: unknown) => {
-        warnings.push(`Failed to fetch chapters: ${e instanceof Error ? e.message : String(e)}`);
+        warnings.push(`Failed to fetch chapters: ${warningReason(e)}`);
         return [];
       }),
       adapter.getAiSummary(url).catch((e: unknown) => {
-        warnings.push(`Failed to fetch AI summary: ${e instanceof Error ? e.message : String(e)}`);
+        warnings.push(`Failed to fetch AI summary: ${warningReason(e)}`);
         return null;
       }),
     ]);
@@ -325,9 +326,7 @@ async function runAnalysisPipeline(
         );
         const browserFrames = await extractBrowserFrames(url, tempDir, { timestamps }).catch(
           (e: unknown) => {
-            warnings.push(
-              `Browser frame extraction failed: ${e instanceof Error ? e.message : String(e)}`,
-            );
+            warnings.push(`Browser frame extraction failed: ${warningReason(e)}`);
             return [];
           },
         );
@@ -374,7 +373,7 @@ async function runAnalysisPipeline(
             const pct = 82 + Math.round((completed / total) * 9);
             void progress(pct, `OCR: processing frame ${completed}/${total}...`);
           }).catch((e: unknown): IOcrResult[] => {
-            warnings.push(`OCR failed: ${e instanceof Error ? e.message : String(e)}`);
+            warnings.push(`OCR failed: ${warningReason(e)}`);
             return [];
           });
 
@@ -402,13 +401,13 @@ async function runAnalysisPipeline(
               `OCR produced ${perFrame.length}/${result.frames.length} results (tesseract.js unavailable or recognition aborted); used visual-only dedup and skipped OCR text.`,
             );
             result.frames = await deduplicateFrames(result.frames).catch((e: unknown) => {
-              warnings.push(`Frame dedup failed: ${e instanceof Error ? e.message : String(e)}`);
+              warnings.push(`Frame dedup failed: ${warningReason(e)}`);
               return result.frames;
             });
           }
         } else {
           result.frames = await deduplicateFrames(result.frames).catch((e: unknown) => {
-            warnings.push(`Frame dedup failed: ${e instanceof Error ? e.message : String(e)}`);
+            warnings.push(`Frame dedup failed: ${warningReason(e)}`);
             return result.frames;
           });
         }
@@ -435,7 +434,13 @@ async function runAnalysisPipeline(
       tempDir = tempDir ?? (await createTempDir());
       videoPath = await adapter
         .downloadVideo(url, tempDir, (w) => warnings.push(w))
-        .catch(() => null);
+        .catch((e: unknown) => {
+          // A bare `.catch(() => null)` here is what `downloadDirectVideo`'s
+          // throw exists to prevent: it turns a deliberate SSRF refusal back
+          // into "that video was not available". Degrade, but say why.
+          warnings.push(`Video download failed: ${warningReason(e)}`);
+          return null;
+        });
     }
 
     // Whisper fallback: no transcript + a video file + a (probable) audio track.
@@ -453,7 +458,11 @@ async function runAnalysisPipeline(
           );
         }
       } catch (e: unknown) {
-        warnings.push(`Whisper fallback failed: ${e instanceof Error ? e.message : String(e)}`);
+        // No "Whisper fallback failed" prefix: the commonest reason here is
+        // "no audio track", which is content rather than a fault — the same way
+        // the silence gate treats a mute track — and the prefix relabelled that
+        // as a breakage for every video-only clip.
+        warnings.push(warningReason(e));
       }
     }
 
@@ -532,12 +541,17 @@ export async function getAnalysis(
   );
   cache.set(key, result);
 
-  const { written, failed } = await writeAnalysisSidecars(url, result, keyParams, {
+  const { written, failed, reason } = await writeAnalysisSidecars(url, result, keyParams, {
     transcriptFromWhisper,
   });
   if (failed) {
+    // Partial success is the common shape: the .vtt is written last, so the
+    // authoritative .analysis.json is usually already on disk. Telling the user
+    // nothing was persisted would send them to recompute for no reason.
     result.warnings.push(
-      'Sidecar persistence failed (MCP_WRITE_SIDECARS) — results were NOT written to disk; a re-run will recompute.',
+      written.length > 0
+        ? `Sidecar persistence incomplete (MCP_WRITE_SIDECARS): ${written.length} artifact(s) written, then ${reason}.`
+        : `Sidecar persistence failed (MCP_WRITE_SIDECARS): ${reason} — results were NOT written to disk; a re-run will recompute.`,
     );
   } else if (written.length > 0) {
     result.warnings.push(

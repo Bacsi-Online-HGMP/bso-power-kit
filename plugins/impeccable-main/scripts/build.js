@@ -10,6 +10,7 @@
  * - Codex: dist/codex/ only (OpenAI-metadata bundle; not synced to repo root)
  * - Agents: .agents/skills/ (Codex repo/user installs)
  * - GitHub: .github/skills/ (GitHub Copilot)
+ * - Veto: .veto/skills/ (Veto model-routing harness)
  *
  * Also assembles a universal ZIP containing all providers,
  * and builds Tailwind CSS for production deployment.
@@ -19,13 +20,22 @@ import path from 'path';
 import fs from 'fs';
 import { fileURLToPath } from 'url';
 import { readSourceFiles, readPatterns, stashPerProjectArtifacts, restorePerProjectArtifacts } from './lib/utils.js';
+import { syncRootCommands } from './lib/root-commands-sync.mjs';
 import { createTransformer, PROVIDERS } from './lib/transformers/index.js';
 import { hooksJsonFor, buildClaudePluginHooksManifest } from './lib/transformers/hooks.js';
 import { createAllZips, createProviderZip } from './lib/zip.js';
 import { collectPluginVersions } from './lib/validate-plugin-versions.js';
 import { collectPluginManifestFindings } from './lib/validate-plugin-manifest.js';
+import {
+  rewritePluginMarkdownTree,
+  rewritePluginAgentMarkdown,
+  verifyPluginSkillRewrite,
+  verifyPluginAgentRewrite,
+} from './lib/plugin-paths.js';
 import { stageOpenAIPlugin } from './lib/openai-plugin.js';
-import { ANTIPATTERNS } from '../cli/engine/registry/antipatterns.mjs';
+import { stageCursorPlugin } from './lib/cursor-plugin.js';
+import { stageVSCodeExtension } from './lib/vscode-extension.js';
+import { ENGINE_TARGETS, binaryName, main as fetchEngineMain, readEngineVersion } from './fetch-engine.mjs';
 // Sub-page generation is now handled by Astro content collections.
 
 /**
@@ -53,8 +63,12 @@ function generateCounts(rootDir, skills, buildDir) {
     commandCount = activeCommands.length;
   }
 
-  // Count detection rules from the detector registry.
-  const detectionCount = new Set(ANTIPATTERNS.map(rule => rule.id)).size;
+  // Count detection rules from the rule registry as `cargo xtask bundle`
+  // emits it. crates/live/assets/antipatterns.json is tracked, so a fresh
+  // checkout has it; extension/detector/antipatterns.json is the gitignored
+  // extension copy and only stands in for an older tree. With neither, the
+  // detection-count check is skipped rather than guessed.
+  const { count: detectionCount, reason: detectionReason } = readDetectionRuleCount(rootDir);
 
   // Validate counts in key files
   const filesToCheck = [
@@ -92,7 +106,7 @@ function generateCounts(rootDir, skills, buildDir) {
     // qualified "issues" both evaded the old pattern, which is how five
     // stale counts shipped while the validator reported clean.
     const detectPattern = /\b(\d+)\s+(deterministic\s+)?(detector\s+)?(checks|patterns|rules|detections|issues)\b/gi;
-    for (const match of strippedContent.matchAll(detectPattern)) {
+    for (const match of detectionCount == null ? [] : strippedContent.matchAll(detectPattern)) {
       const num = parseInt(match[1]);
       if (match[4] === 'issues' && !match[2]) continue; // plain "issues" is prose, not a count claim
       if (num !== detectionCount && num > 10) { // ignore small numbers like "3 patterns"
@@ -106,8 +120,52 @@ function generateCounts(rootDir, skills, buildDir) {
     console.error(`\n❌ ${errors} stale count reference(s) found. Update them to match source of truth.`);
   }
 
-  console.log(`✓ Generated counts: ${commandCount} commands, ${detectionCount} detection rules`);
+  console.log(`✓ Generated counts: ${commandCount} commands, ${detectionCount == null ? `detection rules unchecked: ${detectionReason}` : `${detectionCount} detection rules`}`);
   return errors;
+}
+
+const RULE_REGISTRY_PATHS = [
+  ['crates', 'live', 'assets', 'antipatterns.json'],
+  ['extension', 'detector', 'antipatterns.json'],
+];
+
+/**
+ * The number of distinct rule ids in the registry, or `{ count: null, reason }`
+ * when no location yields one. The reason names the actual condition and the
+ * path it applies to: a registry that is present but unparseable reads very
+ * differently from one that was never generated, and "no antipatterns.json"
+ * for both sends anyone debugging a count failure to the wrong place.
+ */
+function readDetectionRuleCount(rootDir) {
+  const problems = [];
+  for (const parts of RULE_REGISTRY_PATHS) {
+    const rel = parts.join('/');
+    const registry = path.join(rootDir, ...parts);
+    if (!fs.existsSync(registry)) continue;
+    let rules;
+    try {
+      rules = JSON.parse(fs.readFileSync(registry, 'utf-8'));
+    } catch (err) {
+      problems.push(`${rel} is not readable as JSON (${err.message})`);
+      continue;
+    }
+    // Only string ids count. A shape change (a wrapper object, a row without
+    // an id) would otherwise collapse to a Set of one `undefined` and read as
+    // a one-rule registry, which validates every count claim as stale.
+    const ids = (Array.isArray(rules) ? rules : [])
+      .map(rule => rule?.id)
+      .filter(id => typeof id === 'string' && id.length > 0);
+    if (ids.length === 0) {
+      problems.push(`${rel} carries no rule ids`);
+      continue;
+    }
+    return { count: new Set(ids).size };
+  }
+  const where = RULE_REGISTRY_PATHS.map(parts => parts.join('/')).join(' or ');
+  return {
+    count: null,
+    reason: problems.length > 0 ? problems.join('; ') : `no antipatterns.json at ${where}`,
+  };
 }
 
 /**
@@ -489,6 +547,55 @@ function syncRootHookManifests(rootDir) {
   return synced;
 }
 
+/**
+ * Every skill copy in dist gets the engine binaries the launcher looks for
+ * (`scripts/bin/<os>-<arch>/impeccable[.exe]`), so the release zips are
+ * self-contained for installs without egress. Opt-in only
+ * (IMPECCABLE_BUNDLE_ENGINE=1 on a release build), and only after the root
+ * harness dirs and ./plugin have been synced from dist: those are
+ * git-delivered and must stay launcher-only (the binaries are gitignored and
+ * the launcher downloads them on first run).
+ *
+ * Source: skill/scripts/bin/, filled by scripts/fetch-engine.mjs --all. A
+ * target that could not be fetched is reported and left out; the launcher
+ * covers it at run time.
+ */
+async function stageEngineBinaries(rootDir, distDir) {
+  await fetchEngineMain(['--all', '--lenient']);
+  const binRoot = path.join(rootDir, 'skill', 'scripts', 'bin');
+  const present = ENGINE_TARGETS.filter(t => fs.existsSync(path.join(binRoot, t, binaryName(t))));
+  const missing = ENGINE_TARGETS.filter(t => !present.includes(t));
+  if (present.length === 0) {
+    console.warn(`⚠️  No engine binaries for v${readEngineVersion(rootDir)}; zips ship launcher-only (the launcher downloads on first run).`);
+    return;
+  }
+  let copies = 0;
+  for (const { provider, configDir } of Object.values(PROVIDERS)) {
+    const scriptsDir = path.join(distDir, provider, configDir, 'skills', 'impeccable', 'scripts');
+    if (!fs.existsSync(scriptsDir)) continue;
+    for (const target of present) {
+      const src = path.join(binRoot, target, binaryName(target));
+      const dest = path.join(scriptsDir, 'bin', target, binaryName(target));
+      fs.mkdirSync(path.dirname(dest), { recursive: true });
+      fs.copyFileSync(src, dest);
+      fs.chmodSync(dest, 0o755);
+      copies++;
+    }
+  }
+  console.log(`✓ Staged engine v${readEngineVersion(rootDir)} binaries into dist (${present.join(', ')}; ${copies} copies)${missing.length ? `; missing: ${missing.join(', ')}` : ''}`);
+}
+
+function syncEngineVersionFile(rootDir) {
+  const version = readEngineVersion(rootDir);
+  if (!/^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/.test(version)) {
+    throw new Error(`ENGINE_VERSION must be a semver string, got "${version}"`);
+  }
+  const dest = path.join(rootDir, 'skill', 'scripts', 'VERSION');
+  const current = fs.existsSync(dest) ? fs.readFileSync(dest, 'utf-8') : null;
+  if (current !== `${version}\n`) fs.writeFileSync(dest, `${version}\n`);
+  console.log(`✓ Engine pinned at v${version} (skill/scripts/VERSION)`);
+}
+
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const ROOT_DIR = path.resolve(__dirname, '..');
@@ -536,6 +643,7 @@ This folder contains skills for all supported tools:
 
   .cursor/    -> Cursor
   .claude/    -> Claude Code
+  .dsh/       -> DeepSeek Harness
   .gemini/    -> Gemini CLI
   .codex/     -> Codex custom agents (Codex skills use .agents/)
   .agents/    -> Codex CLI
@@ -550,6 +658,7 @@ This folder contains skills for all supported tools:
   .trae/      -> Trae International
   .rovodev/   -> Rovo Dev
   .vibe/      -> Mistral Vibe
+  .veto/      -> Veto model-routing harness
   .qoder/     -> Qoder
 
 To install, copy the relevant folder(s) into your project root.
@@ -582,6 +691,10 @@ async function build() {
 
   const buildDir = path.join(ROOT_DIR, 'build');
 
+  // The launcher reads scripts/VERSION to know which engine release to run
+  // or download; the root ENGINE_VERSION file is the source of truth for it.
+  syncEngineVersionFile(ROOT_DIR);
+
   // Read source files (unified skills architecture)
   const { skills } = readSourceFiles(ROOT_DIR);
   const patterns = readPatterns(ROOT_DIR);
@@ -602,13 +715,6 @@ async function build() {
     const transform = createTransformer(config);
     transform(skills, DIST_DIR, { skillsVersion });
   }
-
-  // Assemble universal directory
-  assembleUniversal(DIST_DIR);
-
-  // Create ZIP bundles (individual + universal)
-  await createAllZips(DIST_DIR);
-
 
   if (BUILD_OPTIONS.syncRootOutputs) {
     // Copy all provider outputs to project root for direct GitHub installs and
@@ -647,6 +753,11 @@ async function build() {
       if (fs.existsSync(agentsSrc)) {
         copyDirSync(agentsSrc, agentsDest);
       }
+    }
+
+    const syncedCommands = syncRootCommands(DIST_DIR, ROOT_DIR, syncConfigs);
+    if (syncedCommands.length > 0) {
+      console.log(`📟 Synced provider commands to: ${syncedCommands.join(', ')}`);
     }
 
     const syncedHooks = syncRootHookManifests(ROOT_DIR);
@@ -749,6 +860,21 @@ async function build() {
       copyDirSync(claudeAgentsSrc, pluginAgentsDir);
     }
 
+    // The claude-code output resolves {{scripts_path}} to a project-relative
+    // path. Inside the plugin cache that path points into the user's project,
+    // so a dual install silently runs the project's older skill copy (issue
+    // #523). Rewrite the copied markdown to the skill-base-dir form.
+    rewritePluginMarkdownTree(pluginSkillsDir);
+    // Agents get the plugin-root variable, not the skill-base-dir token:
+    // a spawned agent never loads SKILL.md, so the token is undefined there.
+    rewritePluginMarkdownTree(pluginAgentsDir, rewritePluginAgentMarkdown);
+    verifyPluginSkillRewrite(path.join(pluginSkillsDir, 'impeccable', 'SKILL.md'));
+    if (fs.existsSync(pluginAgentsDir)) {
+      for (const agentFile of fs.readdirSync(pluginAgentsDir)) {
+        if (agentFile.endsWith('.md')) verifyPluginAgentRewrite(path.join(pluginAgentsDir, agentFile));
+      }
+    }
+
     // Ship the design detector as a plugin-packaged hook. Claude Code and
     // Grok Build both auto-discover `hooks/hooks.json` at the plugin root
     // (Grok aliases CLAUDE_PLUGIN_ROOT → GROK_PLUGIN_ROOT), so marketplace /
@@ -770,6 +896,35 @@ async function build() {
   // upload ZIP and local preview directory cannot drift behind provider output.
   const openAiPluginRoot = stageOpenAIPlugin(ROOT_DIR, DIST_DIR);
   await createProviderZip(openAiPluginRoot, DIST_DIR, 'openai-plugin');
+
+  const cursorPluginRoot = stageCursorPlugin(ROOT_DIR, DIST_DIR);
+  if (BUILD_OPTIONS.syncRootOutputs) {
+    const destination = path.join(ROOT_DIR, 'cursor-plugin');
+    fs.rmSync(destination, { recursive: true, force: true });
+    fs.cpSync(cursorPluginRoot, destination, { recursive: true });
+  }
+
+  // Declarative Marketplace skill bundle: no editor runtime or project hooks.
+  // Staged before optional engine bundling to keep the VSIX launcher-only.
+  stageVSCodeExtension(ROOT_DIR, DIST_DIR);
+
+  // Release zips ship launcher-only by default: the launcher downloads the
+  // pinned engine on first run. IMPECCABLE_BUNDLE_ENGINE=1 opts in to staging
+  // every fetched target into every dist skill copy for offline installs.
+  // That was the default once and put universal.zip at ~340 MB (five targets
+  // times every provider copy), past the 25 MB Cloudflare Pages file cap that
+  // `impeccable install` downloads through. Staging runs after the root
+  // harness dirs, ./plugin, and the OpenAI plugin were staged from dist, so
+  // git-delivered trees stay launcher-only either way.
+  if (BUILD_OPTIONS.syncRootOutputs && process.env.IMPECCABLE_BUNDLE_ENGINE === '1') {
+    await stageEngineBinaries(ROOT_DIR, DIST_DIR);
+  }
+
+  // Assemble universal directory
+  assembleUniversal(DIST_DIR);
+
+  // Create ZIP bundles (universal)
+  await createAllZips(DIST_DIR);
 
   // Generate authoritative counts and validate references
   const countErrors = generateCounts(ROOT_DIR, skills, buildDir);

@@ -7,6 +7,7 @@ import {
   MANUAL_EDIT_SYSTEM_INSTRUCTIONS,
   VARIANT_SYSTEM_INSTRUCTIONS,
   createLlmAgent,
+  llmRequestSettings,
   parseManualEditResponse,
   parseVariantResponse,
   progressiveVariantGuidance,
@@ -18,6 +19,19 @@ import {
   validateProgressiveVariantOutput,
   validateVariantVisibleCopy,
 } from './live-e2e/agents/llm-agent.mjs';
+
+describe('live-e2e LLM request settings', () => {
+  it('explicitly selects low-effort DeepSeek thinking for bounded JSON edit requests', () => {
+    assert.deepEqual(llmRequestSettings('deepseek'), {
+      thinking: { type: 'enabled' }, output_config: { effort: 'low' },
+    });
+  });
+
+  it('leaves other providers unchanged', () => {
+    assert.deepEqual(llmRequestSettings('anthropic'), {});
+    assert.deepEqual(llmRequestSettings('openai'), {});
+  });
+});
 
 describe('live-e2e LLM agent provider config', () => {
   it('defaults to OpenAI gpt-5.6-terra at medium reasoning effort', () => {
@@ -1505,6 +1519,12 @@ describe('live-e2e LLM agent variant prompt', () => {
     assert.match(VARIANT_SYSTEM_INSTRUCTIONS, /Do not return source-identical variants/);
     assert.match(VARIANT_SYSTEM_INSTRUCTIONS, /bare text element/);
     assert.match(VARIANT_SYSTEM_INSTRUCTIONS, /Accept persists a real source change/);
+  });
+
+  it('uses permanent styling hooks outside the reserved live-runtime namespace', () => {
+    assert.match(VARIANT_SYSTEM_INSTRUCTIONS, /data-design-variant/);
+    assert.doesNotMatch(VARIANT_SYSTEM_INSTRUCTIONS, /add[^\n]*data-impeccable-e2e-variant/);
+    assert.match(VARIANT_SYSTEM_INSTRUCTIONS, /Never invent data-impeccable-\*/);
   });
 });
 

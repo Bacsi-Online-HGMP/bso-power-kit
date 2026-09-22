@@ -68,6 +68,11 @@ type behaviorScan struct {
 	CompactionSessions     []compactionSession
 	SessionTexts           []sessionTextObservation
 	SessionMetrics         []learnSessionMetric
+	SessionOutcomes        []sessionOutcome
+	SubagentSpend          subagentSpendTracker
+	Procedures             procedureMiner
+	Spend                  spendAccumulator
+	ToolPortfolio          toolPortfolioTracker
 	FallbackWindowSources  map[string]bool
 	From, To               string
 }
@@ -232,7 +237,7 @@ func (s *Store) buildLearnPlan(cwd string, sources []string, sinceExpr string, r
 	plan.Sinks = append(plan.Sinks, subagentSink(beh)...)
 	plan.Sinks = append(plan.Sinks, surfaceSink(cfg)...)
 	plan.Sinks = append(plan.Sinks, crossProviderSinks(rec, beh)...)
-	plan.Sinks = append(plan.Sinks, cacheChurnSink(beh.CacheHygieneSessions)...)
+	plan.Sinks = append(plan.Sinks, cacheChurnSink(beh.CacheHygieneSessions, cfg.PerTurnHooks)...)
 	plan.Sinks = append(plan.Sinks, rereadWasteSink(beh.RereadSessions)...)
 	plan.Sinks = append(plan.Sinks, compactionChurnSink(beh.CompactionSessions)...)
 	plan.Sinks = append(plan.Sinks, mcpSurfaceSink(cfg, plan.Sinks)...)
@@ -242,12 +247,32 @@ func (s *Store) buildLearnPlan(cwd string, sources []string, sinceExpr string, r
 	} else {
 		plan.Caveats = appendUnique(plan.Caveats, "CLAUDE.md section-echo findings were omitted because the shared behavioral deadline expired before that corpus pass.")
 	}
+	// Spend is computed before the practice/rank/price pass so the two sinks it
+	// feeds are ranked and priced like every other sink rather than appended
+	// after the fact.
+	plan.Spend = buildLearnSpend(beh.Spend, int(days))
+	plan.Sinks = append(plan.Sinks, cacheEfficiencySink(plan.Spend, cfg.PerTurnHooks)...)
+	plan.Sinks = append(plan.Sinks, toolPortfolioSink(beh.ToolPortfolio, plan.Spend)...)
+	plan.Sinks = append(plan.Sinks, outcomeSink(beh.SessionOutcomes, plan.Spend)...)
+	plan.Sinks = append(plan.Sinks, subagentSpendSink(beh.SubagentSpend, plan.Spend)...)
+	plan.Sinks = append(plan.Sinks, procedureSinks(beh.Procedures, plan.Spend)...)
+	if trendRows, trendErr := s.configTrendRows(since); trendErr != nil {
+		logStoreWarning(s.logger, "config trend read failed", trendErr)
+	} else {
+		plan.Sinks = append(plan.Sinks, configTrendSink(trendRows, turnsPerDay, plan.Spend)...)
+	}
+	plan.sessionOutcomes = beh.SessionOutcomes
+	if plan.Spend != nil {
+		plan.Caveats = appendUnique(plan.Caveats, "Spend is provider-counted tokens priced at the dated catalog's published rates. It is what the scanned window cost, not a projection and not an invoice; a subscription plan's marginal cost is zero.")
+	}
+
 	addSectionConfigPaths(plan.Sinks, cfg)
 	for i := range plan.Sinks {
 		plan.Sinks[i].PracticeID = practiceIDForSink(plan.Sinks[i].SinkID)
 	}
 
 	rankLearnSinks(plan.Sinks, days)
+	priceLearnSinks(plan.Sinks, plan.Spend, days)
 	if prefix, sessions := beh.measuredPrefix(); prefix > 0 && sessions > 0 && cfg.configTaxPerTurn() > 0 {
 		plan.Caveats = appendUnique(plan.Caveats, "Turn-1 context includes the first user prompt, so measured prefix is an upper bound of fixed prefix; median across sessions mitigates.")
 	}
@@ -422,7 +447,11 @@ func configSinksWithBehavior(cfg configScan, beh behaviorScan, turnsPerDay float
 		if cfg.ClaudeMDUser != nil {
 			userTokens = cfg.ClaudeMDUser.Tokens
 		}
-		if cfg.ClaudeMDProject != nil {
+		if len(cfg.ClaudeMDProjects) > 0 {
+			for _, snap := range cfg.ClaudeMDProjects {
+				projectTokens += snap.Tokens
+			}
+		} else if cfg.ClaudeMDProject != nil {
 			projectTokens = cfg.ClaudeMDProject.Tokens
 		}
 		evidence := map[string]any{
@@ -434,6 +463,16 @@ func configSinksWithBehavior(cfg configScan, beh behaviorScan, turnsPerDay float
 			"plugin_count":             cfg.PluginCount,
 			"token_basis":              cfg.TokenBasis,
 		}
+		if cfg.PluginCount > 0 {
+			// A plugin count is not a zero-token measurement. Plugin caches and
+			// enablement schemas vary by host/version, so keep this explicitly
+			// unmeasured until the effective catalog can be resolved truthfully.
+			evidence["plugin_desc_tokens"] = nil
+			evidence["plugin_token_measurement"] = "unavailable"
+			evidence["config_tax_coverage"] = "partial"
+		} else {
+			evidence["config_tax_coverage"] = "static_sources"
+		}
 		if prefix, sessions := beh.measuredPrefix(); prefix > 0 && sessions > 0 {
 			evidence["measured_prefix_tokens"] = prefix
 			evidence["measured_prefix_sessions"] = sessions
@@ -442,7 +481,7 @@ func configSinksWithBehavior(cfg configScan, beh behaviorScan, turnsPerDay float
 		}
 		sinks = append(sinks, Sink{
 			SinkID:           "config_tax:baseline",
-			Title:            fmt.Sprintf("Your agent config loads ~%d tokens into every turn", tax),
+			Title:            fmt.Sprintf("Measured agent config loads ~%d tokens into every turn", tax),
 			Class:            classLoadBearing,
 			Basis:            observedLocal,
 			TokensPerTurn:    int64(tax),
@@ -562,7 +601,7 @@ func deadLoadSink(deadTokens int, deadSkills []string, beh behaviorScan, turnsPe
 			"skill_count":      len(deadSkills),
 			"sessions_scanned": beh.SessionsScanned,
 			"skills":           sample,
-			"detection":        "structured+substring_guard",
+			"detection":        "structured",
 		},
 	}}
 }
@@ -1045,6 +1084,11 @@ func mergeBehaviorScan(dst, src *behaviorScan) {
 		dst.SessionTexts = append(dst.SessionTexts, src.SessionTexts[:remainingTexts]...)
 	}
 	dst.SessionMetrics = append(dst.SessionMetrics, src.SessionMetrics...)
+	dst.SessionOutcomes = append(dst.SessionOutcomes, src.SessionOutcomes...)
+	dst.SubagentSpend.merge(src.SubagentSpend)
+	dst.Procedures.merge(src.Procedures)
+	dst.Spend.merge(src.Spend)
+	dst.ToolPortfolio.merge(src.ToolPortfolio)
 	if dst.FallbackWindowSources == nil {
 		dst.FallbackWindowSources = map[string]bool{}
 	}

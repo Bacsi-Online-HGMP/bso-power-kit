@@ -79,20 +79,21 @@ func (s codexSessionSource) scanSession(ref sessionRef, since time.Time, emit fu
 			usage = asMap(payload["last_token_usage"])
 		}
 		ctx, hasUsage := codexContextTotal(usage)
+		fresh, cached, out, hasBilling := codexBillingUsage(usage)
 		payloads := codexTextPayloads(obj)
-		skillHaystack := ""
-		role := firstString(payload["role"])
-		if firstString(obj["type"]) == "response_item" && firstString(payload["type"]) == "message" && (role == "user" || role == "assistant") {
-			skillHaystack = strings.ToLower(string(line))
-		}
 		emit(turnEvent{
 			Timestamp: ts, ContextTotal: ctx, ContextUsagePresent: hasUsage,
+			// CacheUsagePresent stays false: OpenAI reports cache reads but no
+			// write bucket in this shape, so the churn detector must not read
+			// a missing write as an observed zero.
+			CacheReadInputTokens: cached,
+			InputFreshTokens:     fresh, OutputTokens: out, BillingUsagePresent: hasBilling,
 			UsageMessageID: firstString(payload["id"], info["id"], payload["turn_id"], info["turn_id"]),
 			Model:          firstString(payload["model"], info["model"], obj["model"], model), ProviderKey: "openai",
 			ToolCalls: codexTurnToolCalls(payload, pendingTools), TextPayloads: payloads,
 			TaskSpawns: codexTaskSpawns(payload), SkillUses: codexStructuredSkillReferences(payload, payloads),
-			SkillHaystack: skillHaystack, Compaction: strings.Contains(strings.ToLower(firstString(payload["type"])), "compact"),
-			JSONLLine: lineNo, RelPath: ref.relPath, Repo: repo,
+			Compaction: strings.Contains(strings.ToLower(firstString(payload["type"])), "compact"),
+			JSONLLine:  lineNo, RelPath: ref.relPath, Repo: repo,
 		})
 	}
 	return false
@@ -109,6 +110,39 @@ func codexContextTotal(usage map[string]any) (int, bool) {
 		return 0, false
 	}
 	return int(ctx64), true
+}
+
+// codexBillingUsage normalizes OpenAI's INCLUSIVE input count into disjoint
+// billing buckets: input_tokens already contains the cached share, so fresh
+// input is the difference. Reasoning tokens are folded into output because
+// OpenAI bills them at the output rate and reports them as a subset of it.
+// Cache WRITES are not reported in this shape and stay unstated rather than
+// becoming a zero that would understate spend.
+func codexBillingUsage(usage map[string]any) (fresh, cached, output int, present bool) {
+	if len(usage) == 0 {
+		return 0, 0, 0, false
+	}
+	_, hasInput := usage["input_tokens"]
+	_, hasOutput := usage["output_tokens"]
+	if !hasInput && !hasOutput {
+		return 0, 0, 0, false
+	}
+	input64 := int64FromAny(usage["input_tokens"])
+	cached64 := int64FromAny(usage["cached_input_tokens"])
+	out64 := int64FromAny(usage["output_tokens"])
+	if input64 < 0 || cached64 < 0 || out64 < 0 {
+		return 0, 0, 0, false
+	}
+	// A cached share larger than the inclusive total is incoherent; refuse it
+	// rather than emit a negative fresh bucket.
+	if cached64 > input64 {
+		return 0, 0, 0, false
+	}
+	fresh64 := input64 - cached64
+	if uint64(fresh64) > uint64(^uint(0)>>1) || uint64(cached64) > uint64(^uint(0)>>1) || uint64(out64) > uint64(^uint(0)>>1) {
+		return 0, 0, 0, false
+	}
+	return int(fresh64), int(cached64), int(out64), true
 }
 
 func codexTextPayloads(obj map[string]any) []string {

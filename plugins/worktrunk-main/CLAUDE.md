@@ -7,11 +7,14 @@ cargo run -- hook pre-merge --yes   # all tests + lints (runs automatically in w
 ```
 
 Claude Code web: run `task setup-web` first. Test commands, isolation, and coverage investigation: `tests/CLAUDE.md`.
+Codex Cloud: use the setup in `.codex/cloud.sh`.
 
 ## Project Status
 
 Maturing mode: a growing user base, so balance clean design with compatibility.
 
+- New features are welcome, but a command, option, user-facing concept, or configuration key is a product decision. Its user value must justify the code and documentation surface it adds.
+- Consolidate or remove existing prose and machinery before adding another explanation, mode, or special case.
 - External-interface breaks need justification (a real improvement, not cleanup); prefer deprecation warnings over silent breaks.
 - **Protected interfaces:** config file format (`wt.toml`, user config) and CLI flags/arguments. Everything else (internal APIs, output formatting, log locations) is flexible.
 - No Rust library compatibility concerns (CLI tool only).
@@ -29,7 +32,7 @@ Use consistently in docs, help text, and code comments:
 
 ## Skills
 
-Load relevant skills before starting; reload when scope changes mid-session. Project-local skills in `.claude/skills/`:
+Load relevant skills before starting; reload when scope changes mid-session. Project-local skills live in `.claude/skills/`, with `.agents/skills` linking Codex to the same files:
 
 - `writing-user-outputs` — before editing code that calls `warning_message`, `hint_message`, `error_message`, `info_message`, `eprintln`, `println`, or otherwise produces user-visible strings (CLI help, progress UI, snapshots).
 - `running-tend` — operating in CI or writing tend workflows.
@@ -43,11 +46,13 @@ Load relevant skills before starting; reload when scope changes mid-session. Pro
 
 ## Documentation
 
-Behavior changes require doc updates. `src/cli/mod.rs` (`after_long_help` plus clap attributes) is the PRIMARY SOURCE for command pages; their rendered mirrors in `docs/content/` and `skills/worktrunk/reference/` are generated, as is all of `plugins/worktrunk/skills/` — but both directories also hold hand-edited primaries (non-command docs in `docs/content/`, skill-only pages like `shell-integration.md` in the reference dir), so check which file is primary in the sync taxonomy before editing. Ask: "does `--help` still describe what the code does?" `cargo test --test integration test_docs_are_in_sync` checks doc sync; editing help text (`after_long_help`, `about`, arg docs) also changes the rendered `--help` snapshots, which that test leaves untouched — `cargo insta test --accept --test integration -- test_help` regenerates them (the pre-merge hook runs both). Sync taxonomy, help-text authoring (three render contexts, link text, config-TOML blocks): `docs/CLAUDE.md`.
+Behavior changes require doc updates. `src/cli/mod.rs` (`after_long_help` plus clap attributes) is the PRIMARY SOURCE for command pages; their rendered mirrors in `docs/src/content/docs/` and `skills/worktrunk/reference/` are generated, as is all of `plugins/worktrunk/skills/` — but both directories also hold hand-edited primaries (non-command docs in `docs/src/content/docs/`, skill-only pages like `troubleshooting.md` in the reference dir), so check which file is primary in the sync taxonomy before editing. Ask: "does `--help` still describe what the code does?" `cargo test --test integration test_docs_are_in_sync` checks doc sync; editing help text (`after_long_help`, `about`, arg docs) also changes the rendered `--help` snapshots, which that test leaves untouched — `cargo insta test --accept --test integration -- test_help` regenerates them (the pre-merge hook runs both). Sync taxonomy, help-text authoring (three render contexts, link text, config-TOML blocks): `docs/CLAUDE.md`.
 
 ## Plugin Layout
 
 Per-tool layout and path resolution (Claude/Codex/Gemini), the convention-only Claude manifest, the Codex inline-hooks rationale, the generated plugin-skills mirror, the accepted `wt-switch-create` tradeoff, and `test_plugin_layout_is_consolidated`: `plugins/worktrunk/CLAUDE.md`.
+
+The Pi-family integrations are two commands because they are two agents. `wt config plugins pi` targets Pi (earendil-works/pi), which loads `ExtensionAPI` extensions from `~/.pi/agent/extensions/`; `wt config plugins omp` targets oh-my-pi, which loads `HookAPI` hooks from `~/.omp/agent/hooks/pre/`. Path rules live in `src/commands/config/pi.rs` and `src/commands/config/omp.rs`; the embedded sources are `dev/pi-extension.ts` and `dev/omp-hook.ts`. Neither file is interchangeable — the loaders differ, and so do the config roots (`$PI_CODING_AGENT_DIR` for Pi; `$PI_CONFIG_DIR`, `$OMP_PROFILE`/`$PI_PROFILE`, and `$PI_CODING_AGENT_DIR` for oh-my-pi).
 
 ## Data Safety
 
@@ -58,14 +63,16 @@ Never risk data loss without explicit user consent. A failed command that preser
 - **No implicit destructive side effects** — never silently delete/overwrite as a side effect of an unrelated operation; make cleanup a separate explicit action the user chooses.
 - **Favor the failing variant on races** — `git reset --keep` (fails if tracked files were modified) over `--hard`; `git checkout --merge` over `--force`. If no safer variant exists, document the risk inline.
 - **Time-of-check vs time-of-use** — be conservative when there's a gap between the safety check and the operation. `wt merge` verifies clean before rebasing, but files could appear before cleanup — don't force-remove during cleanup.
-- **Replace files, never truncate them** — `fs::write` truncates before it writes, so a crash mid-write leaves the file empty. Every write to a file worktrunk can't put back (rc files, shell wrappers, `config.toml`, `approvals.toml`, another tool's `settings.json`) goes through `utils::write_atomically`, which renames a sibling temp file over the target; the spec on that function covers symlinks, mode, and what a rename costs. Regenerable content (the cache, the `-vv` diagnostic report) keeps the plain write.
+- **Replace full files, never truncate them** — `fs::write` truncates before it writes, so a crash mid-write leaves the file empty. Every full-file rewrite worktrunk can't put back (shell wrappers, `config.toml`, `approvals.toml`, another tool's `settings.json`) goes through `utils::write_atomically`, which renames a sibling temp file over the target; the spec on that function covers symlinks, mode, and what a rename costs. When a user-owned file was observed missing, `utils::write_new_atomically` refuses to overwrite one that appears before persistence. Adding to an existing Bash, Zsh, or PowerShell rc file instead opens it in append mode, so a stale snapshot cannot replace concurrent edits; never truncate the file to recover from an append error. Don't grow the install path into a rebuild. Removal still rewrites those rc files whole (`uninstall_previewed_lines`), which is why the `write_atomically` spec still names them. Regenerable content (the cache, the `-vv` diagnostic report) keeps the plain write.
+- **A path the user named is written, not second-guessed** — `wt config update --output <path>` replaces whatever is there, the way `cp` and a shell redirect do, and pointed at the config being migrated it writes the migration there too. No-clobber belongs to the other case: a path worktrunk chose itself and observed absent (a shell rc file, `wt config create`), where a file appearing before the rename is one wt never read and a dangling symlink is a dotfile manager's link to keep. Deciding between the two at a call site is the smell — each write site is in one case or the other, so it calls one function unconditionally.
+- **Shell-config concurrency has a deliberate boundary** — the append lock coordinates Worktrunk installers, and no-clobber creation turns the missing-file race into a fail-and-rerun outcome. An editor save racing rc-file uninstall can still be overwritten; accept this final check-to-rename window because sidecar locks, backups, retries, and extra pre-rename checks do not close it. Revisit after an observed incident or a simpler write design. Worktrunk-owned wrappers and completions use last-writer-wins semantics, as does the merge into another tool's `settings.json`.
 
 These stop where git's own protections stop, and matching git is deliberate in each case. The named spec says why:
 
 - `wt merge` and `wt step push` overwrite an ignored file in the destination worktree whose path the incoming commits track, exactly as a `git merge` run there would (`src/commands/worktree/push.rs`).
 - Removal's final dirty-worktree gate is answered by the fsmonitor daemon under `core.fsmonitor`, exactly as `git worktree remove`'s own gate is (`src/git/remove.rs`).
 
-Full inventory: FAQ [What files does Worktrunk create?](docs/content/faq.md#what-files-does-worktrunk-create) and [What can Worktrunk delete?](docs/content/faq.md#what-can-worktrunk-delete). Review new code that changes this surface against those sections.
+Full inventory: FAQ [What files does Worktrunk create?](docs/src/content/docs/faq.md#what-files-does-worktrunk-create) and [What can Worktrunk delete?](docs/src/content/docs/faq.md#what-can-worktrunk-delete). Review new code that changes this surface against those sections.
 
 ## Command Execution Principles
 
@@ -82,7 +89,7 @@ Cmd::new("gh").args(["pr", "list"]).run()?;  // no context for standalone tools
 
 ### Git-Discovery Env Vars Follow Who Chose the Cwd
 
-Git resolves `GIT_DIR`/`GIT_WORK_TREE` (and the rest of `INHERITED_GIT_PATH_VARS`) before walking up from the cwd, so an inherited value silently overrides a child's working directory. **Any spawn site that relocates a user command into a `wt`-chosen worktree — hooks, `wt step for-each`, the `--execute` no-integration fallback — must scrub these vars** (`Cmd::scrub_git_discovery_env` or `scrub_git_discovery_env_vars`); children running in the user's own context (aliases, `commit.generation`) and `wt`'s internal git plumbing keep the inherited context (absolutized). Full site classification and rationale: `scrub_git_discovery_env_vars` in `src/shell_exec.rs`.
+Git resolves `GIT_DIR`/`GIT_WORK_TREE` (and the rest of `INHERITED_GIT_PATH_VARS`) before walking up from the cwd, so an inherited value silently overrides a child's working directory. **Any spawn site whose cwd names a `wt`-chosen worktree must scrub these vars** (`Cmd::scrub_git_discovery_env` or `scrub_git_discovery_env_vars`) — both relocated user commands (hooks, `wt step for-each`, the `--execute` program) and `wt`'s own worktree-local plumbing (`WorkingTree::run_command`, `TempIndex::command`). A site that supplies its own value for one of the scrubbed vars sets it after the scrub; `Cmd` applies env mutations in call order, so the set wins. Children running in the user's own context (aliases, `commit.generation`) and repo-level plumbing (`Repository::run_command`) keep the inherited context (absolutized) — that exemption is about scope, not cwd: `Repository::at` is handed a `wt`-chosen worktree at several sites, but repo-level questions are worktree-agnostic within one repository, and every worktree-scoped answer routes through `WorkingTree`. Full site classification and rationale: `scrub_git_discovery_env_vars` in `src/shell_exec.rs`.
 
 ### Real-time Output Streaming
 
@@ -94,12 +101,16 @@ Prefer exit codes / `--porcelain` / `--json` over parsing human-readable message
 
 | Tool | Fragile | Structured |
 |------|---------|------------|
-| `git diff` | `--stat` (localized) | `--numstat`, `--shortstat` (`(+)`/`(-)` hardcoded) |
-| `git status` | default | `--porcelain=v2` |
+| `git diff-tree` / `diff-index` | `--stat` (localized) | `--numstat`, `--shortstat` (`(+)`/`(-)` hardcoded) |
+| `git status` | default | `--porcelain=v2 -z` |
 | `git merge-base` | error messages | exit codes |
 | `gh` / `glab` | default | `--json` |
 
 When no structured alternative exists, document the fragility inline.
+
+### Plumbing for Output `wt` Consumes
+
+Porcelain commands read display configuration that changes what they report: `diff.relative` once made `wt remove` delete an unmerged branch, and `color.ui=always` and `diff.external` leaked into LLM prompts. When `wt` parses, caches, renders, or prompts with git's output, it runs plumbing (`diff-tree`, `diff-index`, `diff-files`, `for-each-ref`), which ignores that configuration apart from `submodule.<name>.ignore`. `PlumbingDiff::args` builds every plumbing diff with `--ignore-submodules=none` to override that setting, and a test rejects one spelled by hand. Rendered and prompted diffs go through `PreparedDiff::capture`, which also restores the `git diff` defaults plumbing lacks. `git status` has no plumbing equivalent, so it pins its behavior with explicit flags. Output shown as git's own view, like `wt step diff`, stays porcelain.
 
 ### Immutable Ids Over List Positions
 
@@ -117,7 +128,7 @@ Why: silent "lookup" paths that walk to the wire (alias dispatch, hook context b
 
 What currently reaches the wire:
 
-- `wt list --full`, `wt list statusline` — CI status; also plain `wt list` (any format) when `[list] columns` names `ci`, which forces the column (and its fetch) on without `--full`
+- `wt list --full`, `wt list statusline` — CI status; also plain `wt list` (table) when `[list] columns` names `ci`, which forces the column (and its fetch) on without `--full`. `--format json` plans off `--full` alone, so a display setting can't send a machine-readable call to a forge
 - `wt switch` (interactive picker, no target) — per-row CI status, primed from the local cache then fetched live and streamed into the rows; once a row's CI fetch surfaces an open PR/MR, a per-row background `gh pr view <n> --json comments` (`glab api …/notes` on GitLab) fills that row's `comments` preview tab — the same fetch a `--prs` row makes, spawned once per row from `progressive_handler` (see `picker::prs::spawn_comments_fetch`). The `comments` tab is the only PR data fetched lazily here; `pr` rides the CI call and `log` is the local `git log`
 - generating a branch summary with a `commit.generation` command
 - generating a commit message with a `commit.generation` command
@@ -146,6 +157,10 @@ Why: wt installs a `signal_hook` SIGINT/SIGTERM handler so it can forward signal
 
 **Implementation:** the operation-driven hooks (`pre-merge`, `post-merge`, `pre-remove`, `post-remove`, `post-switch`, `pre-start`, `post-start`) are gated *before* a state mutation and run *after* it, so a second config read could select an unapproved command. `src/commands/hook_plan.rs` closes this structurally: each gate (`wt remove` / `wt merge` / `wt step prune` / `wt switch`) selects the command set once into an immutable `ApprovedHookPlan` (`HookPlan::approve`); the executor consumes only that value via `execute_planned_hook` / `register_planned` and holds no `ProjectConfig` to re-derive from, so re-selection is a compile error, not a review check. An empty plan (`--no-hooks`, declined, or no project config) runs nothing. The adjacent hooks with no gate→exec mutation (`pre-commit`, `post-commit`, `pre-switch`, `wt hook <type>`, aliases) still resolve config at invocation via `execute_hook` / `HookAnnouncer::register`. See `src/commands/hook_plan.rs` and the `commands::hooks` module spec.
 
+### Background Hook Pipelines Run Concurrently, Per Source
+
+A `post-*` batch spawns one detached pipeline per source, and they run at once. Don't serialize them: `post-start` is documented for dev servers and `wt step tether`, so a user hook that never exits would block the project's forever, and `wt merge`'s batch spans two worktrees (`post-commit` anchors on the invoking worktree, the rest on the destination) so chaining also drops hooks behind a head whose worktree is already removed. That span is also why the flush can reach a pipeline whose anchor is gone: the merge removes `post-commit`'s worktree first, so the removal reports it through `HookAnnouncer::mark_worktree_removed` and the flush drops that pipeline rather than spawning it into a path whose git discovery would resolve to the primary worktree. The removal is what knows — where its fast rename into `.git/wt/trash/` fails, the fallback `git worktree remove` runs detached and the anchor is still on disk at the flush, so a filesystem probe would answer differently on the two paths. The cost is that two hooks touching one worktree's git state can collide — two `git pull`s there append to each other's `FETCH_HEAD` and both fail — which `wt hook --help` tells users to avoid by keeping dependent commands in one source.
+
 ## Hook Output Logs
 
 `.git/wt/logs/` layout — per-branch and repo-wide log paths, plus the `sanitize_for_filename` filename rule: the `HookLog` spec in `src/commands/process.rs`. The top-level file-vs-directory split that `wt config state` walks: the "Log layout invariant" in `src/commands/config/state.rs`.
@@ -173,6 +188,23 @@ Check `Cargo.toml` before hand-rolling a utility:
 | ANSI colors | `color_print::cformat!()` | raw escape codes |
 | Template var detection | `minijinja::undeclared_variables(false)` | regex/substring on `{{ var }}` |
 
+Delegation extends past utilities to **another tool's own rules** — where zsh
+reads its config, which TOML keys a schema accepts, how MiniJinja scopes a
+template binding. Ask the library; don't re-derive its rule inside `wt`. A
+re-derived rule is correct on the cases that motivated it and drifts silently
+afterwards. Where the library exposes no API that answers the question, keep
+the substitute no larger than the question and say in the code why it exists.
+
+### Don't Defend Improbable Environments
+
+No resolvable home directory, a config directory the user moved out from under
+the tool that owns it — `wt`'s behavior there is the least of that user's
+problems. Take the working environment as a precondition and drop the fallback
+chain rather than carrying code that is maintained forever and exercised by
+nobody. Dropping a fallback still means failing with an error, never
+`.expect()` — see **Error Handling**. Data safety is the exception, and it has
+its own section.
+
 ### Other
 
 - **Don't suppress warnings** with `#[allow(dead_code)]` — delete the code or add `// TODO(topic): used by <upcoming work>`.
@@ -188,7 +220,9 @@ Check `Cargo.toml` before hand-rolling a utility:
 
 All config deprecation lives in one layer: pre-deserialization TOML migration in `src/config/deprecation.rs`. `migrate_content()` rewrites deprecated patterns into canonical form before serde parses; `check_and_migrate()` reuses it, and additionally detects patterns and emits per-process-deduped warnings (the user materializes migrations via `wt config update`). **Never silently drop an old config key** — that's a silent behavior change for users; migrate it.
 
-Every deprecation is one row in the `DEPRECATION_RULES` table: a single idempotent function that rewrites the pattern AND returns the `DeprecationKind`s for what it changed — there is no separate detection function, so detection and migration share one predicate and cannot drift. Detection runs the same functions against a scratch copy of the document (progressively, so a rule sees earlier rules' rewrites); the invariant for warning rules is **a warning fires exactly when `wt config update` would change the file**, pinned by `test_warning_fires_iff_update_changes` — add new edge cases to its battery. The row variant decides when the rewrite applies: `Structural` rewrites on every load; `UpdateOnly` only via `wt config update`, for deprecated forms that still work at runtime; `Silent` rewrites on every load with no warning — its function signature has no channel for a kind, which is what scopes the invariant to `Structural` and `UpdateOnly`; `PendingDefault` adopts a default a future release switches — `wt config update` writes the upcoming value (currently `[list] json-schema = 2`), inert while the system config layer defines the key — update-pass only, scoped to the config kind that owns the key, and excluded from load warnings by `is_pending_default`: it satisfies the same iff at the surface that reads the setting, where the `wt list` JSON nag fires exactly when update would write. Table order is both the warning-emission order and the migration order. Each `DeprecationKind` carries its own display payload, so `format_deprecation_warnings()` is one match over the kinds. A config that can't be rewritten safely (a malformed value, an occupied destination key) is left untouched and unwarned — serde's type or unknown-field error is the messaging; an empty deprecated section is also left alone, with no message at all (it contributes no config). Adding a deprecation: (1) one idempotent migrate-and-report function; (2) a `DeprecationKind` variant plus its match arm in `format_deprecation_warnings()`; (3) a `DEPRECATION_RULES` row; (4) for a removed top-level section, add a `DeprecatedSection` to `DEPRECATED_SECTION_KEYS` (canonical key plus display form) so `warn_unknown_fields` defers to the deprecation messaging and suggests the correct config file. A silently-migrated rename (e.g. `pre-create` → `pre-start`) is a `Silent` row with no variant. Renaming a field within a section follows the same shape via a TOML-level rename function (see `migrate_negated_bool`); the struct never needs the old field since migration precedes serde.
+Every deprecation is one row in the `DEPRECATION_RULES` table: a single idempotent function that rewrites the pattern AND returns the `DeprecationKind`s for what it changed — there is no separate detection function, so detection and migration share one predicate and cannot drift. Detection runs the same functions against a scratch copy of the document (progressively, so a rule sees earlier rules' rewrites); the invariant for warning rules is **a warning fires exactly when `wt config update` would change the file**, pinned by `test_warning_fires_iff_update_changes` — add new edge cases to its battery. The row variant decides when the rewrite applies: `Structural` rewrites on every load; `UpdateOnly` only via `wt config update`, for deprecated forms that still work at runtime; `Silent` rewrites on every load with no warning — its function signature has no channel for a kind, which is what scopes the invariant to `Structural` and `UpdateOnly`. Table order is both the warning-emission order and the migration order. Each `DeprecationKind` carries its own display payload, so wording it is a match over the kinds — twice, in one file: `format_warning_lines()` names what a load still has ahead of it, `format_applied_lines()` what a config mutation's write already did. A config that can't be rewritten safely (a malformed value, an occupied destination key) is left untouched and unwarned — serde's type or unknown-field error is the messaging; an empty deprecated section is also left alone, with no message at all (it contributes no config). Adding a deprecation: (1) one idempotent migrate-and-report function; (2) a `DeprecationKind` variant plus its match arm in each of those two renderers; (3) a `DEPRECATION_RULES` row; (4) for a removed top-level section, add a `DeprecatedSection` to `DEPRECATED_SECTION_KEYS` (canonical key plus display form) so `warn_unknown_fields` defers to the deprecation messaging and suggests the correct config file. A silently-migrated rename (e.g. `pre-create` → `pre-start`) is a `Silent` row with no variant. Renaming a field within a section follows the same shape via a TOML-level rename function (see `migrate_negated_bool`); the struct never needs the old field since migration precedes serde.
+
+**What an update writes must load clean.** A rule that moves a section's table wholesale (`[select]` → `[switch.picker]`) removes the keys its destination struct has no field for and reports each one (`drop_unsupported_keys`); a key removal that empties a `[projects."<id>"]`-scoped section removes the section too. Otherwise the key or the empty section ends up at a path the user never typed, `warn_unknown_fields` names that path on every command, and `wt config update` — the command the deprecation hint points at — writes it into the file rather than clearing it, so the warning outlives every fix available to the user. `test_warning_fires_iff_update_changes` pins both halves: what the update writes raises no deprecation warning and no unknown-field warning. The removal is reported and the key had no home in either config file, so this does not conflict with "never silently drop a key". A key that is merely *misplaced* (valid in the other config, such as a user-only `commit.generation.command` in project config) stays, and keeps its redirect warning; that is why `drop_unsupported_keys` gets the union of the destination's schemas across config types. Those schemas must carry no `#[serde(alias)]`, which `schema_property_names` cannot see.
 
 ## Adding CLI Commands
 
@@ -210,6 +244,8 @@ No `get_*` — bare nouns follow Rust stdlib convention.
 
 `Repository` caches read-only values via `Arc<RepoCache>` (cloning shares it). What is and isn't cached, the `list_worktrees()` post-mutation invariant, the two storage patterns, and the in-memory-`RepoCache`-vs-persistent-`sha_cache` decision (cheap-and-hot → in-memory get-or-create; expensive → disk; both → in-memory front over disk back): the `# Caching` section in `src/git/repository/mod.rs`.
 
+**A change to what a cached value means leaves the old answers in place.** The persistent entries are keyed on SHA pairs with no TTL, so an entry written by an older `wt` keeps answering until its key recurs, and on a finished branch that is never. Moving the diffs onto plumbing is the worked example — it left `has-added-changes` entries saying an unmerged branch had no added changes. Nothing invalidates these on an upgrade, deliberately: a cache version is permanent machinery for a transition that has come up once. So when a generator behind one of `sha_cache`'s kinds changes, the PR description says what the old answers get wrong, which is where that trade gets decided.
+
 ## Releases
 
-Use the `release` skill (version bump, changelog, crates.io publish, GitHub release).
+Use the `release` skill (version bump, changelog, crates.io publish, GitHub release). It writes every changelog entry from the commits since the last tag, so other PRs leave `CHANGELOG.md` untouched; a PR that already carries an entry drops it rather than resolving a conflict on it.

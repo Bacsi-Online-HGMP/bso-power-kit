@@ -1124,20 +1124,14 @@ pub trait TestRepoBase {
     }
 }
 
-/// Create a pair of temporary files for directive output (cd + exec), in a
-/// directory of their own.
+/// Create a temporary CD directive file for a shell-integration test.
 ///
-/// The shell wrapper creates temp files and sets `WORKTRUNK_DIRECTIVE_CD_FILE`
-/// and `WORKTRUNK_DIRECTIVE_EXEC_FILE` before running wt. Use
-/// `configure_directive_files()` to set these on a Command for testing.
-///
-/// Returns `(cd_path, exec_path, guard)`. The guard must be kept alive for the
-/// duration of the test — dropping it removes the directory and both files.
-pub fn directive_files() -> (PathBuf, PathBuf, TempDir) {
+/// The guard must be kept alive for the duration of the test — dropping it
+/// removes the directory and file.
+pub fn directive_file() -> (PathBuf, TempDir) {
     let dir = directive_temp_dir();
     let cd_path = create_empty(dir.path().join("cd"));
-    let exec_path = create_empty(dir.path().join("exec"));
-    (cd_path, exec_path, dir)
+    (cd_path, dir)
 }
 
 /// A private directory for a test's directive files.
@@ -1157,28 +1151,14 @@ fn directive_temp_dir() -> TempDir {
     TempDir::new().expect("failed to create directive temp dir")
 }
 
-/// Create `path` as an empty file, as the shell wrapper's `mktemp` would, and
-/// return it. wt appends to the exec file rather than creating it, so it has to
-/// exist before wt runs.
+/// Create `path` as an empty file and return it.
 fn create_empty(path: PathBuf) -> PathBuf {
     std::fs::File::create(&path).expect("failed to create a directive file in its own temp dir");
     path
 }
 
-/// Configure a Command to use the new split directive-file protocol.
-///
-/// Sets `WORKTRUNK_DIRECTIVE_CD_FILE` and `WORKTRUNK_DIRECTIVE_EXEC_FILE` env
-/// vars so the wt binary writes a raw path to the cd file and arbitrary shell
-/// to the exec file.
-pub fn configure_directive_files(cmd: &mut Command, cd_path: &Path, exec_path: &Path) {
-    cmd.env("WORKTRUNK_DIRECTIVE_CD_FILE", cd_path);
-    cmd.env("WORKTRUNK_DIRECTIVE_EXEC_FILE", exec_path);
-}
-
-/// Configure a Command to use the split directive-file protocol with only the
-/// CD file (EXEC scrubbed). This simulates running inside an alias/hook body
-/// where the EXEC env var was stripped.
-pub fn configure_directive_cd_only(cmd: &mut Command, cd_path: &Path) {
+/// Configure a Command with the shell wrapper's CD directive file.
+pub fn configure_directive_file(cmd: &mut Command, cd_path: &Path) {
     cmd.env("WORKTRUNK_DIRECTIVE_CD_FILE", cd_path);
 }
 
@@ -1207,6 +1187,19 @@ pub fn set_temp_home_env(cmd: &mut Command, home: &Path) {
     // matches the setup helpers and stays hermetic against an ambient
     // CLAUDE_CONFIG_DIR inherited from the test runner's environment.
     cmd.env("CLAUDE_CONFIG_DIR", home.join(".claude"));
+    for var in [
+        "OMP_PROFILE",
+        "PI_PROFILE",
+        "PI_CONFIG_DIR",
+        "PI_CODING_AGENT_DIR",
+        // Codex resolves its config root from CODEX_HOME, falling back to
+        // `$HOME/.codex` — which the temp home already pins. Dropping an
+        // ambient value is all hermeticity needs, and unlike setting one it
+        // keeps the variable out of every snapshot's env block.
+        "CODEX_HOME",
+    ] {
+        cmd.env_remove(var);
+    }
 }
 
 /// Override `WORKTRUNK_CONFIG_PATH` to point to the XDG-derived user config path
@@ -1421,8 +1414,10 @@ impl TestRepo {
     }
 
     /// Shared initializer for `new()`, `bare()`, and `empty()`: makes a tempdir
-    /// and runs `git init` with the given arguments inside it.
-    fn init_repo(git_args: &[&str]) -> Self {
+    /// and runs `git init` with the given arguments inside it. Public for a
+    /// test that needs an `init` option no named constructor covers, such as
+    /// `--object-format=sha256`.
+    pub fn init_repo(git_args: &[&str]) -> Self {
         shell_exec::enable_hermetic_test_env();
         let temp_dir = test_tempdir();
         let root = temp_dir.path().join("repo");
@@ -2218,13 +2213,36 @@ impl TestRepo {
             .write(mock_bin);
     }
 
-    /// Setup mock `claude` CLI as installed
+    /// Setup mock `claude` CLI as installed, listing no plugins
     ///
-    /// Call this after setup_mock_ci_tools_unauthenticated() to simulate
-    /// Claude Code being available on the system.
+    /// `wt config show` and the plugin commands ask Claude Code what it
+    /// holds, so a test that says Claude Code is available has to put a mock
+    /// on `PATH` to answer — otherwise the question reaches whatever `claude`
+    /// the developer has installed, and the answer is their own plugin list.
+    /// Call `setup_mock_ci_tools_unauthenticated()` first.
     pub fn setup_mock_claude_installed(&mut self) {
-        // Mark Claude as installed for test environment
+        self.write_claude_plugin_list(MockResponse::output("[]"));
         self.claude_installed = true;
+    }
+
+    /// Setup mock `claude` CLI as installed, listing the worktrunk plugin
+    ///
+    /// The counterpart of [`Self::setup_mock_claude_installed`] for the state
+    /// after a successful install.
+    pub fn setup_mock_claude_with_plugin_installed(&mut self) {
+        self.write_claude_plugin_list(MockResponse::output(Self::CLAUDE_PLUGINS_WITH_WORKTRUNK));
+        self.claude_installed = true;
+    }
+
+    /// Write a `claude` mock whose only answer is `plugin list --json`.
+    fn write_claude_plugin_list(&self, list: MockResponse) {
+        let mock_bin = self
+            .mock_bin_path
+            .as_ref()
+            .expect("call setup_mock_ci_tools_unauthenticated() first");
+        MockConfig::new("claude")
+            .command("plugin list", list)
+            .write(mock_bin);
     }
 
     /// Setup mock `codex` CLI as installed
@@ -2235,19 +2253,39 @@ impl TestRepo {
         self.codex_installed = true;
     }
 
-    /// Setup the worktrunk plugin as installed in Claude Code
+    /// `claude plugin list --json` holding the worktrunk plugin
     ///
-    /// Creates the installed_plugins.json file in the temp home directory.
-    /// The temp_home must already be set up (via set_temp_home_env on the command).
-    pub fn setup_plugin_installed(temp_home: &std::path::Path) {
-        let plugins_dir = temp_home.join(".claude/plugins");
-        std::fs::create_dir_all(&plugins_dir).unwrap();
-        std::fs::write(
-            plugins_dir.join("installed_plugins.json"),
-            r#"{"version":2,"plugins":{"worktrunk@worktrunk":[{"scope":"user"}]}}"#,
-        )
-        .unwrap();
-    }
+    /// Claude Code prints a bare array of plugin objects whose `id` is the
+    /// `PLUGIN@MARKETPLACE` selector its install and uninstall commands take.
+    pub const CLAUDE_PLUGINS_WITH_WORKTRUNK: &'static str =
+        r#"[{"id":"worktrunk@worktrunk","version":"9f13c0a41e57","scope":"user","enabled":true}]"#;
+
+    /// `claude plugin marketplace list --json` holding the worktrunk
+    /// marketplace
+    ///
+    /// Claude Code prints a bare array of marketplace objects. These bodies
+    /// are the mock's stdout rather than a config-file fixture, because wt
+    /// asks the harness what it holds instead of reading the file the harness
+    /// keeps it in.
+    pub const CLAUDE_MARKETPLACES_WITH_WORKTRUNK: &'static str =
+        r#"[{"name":"worktrunk","source":"github","repo":"max-sixty/worktrunk"}]"#;
+
+    /// `claude plugin marketplace list --json` holding some other marketplace
+    ///
+    /// The state a second `uninstall` lands in for a user who has other
+    /// marketplaces: the list is non-empty and worktrunk is simply not in it.
+    pub const CLAUDE_MARKETPLACES_WITHOUT_WORKTRUNK: &'static str =
+        r#"[{"name":"other","source":"github","repo":"someone/other"}]"#;
+
+    /// `codex plugin marketplace list --json` holding the worktrunk
+    /// marketplace
+    ///
+    /// Codex nests its entries under `marketplaces` where Claude Code prints
+    /// a bare array.
+    pub const CODEX_MARKETPLACES_WITH_WORKTRUNK: &'static str = r#"{"marketplaces":[{"name":"worktrunk","root":"/marketplaces/worktrunk","marketplaceSource":{"sourceType":"git","source":"https://github.com/max-sixty/worktrunk.git"}}]}"#;
+
+    /// `codex plugin marketplace list --json` holding some other marketplace
+    pub const CODEX_MARKETPLACES_WITHOUT_WORKTRUNK: &'static str = r#"{"marketplaces":[{"name":"other","root":"/marketplaces/other","marketplaceSource":{"sourceType":"git","source":"https://github.com/someone/other.git"}}]}"#;
 
     /// Setup the statusline as configured in Claude Code settings
     ///
@@ -2285,49 +2323,62 @@ impl TestRepo {
         .unwrap();
     }
 
-    /// Setup mock `gemini` CLI as installed
+    /// Setup mock `gemini` CLI as installed, listing no extensions
     ///
-    /// Call this to simulate Gemini CLI being available on the system.
+    /// Like [`Self::setup_mock_claude_installed`], the mock has to be on
+    /// `PATH` to answer, or the question reaches the developer's own Gemini
+    /// CLI. Call `setup_mock_ci_tools_unauthenticated()` first.
     pub fn setup_mock_gemini_installed(&mut self) {
+        self.write_gemini_extensions_list(MockResponse::output("[]"));
         self.gemini_installed = true;
     }
 
-    /// Make `claude`, `codex`, `opencode`, and `gemini` resolvable on `PATH`.
+    /// Setup mock `gemini` CLI as installed, listing the worktrunk extension
+    pub fn setup_mock_gemini_with_extension_installed(&mut self) {
+        self.write_gemini_extensions_list(MockResponse::output(
+            Self::GEMINI_EXTENSIONS_WITH_WORKTRUNK,
+        ));
+        self.gemini_installed = true;
+    }
+
+    /// `gemini extensions list -o json` holding the worktrunk extension
+    ///
+    /// Gemini CLI prints a bare array of extension objects carrying the
+    /// `name` the extension was installed under.
+    pub const GEMINI_EXTENSIONS_WITH_WORKTRUNK: &'static str = r#"[{"name":"worktrunk","version":"0.77.0","path":"/extensions/worktrunk","isActive":true}]"#;
+
+    /// Write a `gemini` mock whose only answer is `extensions list -o json`.
+    fn write_gemini_extensions_list(&self, list: MockResponse) {
+        let mock_bin = self
+            .mock_bin_path
+            .as_ref()
+            .expect("call setup_mock_ci_tools_unauthenticated() first");
+        MockConfig::new("gemini")
+            .command("extensions list", list)
+            .write(mock_bin);
+    }
+
+    /// Make `claude`, `codex`, `opencode`, `omp`, `pi`, and `gemini` resolvable on `PATH`.
     ///
     /// The `setup_mock_*_installed` helpers force detection through the
     /// `WORKTRUNK_TEST_*_INSTALLED` env overrides, so the `which::which`
     /// lookup inside each `is_*_available()` never runs under test. This
     /// helper instead drops those overrides and prepends real mock
     /// executables, exercising the production PATH-detection path for all
-    /// four AI CLIs at once. Call `setup_mock_ci_tools_unauthenticated()`
+    /// six AI CLIs at once. Call `setup_mock_ci_tools_unauthenticated()`
     /// first to create the mock bin directory.
     pub fn setup_mock_clis_on_path(&mut self) {
         let mock_bin = self
             .mock_bin_path
             .as_ref()
             .expect("call setup_mock_ci_tools_unauthenticated() first");
-        // `wt config show` only `which`-detects these CLIs (never runs
-        // them), so the mocks need no command behavior.
-        for cli in ["claude", "codex", "opencode", "gemini"] {
+        // The mocks answer nothing, so each `--json` listing `wt config show`
+        // asks for fails and the section renders its "not installed" hint.
+        // What this test covers is the `which::which` detection above it.
+        for cli in ["claude", "codex", "opencode", "omp", "pi", "gemini"] {
             MockConfig::new(cli).write(mock_bin);
         }
         self.detect_clis_via_path = true;
-    }
-
-    /// Setup the worktrunk extension as installed in Gemini CLI
-    ///
-    /// `gemini extensions install` clones the extension into
-    /// `~/.gemini/extensions/<name>/`; this writes the resulting
-    /// `gemini-extension.json` under the temp home directory (which must
-    /// already be set up via `set_temp_home_env` on the command).
-    pub fn setup_gemini_extension_installed(temp_home: &std::path::Path) {
-        let extension_dir = temp_home.join(".gemini/extensions/worktrunk");
-        std::fs::create_dir_all(&extension_dir).unwrap();
-        std::fs::write(
-            extension_dir.join("gemini-extension.json"),
-            include_str!("../../gemini-extension.json"),
-        )
-        .unwrap();
     }
 
     /// Setup mock `claude` CLI with plugin subcommand support
@@ -2343,6 +2394,11 @@ impl TestRepo {
 
         MockConfig::new("claude")
             .command("plugin marketplace", MockResponse::exit(0))
+            // Uninstall asks what Claude Code holds before deciding a target
+            // is already gone, so a mock that answered nothing would leave the
+            // question open on every path that reaches it.
+            .command("plugin marketplace list", MockResponse::output("[]"))
+            .command("plugin list", MockResponse::output("[]"))
             .command("plugin install", MockResponse::exit(0))
             .command("plugin uninstall", MockResponse::exit(0))
             .write(mock_bin);
@@ -2353,9 +2409,9 @@ impl TestRepo {
     /// Setup mock `codex` CLI with plugin marketplace support
     ///
     /// Creates a mock codex binary that handles `plugin marketplace add`,
-    /// and `plugin marketplace remove` commands. Must call
-    /// `setup_mock_ci_tools_unauthenticated()` first to create the mock bin
-    /// directory.
+    /// `plugin marketplace remove`, `plugin add`, and `plugin remove`
+    /// commands. Must call `setup_mock_ci_tools_unauthenticated()` first to
+    /// create the mock bin directory.
     pub fn setup_mock_codex_with_plugins(&mut self) {
         let mock_bin = self
             .mock_bin_path
@@ -2365,17 +2421,110 @@ impl TestRepo {
         MockConfig::new("codex")
             .command("plugin marketplace add", MockResponse::exit(0))
             .command("plugin marketplace remove", MockResponse::exit(0))
+            .command(
+                "plugin marketplace list",
+                MockResponse::output(r#"{"marketplaces":[]}"#),
+            )
+            .command("plugin add", MockResponse::exit(0))
+            .command("plugin remove", MockResponse::exit(0))
             .write(mock_bin);
 
         self.codex_installed = true;
     }
 
-    /// Setup mock `claude` CLI where plugin commands fail
+    /// Setup mock `claude` CLI whose only failing command is the marketplace
+    /// removal, answering `plugin marketplace list --json` with `list`
     ///
-    /// Creates a mock claude binary where `plugin marketplace`, `plugin install`,
-    /// and `plugin uninstall` all exit with code 1 and print an error.
-    /// Must call `setup_mock_ci_tools_unauthenticated()` first.
-    pub fn setup_mock_claude_with_plugins_failing(&mut self) {
+    /// Uninstall asks the harness what it holds to tell "the marketplace was
+    /// already gone" from a removal that genuinely failed, so the two cases
+    /// need a mock that fails the removal and leaves every other step alone.
+    /// `list` is the whole variable between them — a body for an answer the
+    /// reader can use, a failing response for one it cannot. Must call
+    /// `setup_mock_ci_tools_unauthenticated()` first.
+    pub fn setup_mock_claude_with_marketplace_remove_failing(&mut self, list: MockResponse) {
+        let mock_bin = self
+            .mock_bin_path
+            .as_ref()
+            .expect("call setup_mock_ci_tools_unauthenticated() first");
+
+        MockConfig::new("claude")
+            .command("plugin marketplace add", MockResponse::exit(0))
+            .command(
+                "plugin marketplace remove",
+                MockResponse::exit(1).with_stderr("error: marketplace remove failed\n"),
+            )
+            .command("plugin marketplace list", list)
+            .command("plugin list", MockResponse::output("[]"))
+            .command("plugin install", MockResponse::exit(0))
+            .command("plugin uninstall", MockResponse::exit(0))
+            .write(mock_bin);
+
+        self.claude_installed = true;
+    }
+
+    /// Setup mock `codex` CLI whose only failing command is the marketplace
+    /// removal, answering `plugin marketplace list --json` with `list`
+    ///
+    /// The Codex counterpart of
+    /// `setup_mock_claude_with_marketplace_remove_failing`.
+    pub fn setup_mock_codex_with_marketplace_remove_failing(&mut self, list: MockResponse) {
+        let mock_bin = self
+            .mock_bin_path
+            .as_ref()
+            .expect("call setup_mock_ci_tools_unauthenticated() first");
+
+        MockConfig::new("codex")
+            .command("plugin marketplace add", MockResponse::exit(0))
+            .command(
+                "plugin marketplace remove",
+                MockResponse::exit(1).with_stderr("error: marketplace remove failed\n"),
+            )
+            .command("plugin marketplace list", list)
+            .command("plugin add", MockResponse::exit(0))
+            .command("plugin remove", MockResponse::exit(0))
+            .write(mock_bin);
+
+        self.codex_installed = true;
+    }
+
+    /// Setup mock `codex` CLI whose marketplace commands succeed and whose
+    /// plugin commands fail
+    ///
+    /// Isolates a `codex plugin add` / `codex plugin remove` failure from the
+    /// marketplace step that runs beside it. Must call
+    /// `setup_mock_ci_tools_unauthenticated()` first.
+    pub fn setup_mock_codex_with_plugin_ops_failing(&mut self) {
+        let mock_bin = self
+            .mock_bin_path
+            .as_ref()
+            .expect("call setup_mock_ci_tools_unauthenticated() first");
+
+        MockConfig::new("codex")
+            .command("plugin marketplace add", MockResponse::exit(0))
+            .command("plugin marketplace remove", MockResponse::exit(0))
+            .command(
+                "plugin add",
+                MockResponse::exit(1).with_stderr("error: plugin add failed\n"),
+            )
+            .command(
+                "plugin remove",
+                MockResponse::exit(1).with_stderr("error: plugin remove failed\n"),
+            )
+            .write(mock_bin);
+
+        self.codex_installed = true;
+    }
+
+    /// Setup mock `claude` CLI where plugin commands fail, answering
+    /// `plugin list --json` with `list`
+    ///
+    /// Creates a mock claude binary where `plugin marketplace`, `plugin
+    /// install`, and `plugin uninstall` all exit with code 1 and print an
+    /// error. `list` is what the install short-circuits on and what decides
+    /// whether the failed uninstall is genuine, so each caller says which
+    /// state it is failing from. Must call
+    /// `setup_mock_ci_tools_unauthenticated()` first.
+    pub fn setup_mock_claude_with_plugins_failing(&mut self, list: MockResponse) {
         let mock_bin = self
             .mock_bin_path
             .as_ref()
@@ -2394,6 +2543,7 @@ impl TestRepo {
                 "plugin uninstall",
                 MockResponse::exit(1).with_stderr("error: uninstall failed\n"),
             )
+            .command("plugin list", list)
             .write(mock_bin);
 
         self.claude_installed = true;
@@ -2886,6 +3036,8 @@ impl TestRepo {
                 "WORKTRUNK_TEST_CLAUDE_INSTALLED",
                 "WORKTRUNK_TEST_CODEX_INSTALLED",
                 "WORKTRUNK_TEST_OPENCODE_INSTALLED",
+                "WORKTRUNK_TEST_PI_INSTALLED",
+                "WORKTRUNK_TEST_OMP_INSTALLED",
                 "WORKTRUNK_TEST_GEMINI_INSTALLED",
             ] {
                 cmd.env_remove(var);

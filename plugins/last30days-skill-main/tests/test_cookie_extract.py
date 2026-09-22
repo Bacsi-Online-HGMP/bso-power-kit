@@ -281,6 +281,39 @@ class TestExtractFirefoxCookies:
         assert result is not None
         assert result["auth_token"] == "fallback_token"
 
+    def test_utf16_profiles_ini_uses_install_default(self, mock_firefox_env):
+        """Firefox on Windows writes UTF-16 LE profiles.ini (#1067)."""
+        default_profile = "en3ndvop.default-release"
+        decoy = "aaa111.decoy"
+        profiles_dir = mock_firefox_env(
+            default_profile=default_profile,
+            profiles={
+                decoy: [
+                    (".x.com", "auth_token", "decoy_token"),
+                ],
+                default_profile: [
+                    (".x.com", "auth_token", "utf16_token"),
+                    (".x.com", "ct0", "utf16_ct0"),
+                ],
+            },
+        )
+        ini = textwrap.dedent(f"""\
+            [Install308046B0AF4A39CB]
+            Default={default_profile}
+            Locked=1
+        """)
+        (profiles_dir / "profiles.ini").write_bytes(ini.encode("utf-16"))
+
+        with patch(
+            "lib.cookie_extract._get_firefox_profiles_dir",
+            return_value=profiles_dir,
+        ):
+            result = extract_firefox_cookies(".x.com", ["auth_token", "ct0"])
+
+        assert result is not None
+        assert result["auth_token"] == "utf16_token"
+        assert result["ct0"] == "utf16_ct0"
+
     def test_non_default_profile_with_cookies(self, mock_firefox_env):
         """Falls back to non-default profile when default has no X cookies."""
         profiles_dir = mock_firefox_env(

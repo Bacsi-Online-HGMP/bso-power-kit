@@ -1,13 +1,14 @@
 //! Integration tests for `wt step <alias>`
 
 use crate::common::{
-    TestRepo, configure_directive_files, directive_files, make_snapshot_cmd,
+    TestRepo, configure_directive_file, directive_file, make_snapshot_cmd,
     make_snapshot_cmd_with_global_flags, repo, repo_with_remote, setup_snapshot_settings, wt_bin,
 };
 // Used only by the `#[cfg(unix)]` signal tests below; gate the import to match,
 // or it reads as unused on Windows under `-D warnings`.
 #[cfg(unix)]
 use crate::common::SLEEP_FOR_ABSENCE_CHECK;
+use ansi_str::AnsiStr;
 use insta_cmd::assert_cmd_snapshot;
 use rstest::rstest;
 use std::io::Write;
@@ -796,10 +797,10 @@ fn test_alias_passes_directive_file_to_subprocess(repo: TestRepo) {
         "switch --create alias-created",
     ));
 
-    let (cd_path, exec_path, _guard) = directive_files();
+    let (cd_path, _guard) = directive_file();
 
     let mut cmd = repo.wt_command();
-    configure_directive_files(&mut cmd, &cd_path, &exec_path);
+    configure_directive_file(&mut cmd, &cd_path);
     cmd.args(["step", "new-branch"]);
     let output = cmd.output().unwrap();
 
@@ -873,10 +874,10 @@ fn test_alias_wrapping_switch_preserves_subdir(#[from(repo_with_remote)] mut rep
 
     repo.write_test_config(&wt_alias_config("go", "switch feature"));
 
-    let (cd_path, exec_path, _guard) = directive_files();
+    let (cd_path, _guard) = directive_file();
 
     let mut cmd = repo.wt_command();
-    configure_directive_files(&mut cmd, &cd_path, &exec_path);
+    configure_directive_file(&mut cmd, &cd_path);
     cmd.args(["step", "go"])
         .current_dir(repo.root_path().join(&subdir));
     let output = cmd.output().unwrap();
@@ -913,10 +914,10 @@ fn test_alias_wrapping_remove_preserves_subdir(#[from(repo_with_remote)] mut rep
 
     repo.write_test_config(&wt_alias_config("finish", "remove -y"));
 
-    let (cd_path, exec_path, _guard) = directive_files();
+    let (cd_path, _guard) = directive_file();
 
     let mut cmd = repo.wt_command();
-    configure_directive_files(&mut cmd, &cd_path, &exec_path);
+    configure_directive_file(&mut cmd, &cd_path);
     cmd.args(["step", "finish"])
         .current_dir(feature_wt.join(&subdir));
     let output = cmd.output().unwrap();
@@ -936,140 +937,33 @@ fn test_alias_wrapping_remove_preserves_subdir(#[from(repo_with_remote)] mut rep
     );
 }
 
-/// User-source aliases pass the EXEC directive file through to the body, so a
-/// nested `wt switch --execute X` writes the payload back to the parent
-/// shell's EXEC file the same as a top-level `wt switch --execute X` would.
-///
-/// Regression test for #2101: the conservative scrub used to refuse `--execute`
-/// inside any alias body, breaking workflows like `issue = "wt switch --create
-/// {{ args[0] }} --execute claude"` even when the alias lived in user config.
+/// A nested switch runs `--execute` directly rather than depending on a
+/// directive inherited through the alias shell.
 #[rstest]
-fn test_user_alias_passes_exec_directive(repo: TestRepo) {
+fn test_alias_runs_execute_directly(repo: TestRepo) {
     repo.commit("initial");
 
     repo.write_test_config(&wt_alias_config(
         "exec-passthrough",
-        "switch --create user-alias-target --execute 'echo from-user-alias'",
+        "switch --create user-alias-target --execute echo -- from-user-alias",
     ));
 
-    let (cd_path, exec_path, _guard) = directive_files();
+    let (cd_path, _guard) = directive_file();
 
     let mut cmd = repo.wt_command();
-    configure_directive_files(&mut cmd, &cd_path, &exec_path);
+    configure_directive_file(&mut cmd, &cd_path);
     cmd.args(["step", "exec-passthrough"]);
     let output = cmd.output().unwrap();
 
-    let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
         output.status.success(),
-        "wt step exec-passthrough failed: stdout={}\nstderr={stderr}",
+        "wt step exec-passthrough failed: stdout={}\nstderr={}",
         String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr),
     );
     assert!(
-        !stderr.contains("disabled inside"),
-        "user alias should not trip the EXEC scrub warning, got: {stderr}"
-    );
-
-    let exec_content = std::fs::read_to_string(&exec_path).unwrap_or_default();
-    assert!(
-        exec_content.contains("echo from-user-alias"),
-        "EXEC file should contain the alias's --execute payload, got: {exec_content:?}"
-    );
-}
-
-/// Project-source aliases keep the conservative EXEC scrub: a nested
-/// `wt switch --execute X` is refused with a warning pointing at the tracking
-/// issue. The body is shared config, so allowing it would let the project
-/// inject arbitrary shell into every contributor's interactive session.
-#[rstest]
-fn test_project_alias_scrubs_exec_directive(repo: TestRepo) {
-    repo.commit("initial");
-
-    repo.write_project_config(&wt_alias_config(
-        "exec-blocked",
-        "switch --create project-alias-target --execute 'echo should-not-pass'",
-    ));
-
-    let (cd_path, exec_path, _guard) = directive_files();
-
-    let mut cmd = repo.wt_command();
-    configure_directive_files(&mut cmd, &cd_path, &exec_path);
-    // -y skips the project-alias approval prompt.
-    cmd.args(["-y", "step", "exec-blocked"]);
-    let output = cmd.output().unwrap();
-
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(
-        output.status.success(),
-        "wt -y step exec-blocked failed: stdout={}\nstderr={stderr}",
-        String::from_utf8_lossy(&output.stdout),
-    );
-    assert!(
-        stderr.contains("disabled inside project alias"),
-        "project alias should warn that --execute is disabled, got: {stderr}"
-    );
-    assert!(
-        stderr.contains("issues/2101"),
-        "warning should link the tracking issue, got: {stderr}"
-    );
-
-    let exec_content = std::fs::read_to_string(&exec_path).unwrap_or_default();
-    assert!(
-        !exec_content.contains("should-not-pass"),
-        "EXEC file should NOT contain the scrubbed payload, got: {exec_content:?}"
-    );
-}
-
-/// Same alias name in both user and project configs: EXEC passes through for
-/// the user-source step but is scrubbed for the project-source step.
-///
-/// EXEC passthrough is a per-step decision driven by `HookSource` on each
-/// `SourcedStep`, not a per-pipeline scrub. When both sources define the
-/// alias, both run (user first, then project) — the user's own step still
-/// gets the relaxation, and the project-authored step keeps the conservative
-/// scrub even though it's part of the same merged body.
-#[rstest]
-fn test_user_and_project_alias_collision_scrubs_only_project_step(repo: TestRepo) {
-    repo.commit("initial");
-
-    repo.write_test_config(&wt_alias_config(
-        "shared",
-        "switch --create user-step-target --execute 'echo from-user-step'",
-    ));
-    // Project step also tries `--execute` so we can assert its payload is
-    // scrubbed even though the user step's payload passes through.
-    repo.write_project_config(&wt_alias_config(
-        "shared",
-        "switch --create project-step-target --execute 'echo from-project-step'",
-    ));
-
-    let (cd_path, exec_path, _guard) = directive_files();
-
-    let mut cmd = repo.wt_command();
-    configure_directive_files(&mut cmd, &cd_path, &exec_path);
-    // -y skips the project-alias approval prompt.
-    cmd.args(["-y", "step", "shared"]);
-    let output = cmd.output().unwrap();
-
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(
-        output.status.success(),
-        "wt -y step shared failed: stdout={}\nstderr={stderr}",
-        String::from_utf8_lossy(&output.stdout),
-    );
-    assert!(
-        stderr.contains("disabled inside project alias"),
-        "project-source step should still warn that --execute is disabled, got: {stderr}"
-    );
-
-    let exec_content = std::fs::read_to_string(&exec_path).unwrap_or_default();
-    assert!(
-        exec_content.contains("from-user-step"),
-        "EXEC file should contain the user step's payload (per-step relaxation), got: {exec_content:?}"
-    );
-    assert!(
-        !exec_content.contains("from-project-step"),
-        "EXEC file should NOT contain the project step's payload (per-step scrub), got: {exec_content:?}"
+        String::from_utf8_lossy(&output.stdout).contains("from-user-alias"),
+        "nested --execute output missing"
     );
 }
 
@@ -2625,5 +2519,93 @@ record-git-env = "printf '[%s][%s]' \"$GIT_DIR\" \"$GIT_WORK_TREE\" > env_seen.t
     assert_eq!(
         seen, expected,
         "alias should see wt's inherited git-discovery vars unchanged"
+    );
+}
+
+/// A detached worktree leaves `{{ branch }}` undefined, so `{% if branch %}`
+/// guards it the way the hook docs prescribe for every optional variable.
+///
+/// Regression test for #4009: `branch` used to fall back to the literal
+/// `HEAD`, which is a non-empty string git happily resolves as a ref — so
+/// every guard written around `branch` passed and the alias ran against the
+/// wrong thing (`git push origin --delete HEAD`). It also disagreed with
+/// `wt list --json`, which reports `branch: null` for the same worktree.
+#[rstest]
+fn test_alias_branch_unset_in_detached_worktree(mut repo: TestRepo) {
+    repo.add_worktree("detached-test");
+    repo.detach_head_in_worktree("detached-test");
+    let detached = repo.worktree_path("detached-test").to_path_buf();
+
+    repo.write_test_config(
+        r#"
+[aliases]
+probe = "echo [{% if branch %}{{ branch }}{% endif %}]"
+"#,
+    );
+
+    let output = repo
+        .wt_command()
+        .args(["-y", "probe"])
+        .current_dir(&detached)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "alias failed:\nstdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let combined = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        combined.contains("[]"),
+        "`{{% if branch %}}` should not fire in a detached worktree, got: {combined}"
+    );
+    assert!(
+        !combined.contains("[HEAD]"),
+        "`branch` must not fall back to the literal `HEAD`, got: {combined}"
+    );
+}
+
+/// `branch` is cheap enough that `build_hook_context` computes it whatever the
+/// scope, so its absence in a detached worktree is `(unset)` — a fact about the
+/// worktree — even in an alias body that never names it. `(unused)` is reserved
+/// for a var the scope gate actually skipped computing.
+#[rstest]
+fn test_verbose_variables_table_marks_detached_branch_unset(mut repo: TestRepo) {
+    repo.add_worktree("detached-vars");
+    repo.detach_head_in_worktree("detached-vars");
+    let detached = repo.worktree_path("detached-vars").to_path_buf();
+
+    // The body references neither `branch` nor `upstream`, so the scope gate
+    // skips only the latter — an expensive var behind a git-config read.
+    repo.write_test_config(
+        r#"
+[aliases]
+probe = "echo hello"
+"#,
+    );
+
+    let output = repo
+        .wt_command()
+        .args(["-v", "-y", "probe"])
+        .current_dir(&detached)
+        .output()
+        .unwrap();
+    let raw_stderr = String::from_utf8_lossy(&output.stderr);
+    let stderr = raw_stderr.ansi_strip();
+
+    let branch_row = stderr
+        .lines()
+        .map(str::trim)
+        .find(|line| line.starts_with("branch "))
+        .unwrap_or_else(|| panic!("no `branch` row in the variables table:\n{stderr}"));
+    assert!(
+        branch_row.ends_with("= (unset)"),
+        "detached `branch` should read `(unset)`, not `(unused)`, got: {branch_row}"
     );
 }

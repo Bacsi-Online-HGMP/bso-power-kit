@@ -28,8 +28,21 @@ the Skill tool with the target version, or follow these steps directly):
    and does NOT touch the changelog.
 3. **Write the changelog.** Add a `## <version>` section at the top of CHANGELOG.md
    with Added / Fixed / Changed notes summarizing `git log <last-tag>..HEAD --oneline`.
+3a. **Audit the range.** `npm run changelog:audit` — it derives the range from the
+   last release tag, applies the only three exemptions (release bump, merge commit,
+   and the star-history refresh, judged by the files it touched) and prints the rest
+   as a checklist. Walk every line: an entry,
+   or a reason it needs none. Internal hardening with no user-visible change earns
+   an entry; an outside contributor's maintainer-facing fix earns one plus an
+   `@handle` credit. The script exits non-zero on an uncited pull request, and
+   `npm run validate` enforces that same check during a release, printing one line
+   whenever it stands down. Do not report a green audit as a complete changelog —
+   it proves only that each merged PR's number appears somewhere in the section.
+
 4. **Re-validate.** `npm run validate` then `npm test`. Fix and re-run until clean.
-5. **Commit & push.** Stage the changed manifests, README, CHANGELOG; commit
+5. **Commit & push.** Stage everything `npm run bump` rewrote plus CHANGELOG — read
+   `git status` rather than naming files, since the version-bearing set is discovered
+   from disk and is more than one README; commit
    `chore(release): bump version to <version>`; push to `main` (direct-to-main repo,
    no PR).
 6. **Tag & publish.** `gh release create v<version> --title "v<version>"
@@ -41,6 +54,13 @@ the Skill tool with the target version, or follow these steps directly):
   always go through `npm run bump`.
 - **Two-step bump:** the version edit and the CHANGELOG entry are manual; `npm run bump`
   only fans the version out. Skipping the CHANGELOG entry fails `npm run validate`.
+- **The semver comes from the backlog, not the request.** Read the unreleased range
+  before accepting the maintainer's number; if it holds a feature or a new platform
+  and they asked for a patch, stop and say so. v1.5.1 shipped and had to be deleted
+  and re-cut as v1.6.0 for exactly this.
+- **`npm run validate` only proves the section *exists*.** Coverage is step 3a's
+  job; its enforceable half (uncited pull requests) is wired into validate, the
+  rest is your walk. Do not sample it.
 - **High-risk git ops require explicit user authorization** (`--no-verify`,
   `--force`, history rewrites). If a step needs one, stop and ask.
 

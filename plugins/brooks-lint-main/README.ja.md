@@ -27,7 +27,7 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/version-1.5.0-blue.svg" alt="Version">
+  <img src="https://img.shields.io/badge/version-1.7.0-blue.svg" alt="Version">
   <img src="https://img.shields.io/badge/license-MIT-green.svg" alt="MIT License">
   <img src="https://img.shields.io/badge/Claude_Code-Plugin-blueviolet.svg" alt="Claude Code Plugin">
   <img src="https://img.shields.io/badge/Codex_CLI-Skill-orange.svg" alt="Codex CLI Skill">
@@ -69,7 +69,7 @@
 /plugin marketplace add hyhmrright/brooks-lint
 /plugin install brooks-lint@brooks-lint-marketplace
 
-# その他あらゆる Agent Skills プラットフォーム — Cursor · Codex · Gemini · Copilot · Windsurf · OpenCode · Kiro · …
+# その他あらゆる Agent Skills プラットフォーム — Cursor · Codex · Gemini · Copilot · Windsurf · OpenCode · Kiro · Bob …
 curl -fsSL https://raw.githubusercontent.com/hyhmrright/brooks-lint/main/scripts/install.sh | bash -s -- <platform>
 ```
 
@@ -78,7 +78,7 @@ curl -fsSL https://raw.githubusercontent.com/hyhmrright/brooks-lint/main/scripts
 `/brooks-health`、`/brooks-sweep`（[それぞれの機能](#スラッシュコマンド)）。
 
 すべての指摘は **症状 → 根源 → 結果 → 対策** の形式で、書籍の出典と 0〜100 の健全性スコアとともに
-返されます。完全なインストール方法（さらに 9 つのプラットフォーム）と CI/CD のセットアップは
+返されます。完全なインストール方法（さらに 10 のプラットフォーム）と CI/CD のセットアップは
 [以下](#インストール)を参照してください。
 
 ## 十二冊の書籍
@@ -273,7 +273,7 @@ Install the brooks-lint skill from hyhmrright/brooks-lint       # Codex セッ�
 
 または下記のインストーラーを使用：`./scripts/install.sh gemini` / `./scripts/install.sh codex`。
 
-### その他すべてのプラットフォーム — OpenCode · Cursor · Windsurf · Antigravity · pi · Copilot · Kiro · Factory Droid · DeepSeek Harness
+### その他すべてのプラットフォーム — OpenCode · Cursor · Windsurf · Antigravity · pi · Copilot · Kiro · Factory Droid · DeepSeek Harness · IBM Bob
 
 brooks-lint は標準的な [Agent Skills](https://agentskills.io) として配布されています。**Agent
 Skills を読み込むエージェントなら、どれも変換なしで六つすべてのモードを実行できます**——1 つのコマンドでインストールできます：
@@ -281,7 +281,7 @@ Skills を読み込むエージェントなら、どれも変換なしで六つ�
 ```bash
 # プラットフォームを選択；--project はグローバル設定ではなく現在のリポジトリにインストール
 curl -fsSL https://raw.githubusercontent.com/hyhmrright/brooks-lint/main/scripts/install.sh | bash -s -- <platform>
-#   <platform> = opencode · cursor · windsurf · antigravity · pi · kiro · copilot · droid · dsh · gemini · codex · agents
+#   <platform> = opencode · cursor · windsurf · antigravity · pi · kiro · copilot · droid · dsh · gemini · codex · claude · bob · agents
 ```
 
 インストーラーはスキルをあなたのプラットフォームに適したフォルダへ**フラット**にコピーするため、共有フレームワーク
@@ -300,11 +300,12 @@ curl -fsSL https://raw.githubusercontent.com/hyhmrright/brooks-lint/main/scripts
 | Kiro（AWS） | `~/.kiro/skills` | `AGENTS.md` | [設定](docs/kiro-setup.md) |
 | Factory Droid | `~/.factory/skills` | `AGENTS.md` | [設定](docs/factory-droid-setup.md) |
 | DeepSeek Harness（`dsh`） | `~/.dsh/skills` | `~/.agents/skills`、`AGENTS.md` | [設定](docs/dsh-setup.md) |
+| IBM Bob（`bob`） | `~/.bob/skills` | `AGENTS.md` | [設定](docs/bob-setup.md) |
 
-Kiro、Factory Droid、DeepSeek Harness は `/brooks-review` も自動登録します。スキルが初めて、または
-上記にないエージェントをお使いですか？ **[docs/getting-started.md](docs/getting-started.md)** を参照してください。
+OpenCode v2、Kiro、Factory Droid、DeepSeek Harness は `/brooks-review` も自動登録します。スキルが初めて、
+または上記にないエージェントをお使いですか？ **[docs/getting-started.md](docs/getting-started.md)** を参照してください。
 
-> **🧪 検証状況。** Claude Code、Gemini CLI、Codex CLI はメンテナーによって検証済みです。上記の九つの
+> **🧪 検証状況。** Claude Code、Gemini CLI、Codex CLI はメンテナーによって検証済みです。上記の十の
 > プラットフォームは各ツールの公式スキル仕様から文書化され、ファイルレイアウトのレベルで検証されています
 > （インストーラーはテスト済み）が、メンテナーがすべてのプラットフォームでエンドツーエンドに実行したわけ
 > ではまだありません。どれかを試した——動いた **または** 壊れた？ プラットフォーム、バージョン、見たこと
@@ -324,7 +325,7 @@ Kiro、Factory Droid、DeepSeek Harness は `/brooks-review` も自動登録し�
 
 **プラットフォーム別の構文。** Claude Code は名前空間付きの完全形 `/brooks-lint:brooks-review` も受け付けます
 ——短縮形は session-start フックが最初のセッション開始時に自動インストールします。Codex CLI は
-`$brooks-review`。Gemini CLI は上の表のとおり。OpenCode、Cursor、Antigravity、pi、DeepSeek Harness は
+`$brooks-review`。Gemini CLI と OpenCode v2 は上の表のとおり。Cursor、Antigravity、pi、DeepSeek Harness は
 各スキルの `description` から Agent Skills を呼び出すので、話しかけるだけで十分です（「この PR をレビューして」
 「最悪の技術的負債はどこ？」）。明示的に呼び出す場合は各プラットフォームの構文を使います（pi は各スキルを
 `/skill:brooks-review` として登録。dsh は上の表のとおりで、`/` メニューから選ぶか直接入力）。どの
@@ -450,6 +451,18 @@ jobs:
 
 `fail-on-regression` は `.brooks-lint-history.json` を読み取るため、そのファイルをコミットすれば「新たな回帰なし」を強制できます。`sarif-file` を設定すると、指摘が PR の **Files changed** タブにインラインで表示されるようになり、ジョブに `security-events: write` 権限が必要になります。
 
+**カスタム API エンドポイント。** `api-base-url` を指定すると、action は `api.anthropic.com` ではなく Anthropic 互換の `/v1/messages` エンドポイント（自前のプロキシ、LLM ゲートウェイ、リージョンミラーなど）を呼び出します。そのエンドポイントのキーを `anthropic-api-key` に、期待されるモデル id を `model` に渡してください：
+
+```yaml
+        with:
+          mode: review
+          api-base-url: https://your-gateway.example.com
+          anthropic-api-key: ${{ secrets.GATEWAY_API_KEY }}
+          model: gateway-model-id
+```
+
+brooks-lint はここで指定したホストに diff を送信するため、ソースコードを預けられる相手だけを指定してください。`scripts/ci-review.mjs` を自分で実行する場合はフラグは不要です — Anthropic SDK が `ANTHROPIC_BASE_URL` を直接読み取ります。
+
 **コスト：** PR 実行ごとにおよそ $0.05〜0.15、diff のサイズとモデルによります。`pull_request` イベントのみで実行することを推奨します。
 
 ## ロードマップ
@@ -488,7 +501,7 @@ MIT License — 詳細は [LICENSE](LICENSE) を参照してください。
 
 ## スター履歴
 
-[![Star History Chart](https://api.star-history.com/svg?repos=hyhmrright/brooks-lint&type=Date)](https://star-history.com/#hyhmrright/brooks-lint&Date)
+[![Star History](assets/star-history.svg)](https://github.com/hyhmrright/brooks-lint/stargazers)
 
 ---
 

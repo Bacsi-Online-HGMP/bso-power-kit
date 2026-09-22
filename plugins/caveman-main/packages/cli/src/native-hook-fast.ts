@@ -6,7 +6,9 @@ import { connect as netConnect } from "node:net";
 import { createHash } from "node:crypto";
 import { fileURLToPath } from "node:url";
 
-type NativeAgent = "claude" | "codex" | "hermes" | "gemini" | "opencode";
+import { hardenedGitArgs, hardenedGitEnv } from "./git-safe.js";
+
+type NativeAgent = "claude" | "codex" | "hermes" | "gemini" | "opencode" | "pi";
 type NativePolicyMode = "record" | "safe" | "max";
 type NativeProfile = "record-only" | "core" | "core-lean-build" | "ledger" | "ccr-masking" | "cache-aware" | "full-safe" | "full-max";
 type RuntimeResponse = {
@@ -37,6 +39,39 @@ const TASK_STOPWORDS = new Set(["about", "after", "again", "agent", "before", "b
 
 function caveHome(): string {
   return process.env.CAVEMAN_HOME ?? join(homedir(), ".caveman");
+}
+
+// localGatewayEndpoint resolves the gateway target and returns its host/port
+// only when it is a loopback proxy — the only case where a dead port means
+// "the local proxy needs restarting". Managed gateways (CAVE_GATEWAY_URL /
+// persisted gatewayUrl off-loopback) return undefined and never pay a
+// per-prompt delegate spawn. Default mirrors the full CLI's PROXY_ADDR.
+function localGatewayEndpoint(): { host: string; port: number } | undefined {
+  let gw: unknown = process.env.CAVE_GATEWAY_URL;
+  if (typeof gw !== "string" || !gw.trim()) {
+    try { gw = object(JSON.parse(readFileSync(join(homedir(), ".caveman-cloud", "config.json"), "utf8"))).gatewayUrl; } catch { /* local default */ }
+  }
+  if (typeof gw !== "string" || !gw.trim()) return { host: "127.0.0.1", port: 8787 };
+  try {
+    const url = new URL(gw);
+    const host = url.hostname;
+    if (host !== "127.0.0.1" && host !== "localhost" && host !== "::1" && host !== "[::1]") return undefined;
+    return { host: host === "[::1]" ? "::1" : host, port: url.port ? Number(url.port) : 8787 };
+  } catch { return { host: "127.0.0.1", port: 8787 }; }
+}
+
+// gatewayListening is the same signal the full CLI's revive block keys on
+// (portListening): a loopback TCP probe, ~1ms either way. Gating the delegate
+// on the PORT rather than the runtime socket matters — record pass-through,
+// noProxy, or a slow runtime all leave the socket dead while the proxy is up,
+// and must not pay a full-CLI spawn on every prompt.
+function gatewayListening(endpoint: { host: string; port: number }): Promise<boolean> {
+  return new Promise((settle) => {
+    const socket = netConnect({ host: endpoint.host, port: endpoint.port, timeout: 250 });
+    socket.on("connect", () => { socket.destroy(); settle(true); });
+    socket.on("error", () => settle(false));
+    socket.on("timeout", () => { socket.destroy(); settle(false); });
+  });
 }
 
 function object(value: unknown): Record<string, unknown> {
@@ -91,6 +126,11 @@ function profile(): NativeProfile {
   return mode === "record" ? "record-only" : mode === "max" ? "full-max" : "full-safe";
 }
 
+// Return as soon as the accumulated bytes parse as one complete JSON payload
+// instead of waiting for EOF. The host writes one object and closes, but under
+// the Windows pipe implementation that close can lag arbitrarily (#729/#833),
+// and a hook that blocks on EOF spends the host's whole budget waiting for a
+// close it already has all the data for.
 async function stdin(): Promise<Buffer> {
   const chunks: Buffer[] = [];
   let bytes = 0;
@@ -99,6 +139,10 @@ async function stdin(): Promise<Buffer> {
     bytes += value.length;
     if (bytes > 2 * 1024 * 1024) throw new Error("hook payload too large");
     chunks.push(value);
+    const joined = Buffer.concat(chunks);
+    // A partial payload throws and we wait for more bytes.
+    try { JSON.parse(joined.toString("utf8")); } catch { continue; }
+    return joined;
   }
   return Buffer.concat(chunks);
 }
@@ -212,7 +256,8 @@ function gitDir(cwd: string): string | undefined {
 function repositoryState(cwd: string | undefined): string | undefined {
   if (!cwd) return undefined;
   try {
-    const status = execFileSync("git", ["-C", cwd, "status", "--porcelain=v1", "-z", "--branch", "--untracked-files=all"], {
+    const status = execFileSync("git", hardenedGitArgs(cwd, "status", "--porcelain=v1", "-z", "--branch", "--untracked-files=all"), {
+      env: hardenedGitEnv(),
       timeout: 100, maxBuffer: 8 * 1024 * 1024, stdio: ["ignore", "pipe", "ignore"],
     });
     const directory = gitDir(cwd);
@@ -348,18 +393,28 @@ function fallback(entry: Record<string, unknown>): void {
   } catch { /* host remains fail-open */ }
 }
 
-function delegateToFullCLI(raw: Buffer, agent: NativeAgent): void {
+// Budget for the delegated child. This runs inside a host hook, so an
+// unbounded spawnSync could block the user's turn forever if index.js stalls,
+// and on Windows process spawn is ~10x macOS before antivirus (#819) — the
+// double-spawn alone can exceed the host's cap. Cap it below the host's and
+// fall through to the fail-open path on expiry, the way every other subprocess
+// in this package already does (#799).
+const DELEGATE_TIMEOUT_MS = 3000;
+
+function delegateToFullCLI(raw: Buffer, agent: NativeAgent): boolean {
   const cli = join(dirname(fileURLToPath(import.meta.url)), "index.js");
-  const result = spawnSync(process.execPath, [cli, "native-hook", agent], { input: raw, maxBuffer: 3 * 1024 * 1024, env: process.env });
+  const result = spawnSync(process.execPath, [cli, "native-hook", agent], { input: raw, maxBuffer: 3 * 1024 * 1024, env: process.env, timeout: DELEGATE_TIMEOUT_MS });
   if (!result.error && result.status === 0) {
     if (result.stdout?.length) process.stdout.write(result.stdout);
     if (result.stderr?.length) process.stderr.write(result.stderr);
+    return true;
   }
+  return false;
 }
 
 async function main(): Promise<void> {
   const agentArg = process.argv[2] === "native-hook" ? process.argv[3] : process.argv[2];
-  const agent = agentArg === "claude" || agentArg === "codex" || agentArg === "hermes" || agentArg === "gemini" || agentArg === "opencode" ? agentArg : undefined;
+  const agent = agentArg === "claude" || agentArg === "codex" || agentArg === "hermes" || agentArg === "gemini" || agentArg === "opencode" || agentArg === "pi" ? agentArg : undefined;
   if (!agent) return;
   let raw: Buffer;
   let event: Record<string, unknown>;
@@ -392,7 +447,23 @@ async function main(): Promise<void> {
   if (cwd) entry.cwd_sha256 = `sha256:${createHash("sha256").update(cwd).digest("hex")}`;
   const runtimeRequest = sessionID && eventName !== "Unknown" ? request(agent, eventName, sessionID, event) : undefined;
   const response = runtimeRequest ? await callRuntime(runtimeRequest) : undefined;
-  if (!response) fallback(entry);
+  if (!response) {
+    // A dead loopback gateway PORT at prompt time is the SessionStart revive
+    // signal arriving mid-session: native routing still points this session's
+    // next request at the local proxy. Crashes or older proxies that idle-exit
+    // can leave a plain session without a way to restart it — the
+    // turn hard-fails with ConnectionRefused. Delegate this one event to the
+    // full CLI, which revives the proxy exactly like SessionStart (and records
+    // the event itself). The port probe — not the dead runtime socket — is the
+    // trigger, so proxy-up/socket-down states (record pass-through, noProxy,
+    // slow runtime) never pay the spawn; a failed delegate falls through so
+    // the event is still recorded.
+    if (eventName === "UserPromptSubmit") {
+      const endpoint = localGatewayEndpoint();
+      if (endpoint && !(await gatewayListening(endpoint)) && delegateToFullCLI(raw, agent)) return;
+    }
+    fallback(entry);
+  }
   if (eventName === "SessionEnd" && response?.message) process.stderr.write(`${response.message}\n`);
   const mode = policyMode();
   const context = mode === "record" || !configuredCore() ? undefined : response?.context;
@@ -404,7 +475,7 @@ async function main(): Promise<void> {
     process.stdout.write(JSON.stringify({ hookSpecificOutput: { hookEventName: eventName, additionalContext: context } }));
   } else if (mode !== "record" && agent === "claude" && eventName === "PostToolUse" && response?.output_replacement) {
     process.stdout.write(JSON.stringify({ hookSpecificOutput: { hookEventName: "PostToolUse", updatedToolOutput: response.output_replacement } }));
-  } else if (mode !== "record" && agent === "opencode" && eventName === "PostToolUse" && response) {
+  } else if (mode !== "record" && (agent === "opencode" || agent === "pi") && (eventName === "PostToolUse" || eventName === "PostToolUseFailure") && response) {
     process.stdout.write(JSON.stringify(response));
   }
 }

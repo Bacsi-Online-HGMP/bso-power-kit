@@ -22,7 +22,7 @@
 //! | 0 | `STAGED`            | `+`                  | Are there staged changes?             |
 //! | 1 | `MODIFIED`          | `!`                  | Are there unstaged modifications?     |
 //! | 2 | `UNTRACKED`         | `?`                  | Are there untracked files?            |
-//! | 3 | `WORKTREE_STATE`    | `✘ ↻ ⊟ ⊞ ⚑ /`      | Operation / worktree attribute        |
+//! | 3 | `WORKTREE_STATE`    | `✘ ↻ ⊟ ⊞ ⊘ ⚑ /`    | Operation / worktree attribute        |
 //! | 4 | `MAIN_STATE`        | `^ _ ⊂ ✗ – ↕ ↑ ↓`    | Relationship to the default branch    |
 //! | 5 | `UPSTREAM_DIVERGENCE` | \| ⇅ ⇡ ⇣           | Relationship to the tracked remote    |
 //! | 6 | `USER_MARKER`       | emoji / text         | User-defined annotation               |
@@ -55,15 +55,15 @@
 //!
 //! # Gate 2: Worktree state (position 3)
 //!
-//! **Renders:** at most one of `✘ ↻ ⊟ ⊞ ⚑ /`, priority
-//! `✘ > ↻ > ⊟ > ⊞ > ⚑ > /`. The operation family (`✘↻`) comes from live
-//! task data; the attribute family (`⊟⊞⚑/`) is metadata, always known.
+//! **Renders:** at most one of `✘ ↻ ⊟ ⊞ ⊘ ⚑ /`, priority
+//! `✘ > ↻ > ⊟ > ⊞ > ⊘ > ⚑ > /`. The operation family (`✘↻`) comes from live
+//! task data; the attribute family (`⊟⊞⊘⚑/`) is metadata, always known.
 //! `⚑` covers both irregular-mapping states — a duplicated branch outranks
 //! an off-template path, and the JSON `worktree.state` names which.
 //!
 //! **Inputs:** `data.has_conflicts`, `data.git_operation`, plus metadata
-//! (`locked`, `prunable`, `duplicate_branch`, `branch_worktree_mismatch`,
-//! `ItemKind::Branch`).
+//! (`locked`, `prunable`, `has_branch`, `duplicate_branch`,
+//! `branch_worktree_mismatch`, `ItemKind::Branch`).
 //!
 //! **Rule — short-circuit on priority:** a higher-priority signal, once known
 //! to be positive, resolves the gate immediately without waiting for
@@ -75,7 +75,7 @@
 //!    `↻`, whichever operation it is.
 //! 3. `has_conflicts == Some(false)` and `git_operation == Some(None)` and
 //!    metadata says prunable → `⊟`.
-//! 4. …continuing down through `⊞`, `⚑`, `/`, nothing.
+//! 4. …continuing down through `⊞`, `⊘`, `⚑`, `/`, nothing.
 //!
 //! Until both `has_conflicts` and `git_operation` are known, we cannot rule
 //! out `✘/↻`, so the position renders `·` even if metadata would otherwise
@@ -245,19 +245,22 @@
 
 use super::state::{Divergence, MainState, OperationState, WorktreeState};
 
-/// Tracks which status symbol positions are actually used across all items
-/// and the maximum width needed for each position.
+/// Per-position character widths for the Status column, used to pad each
+/// position so symbols line up vertically across rows.
 ///
-/// This allows the Status column to:
-/// 1. Only allocate space for positions that have data
-/// 2. Pad each position to a consistent width for vertical alignment
+/// The widths are fixed, not measured: [`FULL`](Self::FULL) is the only mask
+/// anything constructs. The Status column's geometry is chosen at skeleton
+/// time, before any task result exists, and progressive and final renders have
+/// to agree on it — a mask narrowed to the positions that happen to carry data
+/// would shift columns as results arrived. So every render allocates every
+/// position, and [`total_width`](Self::total_width) is what the layout budgets
+/// for the cell.
 ///
-/// Stores maximum character width for each of 7 positions (including user marker).
-/// A width of 0 means the position is unused.
-#[derive(Debug, Clone, Copy, Default)]
+/// No `Default`: an all-zero mask would silently collapse the cell to nothing,
+/// and there is no caller that wants one.
+#[derive(Debug, Clone, Copy)]
 pub struct PositionMask {
-    /// Maximum width for each position: [0, 1, 2, 3, 4, 5, 6]
-    /// 0 = position unused, >0 = max characters needed
+    /// Character width allocated to each position: [0, 1, 2, 3, 4, 5, 6]
     widths: [usize; 7],
 }
 
@@ -267,7 +270,7 @@ impl PositionMask {
     pub(crate) const STAGED: usize = 0; // + (staged changes)
     pub(crate) const MODIFIED: usize = 1; // ! (modified files)
     pub(crate) const UNTRACKED: usize = 2; // ? (untracked files)
-    pub(crate) const WORKTREE_STATE: usize = 3; // Worktree: ✘↻/⚑⊟⊞
+    pub(crate) const WORKTREE_STATE: usize = 3; // Worktree: ✘↻/⚑⊘⊟⊞
     pub(crate) const MAIN_STATE: usize = 4; // Main relationship: ^_⊂✗↕↑↓
     pub(crate) const UPSTREAM_DIVERGENCE: usize = 5; // Remote: |⇅⇡⇣
     pub(crate) const USER_MARKER: usize = 6;
@@ -279,7 +282,7 @@ impl PositionMask {
             1, // STAGED: + (1 char)
             1, // MODIFIED: ! (1 char)
             1, // UNTRACKED: ? (1 char)
-            1, // WORKTREE_STATE: ✘↻/⊟⊞⚑ (1 char, priority: conflicts > in-progress operation > prunable > locked > duplicate_branch > branch_worktree_mismatch > branch)
+            1, // WORKTREE_STATE: ✘↻/⊟⊞⊘⚑ (1 char, priority: conflicts > in-progress operation > prunable > locked > detached > duplicate_branch > branch_worktree_mismatch > branch)
             1, // MAIN_STATE: ^_⊂✗–↕↑↓ (1 char, priority: is_main > orphan > empty > integrated > would_conflict > same_commit > diverged > ahead > behind)
             1, // UPSTREAM_DIVERGENCE: |⇡⇣⇅ (1 char)
             2, // USER_MARKER: single emoji or two chars (allocate 2)
@@ -289,6 +292,16 @@ impl PositionMask {
     /// Get the allocated width for a position
     pub(crate) fn width(&self, pos: usize) -> usize {
         self.widths[pos]
+    }
+
+    /// Total characters this mask renders — the sum of every position's
+    /// allocated width.
+    ///
+    /// The layout budgets the Status column from `FULL.total_width()` rather
+    /// than a literal, so widening a position here can't leave the column one
+    /// character short of what [`StatusSymbols::render_with_mask`] emits.
+    pub(crate) fn total_width(&self) -> usize {
+        self.widths.iter().sum()
     }
 }
 
@@ -356,7 +369,7 @@ impl WorkingTreeStatus {
 /// Symbols are categorized to enable vertical alignment in table output.
 /// Display order (left to right):
 /// - Working tree: +, !, ? (staged, modified, untracked - NOT mutually exclusive)
-/// - Worktree state: ✘, ↻, /, ⚑, ⊟, ⊞ (operations + location)
+/// - Worktree state: ✘, ↻, /, ⚑, ⊘, ⊟, ⊞ (operations + location)
 /// - Main state: ^, ✗, _, ⊂, ↕, ↑, ↓ (relationship to default branch - single-stroke vertical arrows)
 /// - Upstream divergence: |, ⇅, ⇡, ⇣ (relationship to remote - vertical arrows)
 /// - User marker: custom labels, emoji
@@ -364,11 +377,12 @@ impl WorkingTreeStatus {
 /// ## Mutual Exclusivity
 ///
 /// **Worktree state (operations take priority over location):**
-/// Priority: ✘ > ↻ > ⊟ > ⊞ > ⚑ > /
+/// Priority: ✘ > ↻ > ⊟ > ⊞ > ⊘ > ⚑ > /
 /// - ✘: Actual conflicts (must resolve)
 /// - ↻: A git operation is in progress (rebase, merge, cherry-pick, revert, bisect)
 /// - ⊟: Prunable (directory missing)
 /// - ⊞: Locked worktree
+/// - ⊘: Detached HEAD — the worktree is on a commit, not a branch
 /// - ⚑: Irregular branch ⇔ worktree mapping — the branch is checked out in
 ///   more than one worktree, or the path is off-template (informational, dim
 ///   yellow)
@@ -437,8 +451,9 @@ impl StatusSymbols {
     /// - `Visible(s)` → styled content padded to the slot width.
     ///
     /// CRITICAL: Always use [`PositionMask::FULL`] for consistent spacing
-    /// between progressive and final rendering. The mask provides the
-    /// maximum width needed for each position across all rows.
+    /// between progressive and final rendering. The mask gives each position
+    /// its allocated width, and the cell the layout budgeted is
+    /// [`PositionMask::total_width`].
     pub fn render_with_mask(&self, mask: &PositionMask, placeholder: &str) -> String {
         use anstyle::Style;
         use worktrunk::styling::StyledLine;
@@ -552,7 +567,7 @@ impl StatusSymbols {
         };
 
         // Gate 2 — worktree state (position 3). Operation family (`✘↻`)
-        // takes priority over metadata family (`⚑⊟⊞/`). The gate is
+        // takes priority over metadata family (`⚑⊘⊟⊞/`). The gate is
         // `Loading` iff `operation_state` is still `None` — even when
         // `worktree_state` metadata would yield `⊟`, we cannot safely show
         // it without ruling out a pending operation signal. Once
@@ -786,9 +801,38 @@ mod tests {
         assert_snapshot!(rendered, @"[2m·[0m  [2m·[0m[2m↑[22m[2m·[0m[2m·[0m");
     }
 
+    /// The layout budgets the Status column from `FULL.total_width()`, so that
+    /// number has to be what a rendered cell actually draws — otherwise a
+    /// widened position overflows the column it was allocated. Both the
+    /// all-loading cell and a fully-populated one are pinned, since every
+    /// position pads to its allocated width in either state.
+    #[test]
+    fn test_full_mask_total_width_matches_rendered_cell() {
+        use ansi_str::AnsiStr;
+        use unicode_width::UnicodeWidthStr;
+
+        let visible_width = |rendered: &str| UnicodeWidthStr::width(rendered.ansi_strip().as_ref());
+
+        let loading = StatusSymbols::default().render_with_mask(&PositionMask::FULL, "·");
+        assert_eq!(visible_width(&loading), PositionMask::FULL.total_width());
+
+        let populated = StatusSymbols {
+            working_tree: Some(WorkingTreeStatus::new(true, true, true, false, false)),
+            operation_state: Some(OperationState::InProgress(InProgressOperation::Rebase)),
+            worktree_state: Some(WorktreeState::None),
+            main_state: Some(MainState::Ahead),
+            upstream_divergence: Some(Divergence::Ahead),
+            // Two columns wide, matching the USER_MARKER allocation.
+            user_marker: Some(Some("🔥".to_string())),
+        }
+        .render_with_mask(&PositionMask::FULL, "·");
+        assert_eq!(visible_width(&populated), PositionMask::FULL.total_width());
+    }
+
     #[test]
     fn test_position_mask_width() {
         let mask = PositionMask::FULL;
+        assert_eq!(mask.total_width(), 8);
         // Check expected widths for each position
         assert_eq!(mask.width(PositionMask::STAGED), 1);
         assert_eq!(mask.width(PositionMask::MODIFIED), 1);

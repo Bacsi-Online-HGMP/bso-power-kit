@@ -42,9 +42,11 @@ impl TemplateVars {
         Self::default()
     }
 
-    /// Set `base` (source branch) and `base_worktree_path` from a path.
-    pub fn with_base(mut self, branch: &str, worktree_path: &Path) -> Self {
-        self.base = Some(branch.to_string());
+    /// Set `base` (source branch) and `base_worktree_path` from a path. The
+    /// branch is optional because a detached worktree has a path but no branch
+    /// to name; the path is set either way.
+    pub fn with_base(mut self, branch: Option<&str>, worktree_path: &Path) -> Self {
+        self.base = branch.map(str::to_owned);
         self.base_worktree_path = Some(to_posix_path(&worktree_path.to_string_lossy()));
         self
     }
@@ -61,6 +63,13 @@ impl TemplateVars {
     /// Set `target` (destination branch).
     pub fn with_target(mut self, branch: &str) -> Self {
         self.target = Some(branch.to_string());
+        self
+    }
+
+    /// Set `target` when there is one — a detached worktree leaves it unset
+    /// rather than naming the literal `HEAD` (issue #4009).
+    pub fn with_target_opt(mut self, branch: Option<&str>) -> Self {
+        self.target = branch.map(str::to_owned);
         self
     }
 
@@ -149,7 +158,10 @@ impl TemplateVars {
     ///
     /// `target` matches the bare vars (the destination); `base` is the source
     /// — the branched-from for creates, the source worktree for existing
-    /// switches. PR/MR identity propagates into post-* hooks.
+    /// switches. PR/MR identity is not read off the result: it belongs to the
+    /// argument, not to what the switch did with it, so the caller applies it
+    /// with [`with_pr`](Self::with_pr) — an `Existing` switch onto a
+    /// `pr:N` branch has the same identity as the run that created it.
     pub fn for_post_switch(
         result: &SwitchResult,
         branch_info: &SwitchBranchInfo,
@@ -164,12 +176,8 @@ impl TemplateVars {
             SwitchResult::Created {
                 base_branch,
                 base_worktree_path,
-                pr_number,
-                pr_url,
                 ..
-            } => vars
-                .with_base_strs(base_branch.as_deref(), base_worktree_path.as_deref())
-                .with_pr(*pr_number, pr_url.as_deref()),
+            } => vars.with_base_strs(base_branch.as_deref(), base_worktree_path.as_deref()),
             SwitchResult::Existing { .. } | SwitchResult::AlreadyAt(_) => {
                 let base = (!source_branch.is_empty()).then_some(source_branch);
                 let path = (!source_path.is_empty()).then_some(source_path);
@@ -194,7 +202,7 @@ mod tests {
     #[test]
     fn directional_pairs_round_trip() {
         let vars = TemplateVars::new()
-            .with_base("main", &PathBuf::from("/repo"))
+            .with_base(Some("main"), &PathBuf::from("/repo"))
             .with_target("feature")
             .with_target_worktree_path(&PathBuf::from("/repo.feature"));
         let pairs = vars.as_extra_vars();
@@ -247,21 +255,24 @@ mod tests {
         assert!(!pairs.iter().any(|(k, _)| *k == "base_worktree_path"));
     }
 
+    /// The switch pipeline layers the PR/MR identity on afterwards, the same
+    /// way for a create as for a switch onto an existing worktree.
     #[test]
-    fn for_post_switch_created_with_pr() {
+    fn for_post_switch_created_takes_pr_from_caller() {
         let result = SwitchResult::Created {
             path: PathBuf::from("/repo.fork"),
             created_branch: false,
             base_branch: Some("main".to_string()),
             base_worktree_path: Some("/repo".to_string()),
             from_remote: None,
-            pr_number: Some(42),
-            pr_url: Some("https://example.test/pr/42".to_string()),
         };
         let info = SwitchBranchInfo {
             branch: Some("contributor/feature".to_string()),
         };
         let vars = TemplateVars::for_post_switch(&result, &info, "", "");
+        assert!(!vars.as_extra_vars().iter().any(|(k, _)| *k == "pr_number"));
+
+        let vars = vars.with_pr(Some(42), Some("https://example.test/pr/42"));
         let pairs = vars.as_extra_vars();
         assert!(pairs.contains(&("base", "main")));
         assert!(pairs.contains(&("base_worktree_path", "/repo")));

@@ -27,8 +27,9 @@ mod sections;
 #[cfg(test)]
 mod tests;
 
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
-use std::sync::OnceLock;
+use std::sync::{LazyLock, Mutex, OnceLock};
 
 use super::{ConfigError, ConfigFileKind};
 use schemars::JsonSchema;
@@ -43,6 +44,10 @@ use serde::{Deserialize, Serialize};
 /// TOML fragment (e.g. `list.full = true`); later entries replace earlier ones
 /// for the same key.
 static CONFIG_OVERRIDES: OnceLock<Vec<String>> = OnceLock::new();
+
+/// Explicit config paths already reported missing in this process.
+static WARNED_MISSING_CONFIG_PATHS: LazyLock<Mutex<HashSet<PathBuf>>> =
+    LazyLock::new(|| Mutex::new(HashSet::new()));
 
 /// Record the CLI `--config-set` overrides (called once from the
 /// `--config-set` flag in `main`).
@@ -73,9 +78,9 @@ pub use sections::{
 /// identifies which layer failed so callers can emit targeted diagnostics
 /// (file errors with line/col vs env-var attribution).
 ///
-/// Used as an error by [`UserConfig::load_with_cause()`] (first issue is
-/// fatal) and as warnings by [`UserConfig::load_with_warnings()`] (issues
-/// are collected, best-effort config returned).
+/// Strict loading treats the first issue as fatal; best-effort
+/// [`UserConfig::load_with_warnings()`] returns all issues alongside the
+/// usable config.
 #[derive(Debug)]
 pub enum LoadError {
     /// A config file failed to parse. The `toml::de::Error` includes
@@ -106,7 +111,7 @@ impl std::fmt::Display for LoadError {
             LoadError::File { path, kind, err } => {
                 write!(
                     f,
-                    "{} at {} failed to parse:\n{err}",
+                    "{} @ {} failed to parse:\n{err}",
                     kind.label(),
                     crate::path::format_path_for_display(path)
                 )
@@ -311,9 +316,9 @@ fn deep_merge_table(base: &mut toml::Table, overlay: toml::Table) {
 /// would silently stop it running.
 ///
 /// Only removals precede the merge, but a removal can still leave a document
-/// that no longer deserializes: [`exclusive_sibling`] and [`is_atomic_section`]
-/// name the sections that have to go as a unit, and the removals degrade as a
-/// unit behind them — they land on a candidate, and a candidate that stops
+/// that no longer deserializes: [`is_atomic_section`] names the sections that
+/// have to go as a unit, and the removals degrade as a unit behind them — they
+/// land on a candidate, and a candidate that stops
 /// deserializing or validating is dropped for the plain merge rather than
 /// handed to [`UserConfig::finalize`], which would answer a stranded required
 /// field by wiping the config to defaults. The layer itself applies either way.
@@ -345,14 +350,11 @@ fn merge_layer(merged_table: &mut toml::Table, layer: toml::Table) {
 
     match deserialize_and_validate(&candidate) {
         Ok(()) => *merged_table = candidate,
-        // Reachable two ways. A partial removal the enumerations above miss —
-        // none today, but they are enumerations, and the next required field
-        // would otherwise cost the user their whole config rather than one
-        // project entry. Or a document that was already invalid before this
-        // layer: step 3's env probe deserializes without validating, so an
-        // empty `worktree-path` from the environment lands here. Merging
-        // without the removals is right for both; `finalize` reports the
-        // second.
+        // Reachable when a partial removal the enumerations above miss would
+        // invalidate the candidate, or when the layer itself is invalid (for
+        // example, an empty global `worktree-path` from the environment or
+        // `--config-set`). Keep the layer without the removals so its caller
+        // can validate and attribute the complete candidate.
         Err(err) => {
             log::debug!("keeping project precedence: {err}");
             deep_merge_table(merged_table, layer);
@@ -370,7 +372,7 @@ fn deserialize_and_validate(table: &toml::Table) -> Result<(), String> {
 }
 
 /// Remove from `entry` every leaf `overlay` sets. `section` tracks the path
-/// walked so far, for [`exclusive_sibling`] and the predicates beside it.
+/// walked so far for the predicates beside it.
 fn drop_overridden_keys<'a>(
     entry: &mut toml::Table,
     overlay: &'a toml::Table,
@@ -379,12 +381,6 @@ fn drop_overridden_keys<'a>(
     for (key, value) in overlay {
         if is_compose_only(section, key) {
             continue;
-        }
-
-        // An exclusive pair goes as a unit, whether or not `entry` carries
-        // `key` itself: the project's partner alone would still win the merge.
-        if let Some(sibling) = exclusive_sibling(section, key) {
-            entry.remove(sibling);
         }
 
         match (entry.get_mut(key.as_str()), value) {
@@ -410,28 +406,6 @@ fn drop_overridden_keys<'a>(
     }
 }
 
-/// The key that `key` clears when both are set under `section`.
-///
-/// `[commit.generation]` rejects `template` alongside `template-file`
-/// (`UserConfig::validate`), and setting either clears the other when a
-/// project entry merges over the global one
-/// (`CommitGenerationConfig::merge_with`).
-/// So a layer that sets one member has to displace *both* at
-/// project scope: dropping only its own key would leave the project's partner
-/// to win the merge — the ranking this pass exists to remove.
-fn exclusive_sibling(section: &[&str], key: &str) -> Option<&'static str> {
-    if section != ["commit", "generation"] {
-        return None;
-    }
-    match key {
-        "template" => Some("template-file"),
-        "template-file" => Some("template"),
-        "squash-template" => Some("squash-template-file"),
-        "squash-template-file" => Some("squash-template"),
-        _ => None,
-    }
-}
-
 /// A table whose entries the merge replaces whole, so removing one of an
 /// entry's leaves neither removes the precedence nor leaves the entry usable.
 ///
@@ -443,7 +417,7 @@ fn exclusive_sibling(section: &[&str], key: &str) -> Option<&'static str> {
 /// strand a column that no longer deserializes.
 ///
 /// `section` is the path of the containing table, so this asks "are this
-/// table's children atomic", the way [`exclusive_sibling`] asks about a pair.
+/// table's children atomic".
 fn is_atomic_section(section: &[&str]) -> bool {
     section == ["list", "custom-columns"]
 }
@@ -532,7 +506,7 @@ fn load_config_file(
 ///
 /// Environment variables can override config file settings using `WORKTRUNK_` prefix with
 /// `__` separator for nested fields (e.g., `WORKTRUNK_COMMIT__GENERATION__COMMAND`).
-#[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Default, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct UserConfig {
     /// Per-project configuration (approved commands, etc.)
     /// Uses BTreeMap for deterministic serialization order and better diff readability
@@ -629,7 +603,7 @@ impl UserConfig {
     /// - Bad env vars → ignored, file-based config preserved
     /// - Validation failure → warning emitted, defaults used (invalid config
     ///   causes bad behavior if applied, e.g. empty worktree-path template)
-    pub(crate) fn load_with_warnings() -> (Self, Vec<LoadError>) {
+    pub fn load_with_warnings() -> (Self, Vec<LoadError>) {
         let mut warnings = Vec::new();
         let mut merged_table = toml::Table::new();
 
@@ -704,6 +678,10 @@ impl UserConfig {
             }
         } else if let Some(config_path) = config_path.as_ref()
             && path::is_config_path_explicit()
+            && WARNED_MISSING_CONFIG_PATHS
+                .lock()
+                .unwrap()
+                .insert(config_path.clone())
         {
             crate::styling::eprintln!(
                 "{}",
@@ -725,12 +703,13 @@ impl UserConfig {
             let env_overlay = migrate_env_overlay(resolve_env_overlay(&file_table, &env_vars));
             merge_layer(&mut merged_table, env_overlay);
 
-            // Env overlay broke deserialization — fall back to file-only config.
-            // Each file was individually validated by load_config_file(), so the
-            // merged table should deserialize cleanly.
-            if let Err(err) = toml::Value::Table(merged_table.clone()).try_into::<Self>() {
+            // A bad env layer must not discard valid file layers. Attribute the
+            // failure to env only when the file-only table itself is valid.
+            if let Err(err) = deserialize_and_validate(&merged_table)
+                && deserialize_and_validate(&file_table).is_ok()
+            {
                 warnings.push(LoadError::Env {
-                    err: err.to_string(),
+                    err,
                     vars: env_vars
                         .iter()
                         .map(|v| (v.name.clone(), v.raw_value.clone()))

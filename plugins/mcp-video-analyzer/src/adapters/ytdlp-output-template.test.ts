@@ -1,4 +1,4 @@
-import { readFileSync, readdirSync, statSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
@@ -56,9 +56,9 @@ export function isExtensionAgnostic(arg: string, source: string): boolean {
   // the real #24 code used. Resolve it, and fail if we can't.
   const identifier = /^[A-Za-z_$][\w$]*$/.exec(arg)?.[0];
   if (identifier) {
-    const declaration = new RegExp(
-      `(?:const|let|var)\\s+${identifier}\\s*(?::[^=]+)?=\\s*([^;]+);`,
-    ).exec(source);
+    const declaration = source.match(
+      new RegExp(`(?:const|let|var)\\s+${identifier}\\s*(?::[^=]+)?=\\s*([^;]+);`),
+    );
     if (!declaration) return false;
     expression = declaration[1];
   }
@@ -71,11 +71,14 @@ export function isExtensionAgnostic(arg: string, source: string): boolean {
 
 function tsSources(dir: string): [name: string, source: string][] {
   const out: [string, string][] = [];
-  for (const entry of readdirSync(dir)) {
-    const full = join(dir, entry);
-    if (statSync(full).isDirectory()) {
+  // `withFileTypes` answers "directory?" from the same syscall that listed the
+  // entry. A separate statSync would be a check the later read cannot rely on
+  // (CodeQL js/file-system-race), and one syscall per entry more.
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    const full = join(dir, entry.name);
+    if (entry.isDirectory()) {
       out.push(...tsSources(full));
-    } else if (entry.endsWith('.ts') && !entry.endsWith('.test.ts')) {
+    } else if (entry.name.endsWith('.ts') && !entry.name.endsWith('.test.ts')) {
       out.push([full.slice(SRC_DIR.length + 1), readFileSync(full, 'utf-8')]);
     }
   }

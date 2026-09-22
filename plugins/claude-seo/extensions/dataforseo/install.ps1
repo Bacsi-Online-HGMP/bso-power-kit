@@ -75,7 +75,10 @@ if (Test-Path "$ScriptDir\skills\seo-dataforseo\SKILL.md") {
 # Set paths
 $SkillDir = "$env:USERPROFILE\.claude\skills\seo-dataforseo"
 $AgentDir = "$env:USERPROFILE\.claude\agents"
-$SettingsFile = "$env:USERPROFILE\.claude\settings.json"
+# MCP servers live in ~/.claude.json (the file `claude mcp add` writes).
+# NOT ~/.claude/settings.json - `mcpServers` is not a key Claude Code reads
+# there, so entries written to settings.json silently never load.
+$McpConfigFile = "$env:USERPROFILE\.claude.json"
 $FieldConfigPath = "$SeoSkillDir\dataforseo-field-config.json"
 
 # Install skill
@@ -93,63 +96,39 @@ Copy-Item -Force "$SourceDir\agents\seo-dataforseo.md" "$AgentDir\seo-dataforseo
 Write-Host "→ Installing field config..." -ForegroundColor Yellow
 Copy-Item -Force "$SourceDir\field-config.json" $FieldConfigPath
 
-# Merge MCP config into settings.json
+# Merge MCP config into ~/.claude.json
 Write-Host "→ Configuring MCP server..." -ForegroundColor Yellow
 
-$python = Get-Command -Name python -ErrorAction SilentlyContinue
-if ($null -eq $python) {
-    $python = Get-Command -Name py -ErrorAction SilentlyContinue
-}
-
-if ($null -ne $python) {
-    $pyExe = $python.Source
-    # Credentials are passed as argv (never interpolated into the source string)
-    # and the settings file is written atomically with 0600 permissions.
-    $pyScript = @"
-import json, os, sys, tempfile
-path, username, password, field_config = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4]
-settings = {}
-if os.path.exists(path):
-    try:
-        with open(path) as f:
-            settings = json.load(f)
-    except json.JSONDecodeError:
-        settings = {}
-settings.setdefault('mcpServers', {})['dataforseo'] = {
-    'command': 'npx',
-    'args': ['-y', 'dataforseo-mcp-server@2.8.10'],
-    'env': {
-        'DATAFORSEO_USERNAME': username,
-        'DATAFORSEO_PASSWORD': password,
-        'ENABLED_MODULES': 'SERP,KEYWORDS_DATA,ONPAGE,DATAFORSEO_LABS,BACKLINKS,DOMAIN_ANALYTICS,BUSINESS_DATA,CONTENT_ANALYSIS,AI_OPTIMIZATION',
-        'FIELD_CONFIG_PATH': field_config,
-    },
-}
-os.makedirs(os.path.dirname(path) or '.', exist_ok=True)
-fd, tmp = tempfile.mkstemp(dir=os.path.dirname(path) or '.', prefix='.settings.', suffix='.json')
-try:
-    with os.fdopen(fd, 'w') as f:
-        json.dump(settings, f, indent=2)
-    os.chmod(tmp, 0o600)
-    os.replace(tmp, path)
-except Exception:
-    if os.path.exists(tmp):
-        os.unlink(tmp)
-    raise
-print('  ok')
-"@
-
-    $result = $pyScript | & $pyExe - $SettingsFile $DfseUsername $DfsePassword $FieldConfigPath 2>&1
-    if ($LASTEXITCODE -eq 0) {
-        Write-Host "  ✓ MCP server configured in settings.json" -ForegroundColor Green
-    } else {
-        Write-Host "  ⚠  Could not auto-configure MCP server." -ForegroundColor Yellow
-        Write-Host "  Add the dataforseo server manually to ~\.claude\settings.json"
+$settingsContent = if (Test-Path $McpConfigFile) { Get-Content $McpConfigFile -Raw | ConvertFrom-Json } else { [pscustomobject]@{} }
+if (-not $settingsContent.mcpServers) { $settingsContent | Add-Member -NotePropertyName mcpServers -NotePropertyValue ([pscustomobject]@{}) -Force }
+$settingsContent.mcpServers | Add-Member -NotePropertyName 'dataforseo' -NotePropertyValue @{
+    command = 'npx'
+    args = @('-y', 'dataforseo-mcp-server@2.8.10')
+    env = @{
+        DATAFORSEO_USERNAME = $DfseUsername
+        DATAFORSEO_PASSWORD = $DfsePassword
+        ENABLED_MODULES = 'SERP,KEYWORDS_DATA,ONPAGE,DATAFORSEO_LABS,BACKLINKS,DOMAIN_ANALYTICS,BUSINESS_DATA,CONTENT_ANALYSIS,AI_OPTIMIZATION'
+        FIELD_CONFIG_PATH = $FieldConfigPath
     }
-} else {
-    Write-Host "  ⚠  Python not found. Configure MCP server manually." -ForegroundColor Yellow
-    Write-Host "  See: extensions\dataforseo\docs\DATAFORSEO-SETUP.md"
+} -Force
+# Write atomically: stage to a temp file in the same directory, then swap
+# it into place, so a crash mid-write never leaves ~/.claude.json truncated
+# or half-written (it is shared with Claude Code and other installers).
+# -Depth 100 (not the ConvertTo-Json default of 2) so an existing
+# ~/.claude.json with deeply nested config round-trips intact.
+$TempConfigFile = Join-Path (Split-Path -Parent $McpConfigFile) ".claude.json.$([guid]::NewGuid().ToString('N')).tmp"
+$jsonText = $settingsContent | ConvertTo-Json -Depth 100
+# Write without a byte-order mark: on Windows PowerShell 5.1, Set-Content -Encoding UTF8
+# emits a BOM and Node's JSON.parse rejects it, which would make ~/.claude.json unreadable.
+[System.IO.File]::WriteAllText($TempConfigFile, $jsonText, (New-Object System.Text.UTF8Encoding $false))
+Move-Item -Path $TempConfigFile -Destination $McpConfigFile -Force
+# Restrict the credential-bearing settings file to the current user only.
+try {
+    icacls $McpConfigFile /inheritance:r /grant:r "${env:USERNAME}:F" | Out-Null
+} catch {
+    Write-Host "  Note: could not restrict ~/.claude.json ACL; review manually." -ForegroundColor Yellow
 }
+Write-Host "  ✓ MCP server configured in ~/.claude.json" -ForegroundColor Green
 
 # Pre-warm npx package
 Write-Host "→ Pre-downloading dataforseo-mcp-server..." -ForegroundColor Yellow

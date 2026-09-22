@@ -19,7 +19,7 @@
 //! %(ahead-behind:BASE)` batch walk (git ≥ 2.36) when the cache is cold
 //! for this base, seeding the cache from the batch so later runs are pure
 //! reads. Branches that moved since the last run are left out of the
-//! snapshot map — the per-branch `AheadBehindTask` recomputes (and
+//! snapshot map — the per-branch ahead/behind task recomputes (and
 //! caches) those by SHA in the parallel pool.
 //!
 //! # Lifetime
@@ -31,8 +31,6 @@
 //! "invisible refresh" surface that ambient caching introduces.
 
 use std::collections::HashMap;
-
-use anyhow::bail;
 
 use super::branches::LocalBranchInventory;
 use super::{LocalBranch, RemoteBranch, Repository};
@@ -76,14 +74,6 @@ impl RefSnapshot {
     /// to handle those should fall back to `git rev-parse` (uncached).
     pub fn resolve(&self, name: &str) -> Option<&str> {
         self.commits.get(name).map(String::as_str)
-    }
-
-    /// Resolve a ref name to its commit SHA, erroring when absent.
-    pub fn must_resolve(&self, name: &str) -> anyhow::Result<&str> {
-        match self.resolve(name) {
-            Some(sha) => Ok(sha),
-            None => bail!("ref not present in snapshot: {name}"),
-        }
     }
 
     /// Look up the configured upstream short name for a local branch.
@@ -147,7 +137,7 @@ impl Repository {
     /// cached (a fresh repo, after `wt config state clear`, or branches
     /// that moved since their last write) the misses are filled by:
     /// - a few misses → left out of the map; the per-branch
-    ///   `AheadBehindTask` recomputes (and caches) them by SHA in the
+    ///   ahead/behind task recomputes (and caches) them by SHA in the
     ///   parallel pool;
     /// - everything cold → one unscoped `for-each-ref %(ahead-behind)
     ///   refs/heads/` walk, results written to the cache;
@@ -314,7 +304,7 @@ impl Repository {
     /// `parse_local_branch_line`), are skipped: nothing to cache. Each
     /// per-upstream group below the same threshold
     /// `capture_ahead_behind` uses for the cold-subset batch is also
-    /// skipped — the per-row `UpstreamTask` will recompute those by SHA
+    /// skipped — the per-row upstream task will recompute those by SHA
     /// in the parallel pool, which beats blocking the pool on a small
     /// serial batch. Unlike [`Self::capture_refs_with_ahead_behind`]
     /// there is no "all cold → unscoped walk" shortcut: each upstream
@@ -370,7 +360,7 @@ impl Repository {
         }
 
         // Partition cold vs warm by probing the SHA cache. Warm pairs
-        // need no work — the per-row `UpstreamTask` reads them in
+        // need no work — the per-row upstream task reads them in
         // parallel via `ahead_behind_by_sha`.
         let mut cold_by_upstream: HashMap<String, Vec<String>> = HashMap::new();
         for (branch_ref, branch_sha, upstream_sha) in &candidates {
@@ -619,12 +609,12 @@ mod tests {
     }
 
     #[test]
-    fn must_resolve_errors_on_missing_ref() {
+    fn resolve_returns_none_for_uncaptured_refs() {
         let test = TestRepo::with_initial_commit();
         let repo = Repository::at(test.root_path()).unwrap();
         let snap = repo.capture_refs().unwrap();
 
-        assert!(snap.must_resolve("does-not-exist").is_err());
+        assert_eq!(snap.resolve("does-not-exist"), None);
         // HEAD is intentionally absent — callers fall back to rev-parse.
         assert_eq!(snap.resolve("HEAD"), None);
     }

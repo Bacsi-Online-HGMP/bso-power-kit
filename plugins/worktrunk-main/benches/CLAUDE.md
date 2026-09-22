@@ -116,8 +116,10 @@ Setting `WORKTRUNK_PREVIEW_BENCH=1` runs `wt switch`'s interactive picker prelud
 end-to-end — collect, speculative spawn, skeleton, initial pre-compute, deferred
 pre-compute — and exits immediately after `PreviewOrchestrator::wait_for_idle()`,
 before skim launches and before any JSON serialization or stderr drain. Used by
-`picker_preview` benchmarks to measure the preview pool workload without standing
-up a PTY. Bypasses the picker's TTY check, like `WORKTRUNK_PICKER_DRY_RUN=1`.
+`picker_preview` benchmarks to measure the skeleton-time preview pool workload
+without standing up a PTY. Off-screen worktrees are demand-loaded only after skim
+starts and are intentionally outside this benchmark. Bypasses the picker's TTY
+check, like `WORKTRUNK_PICKER_DRY_RUN=1`.
 
 The hot path inside the env-gated block is identical to the dry-run path; only the
 post-drain output (cache JSON dump + stashed-warning drain) is conditional. Keep new
@@ -276,18 +278,14 @@ cargo run -p wt-perf -- timeline -- -C target/wt-prune-imported step prune --min
 # For another run, remove target/wt-prune-imported explicitly or choose a new path.
 ```
 
-**The `wt remove` exit-delay is machine-dependent and invisible to benches.**
-After its last message, `wt remove` runs an in-process sweep
-(`run_internal_sweep`) that enumerates `git fsmonitor--daemon` processes
-*machine-wide* and resolves each one's socket with a ~50 ms `lsof` call —
-sequential, before exit, while the shell wrapper waits on the process. On a
-machine with N live daemons that appends roughly `N × 50 ms` of post-output
-latency (measured: 115 daemons → 5.8 s after 0.4 s of actual removal output);
-on daemon-free bench/CI machines it costs nothing, so `remove_e2e` never sees
-it. To observe it, run `wt-perf timeline -- remove <branch>` on a real machine
-and read the `internal-sweep` span and its `lsof -a -p …` children; the
-`fsmonitor sweep: resolving sockets for N daemon(s)` debug line gives the
-count.
+**`wt remove` keeps working after its last message.** The in-process sweep
+(`run_internal_sweep`) runs before exit, while the shell wrapper waits on the
+process: one `pgrep` for `git fsmonitor--daemon` processes plus one `lsof` over
+the whole PID set. Two spawns whatever the machine-wide daemon count, so
+`remove_e2e` misses a fixed tail rather than one that grows with the machine.
+To observe it, run `wt-perf timeline -- remove <branch>` on a real machine and
+read the `internal-sweep` span; the `fsmonitor sweep: resolving sockets for N
+daemon(s) via one lsof` debug line gives the count.
 
 ## Output Locations
 

@@ -5,6 +5,9 @@
  * uses to decide whether to gate on `init`. Plausible enough that the agent
  * treats them as real context rather than test scaffolding.
  */
+// This user can supply a complete synthetic case now, not promise future assets.
+export const CASE_STUDY_ANSWER = 'Build a standalone index.html for the researchers described in PRODUCT.md, preserving DESIGN.md. Use a clearly labeled synthetic case: a doctoral researcher reconstructs why a literature-review conclusion changed by following linked notes and citations. No real customer names, quotes, metrics, or assets are available; author illustrative content and label it, with no invented commercial claims. The reader should understand the preserved reasoning trail and follow an in-page link to the method. For a composition or concept choice, use the first direction you presented. No additional material is coming from me.';
+
 export const PRODUCT_MD_SAMPLE = `# Acme Notes
 
 ## Platform
@@ -335,3 +338,11 @@ separates major regions. No drop shadows under 16px blur.
 - Cards: avoid; prefer hairlined regions and inline lists.
 - Forms: floating labels, no border on the input — underline only.
 `;
+
+// A real surface keeps workflow advice and explicit-command precedence tests
+// answerable without requiring the model to invent a project.
+export const WORKFLOW_ADVICE_FILES = {
+  'PRODUCT.md': PRODUCT_MD_SAMPLE,
+  'DESIGN.md': DESIGN_MD_SAMPLE,
+  'index.html': MINIMAL_LANDING_HTML,
+};

@@ -4,6 +4,11 @@ package store
 // `caveman learn report --json` and rendered into the static HTML report. It is the
 // local setup-profiler analogue of the cloud Cave Plan: a Cave Score plus a flat,
 // ranked list of token sinks. Everything here is `inferred` — learn never verifies.
+//
+// Two additive blocks carry currency (see learn_pricing.go / learn_attribution.go):
+// `spend` prices provider-counted usage at dated published rates, and confirmed
+// rows carry priced savings behind a named attribution method. Neither is ever
+// `verified`, and neither is ever projected forward.
 
 const (
 	learnSchema = "caveman.learn.v1"
@@ -55,6 +60,11 @@ type LearnPlan struct {
 	// WrapMeasured is present only when the proxy recorded wrap activity in the
 	// window. Additive optional field: the schema stays `caveman.learn.v1`.
 	WrapMeasured *LearnWrapMeasured `json:"wrap_measured,omitempty"`
+	// Spend prices the scanned window from provider-counted usage. Present only
+	// when at least one scanned turn carried billing buckets for a model the
+	// catalog carries. Additive optional field: the schema stays
+	// `caveman.learn.v1`.
+	Spend *LearnSpend `json:"spend,omitempty"`
 	// Confirmed is longitudinal local measurement for fixes explicitly recorded
 	// in Caveman's own outcome ledger. It is omitted until at least one outcome
 	// can be stated, including an honest insufficient-data verdict.
@@ -67,6 +77,9 @@ type LearnPlan struct {
 	Repos         []LearnRepo `json:"repos,omitempty"`
 	observedTurns int
 	computedAt    string
+	// sessionOutcomes is unexported scan state reused by the experiment harness
+	// so a holdout report costs one corpus walk rather than two.
+	sessionOutcomes []sessionOutcome
 }
 
 // LearnWrapMeasured sums what the proxy itself recorded inside the window:
@@ -163,7 +176,8 @@ type LearnWindow struct {
 
 // CaveScore mirrors the cloud Cave Score mechanic (start at 100, subtract capped
 // penalties) but scores local setup leanness. It is `inferred` and distinct from
-// the cloud spend-based Cave Score; it never carries a currency.
+// the cloud spend-based Cave Score. The SCORE itself never carries a currency —
+// it grades setup leanness, not money; spend lives in its own block.
 type CaveScore struct {
 	Score      int              `json:"score"`
 	Basis      string           `json:"basis"`
@@ -193,10 +207,17 @@ type Sink struct {
 	// TokensObserved is a window-bounded historical total. It is never folded
 	// into TokensPerTurn or TokensPerDayRate; ranking may derive a daily
 	// equivalent from it without changing its public meaning.
-	TokensObserved int64          `json:"tokens_observed,omitempty"`
-	Evidence       map[string]any `json:"evidence"`
-	Suggestion     string         `json:"suggestion"`
-	Framing        string         `json:"framing"`
+	TokensObserved int64 `json:"tokens_observed,omitempty"`
+	// Spend fields price the two token quantities above at the user's own
+	// MEASURED effective input rate (see learn_pricing.go), not at list. They
+	// are omitted whenever the window carried no priceable provider-counted
+	// usage. They are spend attribution, never a savings claim: a sink's dollar
+	// figure says what this context costs, not what removing it would return.
+	SpendUSDPerDay   float64        `json:"spend_usd_per_day,omitempty"`
+	SpendUSDObserved float64        `json:"spend_usd_observed,omitempty"`
+	Evidence         map[string]any `json:"evidence"`
+	Suggestion       string         `json:"suggestion"`
+	Framing          string         `json:"framing"`
 }
 
 // ConfigSnapshot is one measured config-tax source, persisted to config_snapshots

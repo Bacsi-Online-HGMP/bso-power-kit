@@ -278,9 +278,9 @@ func commaInt(v int64) string {
 
 // Input-token list prices in $/MTok, checked 2026-08 (Claude from Anthropic
 // docs; GPT-5.6 after OpenAI's 2026-07-30 Terra/Luna cuts). Used only for the
-// clearly-labeled cost chart in the HTML report: uncached list-price
-// arithmetic over the forward rate, never a bill, a savings claim, or a
-// verified figure.
+// clearly-labeled cost chart in the HTML report: list-price arithmetic over
+// the forward rate at an assumed cache mix, never a bill, a savings claim, or
+// a verified figure.
 var costModels = []struct {
 	family string
 	label  string
@@ -302,10 +302,25 @@ func fmtUSD(usd float64) string {
 }
 
 func fmtRate(rate float64) string {
-	if rate == float64(int64(rate)) {
+	switch {
+	case rate == float64(int64(rate)):
 		return fmt.Sprintf("$%.0f/MTok in", rate)
+	case rate < 0.1:
+		return fmt.Sprintf("$%.3f/MTok in", rate)
 	}
 	return fmt.Sprintf("$%.2f/MTok in", rate)
+}
+
+// The cost chart assumes a 90% cache hit rate. Cache reads bill at 10% of the
+// input list price on both Anthropic and OpenAI, so the effective rate is
+// 0.1 + 0.9*0.1 = 0.19x list. An assumption, not this user's measured mix.
+const (
+	chartCacheHitRate      = 0.90
+	chartCacheReadDiscount = 0.10
+)
+
+func cachedRate(list float64) float64 {
+	return list * ((1 - chartCacheHitRate) + chartCacheHitRate*chartCacheReadDiscount)
 }
 
 // costRow is one bar in the 30-day cost chart.
@@ -324,9 +339,10 @@ type costFamily struct {
 }
 
 // costFamilies prices the total forward tokens/day rate over 30 days at each
-// model's input list price, all uncached, grouped by provider family for the
-// chart's tab switch. Bar widths share one scale across families (relative to
-// the most expensive model anywhere) so switching tabs stays comparable.
+// model's input list price under the chart's 90%-cache assumption, grouped by
+// provider family for the chart's tab switch. Bar widths share one scale
+// across families (relative to the most expensive model anywhere) so
+// switching tabs stays comparable.
 func costFamilies(sinks []Sink) []costFamily {
 	total := sumPerDay(sinks)
 	if total <= 0 {
@@ -341,10 +357,11 @@ func costFamilies(sinks []Sink) []costFamily {
 	claude := costFamily{ID: "claude", Name: "Claude"}
 	gpt := costFamily{ID: "gpt56", Name: "GPT-5.6"}
 	for _, m := range costModels {
+		rate := cachedRate(m.rate)
 		row := costRow{
 			Label: m.label,
-			Rate:  fmtRate(m.rate),
-			USD:   fmtUSD(float64(total) * 30 / 1e6 * m.rate),
+			Rate:  fmtRate(rate),
+			USD:   fmtUSD(float64(total) * 30 / 1e6 * rate),
 			Pct:   int(m.rate / max * 100),
 		}
 		if m.family == "claude" {
@@ -479,6 +496,16 @@ func humanTokens(v int64) string {
 	return commaInt(v)
 }
 
+// topSinks caps the HTML report's sink list. Sinks arrive ranked by daily
+// equivalent, so this is the head of that ranking; the JSON plan keeps all.
+func topSinks(sinks []Sink) []Sink {
+	const max = 20
+	if len(sinks) > max {
+		return sinks[:max]
+	}
+	return sinks
+}
+
 func sumPerDay(sinks []Sink) int64 {
 	var total int64
 	for _, s := range sinks {
@@ -588,6 +615,7 @@ var learnTemplate = template.Must(template.New("learn").Funcs(template.FuncMap{
 	"famSegs":       famSegs,
 	"human":         humanTokens,
 	"observedBasis": observedTokenBasis,
+	"topSinks":      topSinks,
 	"classClass": func(class string) string {
 		switch class {
 		case classReducible:
@@ -826,7 +854,10 @@ ul.caveats li{margin:6px 0}
 <h2>Token Sinks</h2>
 <p class="note">Ranked by daily-equivalent magnitude. Behavioral token totals remain historical observations, never rates. Open a row for evidence and suggested fix. Load-bearing rows are listed for honesty and never touched.</p>
 {{if .Plan.Sinks}}
-{{range .Plan.Sinks}}
+<details>
+  <summary><span class="caret">▶</span><span class="title">Show {{plural (len (topSinks .Plan.Sinks)) "sink"}}</span>{{if gt (len .Plan.Sinks) 20}}<span class="num">top 20 of {{comma (len .Plan.Sinks)}}</span>{{end}}</summary>
+  <div class="body">
+{{range topSinks .Plan.Sinks}}
 <details>
   <summary><span class="caret">▶</span><span class="pill {{classClass .Class}}">{{classLabel .Class}}</span><span class="title">{{.Title}}</span><span class="num">{{if .TokensObserved}}{{comma .TokensObserved}} observed · {{observedBasis .}}{{else}}{{comma .TokensPerTurn}} / turn{{end}}</span></summary>
   <div class="body">
@@ -836,6 +867,9 @@ ul.caveats li{margin:6px 0}
   </div>
 </details>
 {{end}}
+    {{if gt (len .Plan.Sinks) 20}}<p class="fine">{{comma (len .Plan.Sinks)}} sinks found; the {{comma (len (topSinks .Plan.Sinks))}} largest by daily equivalent are shown. caveman learn report --json carries all of them.</p>{{end}}
+  </div>
+</details>
 {{else}}<div class="empty">No token sinks found yet. Scan more sessions, then come back.</div>{{end}}
 
 {{with .Plan.ContextDepth}}
@@ -871,11 +905,11 @@ ul.caveats li{margin:6px 0}
 {{$fams := costFamilies .Plan.Sinks}}
 {{if $fams}}
 <h2>Cost per 30 Days</h2>
-<p class="note">Total sink flow of {{comma (sumPerDay .Plan.Sinks)}} tokens/day, priced uncached at each model's input list price. Bars share one scale across tabs. Illustration, not a bill; real cost depends on caching.</p>
+<p class="note">Total sink flow of {{comma (sumPerDay .Plan.Sinks)}} tokens/day, priced at each model's input list price assuming 90% of it is a cache read (0.19x list). Bars share one scale across tabs. Illustration, not a bill; your real cache mix will differ.</p>
 <div class="dcard chart">
   <input type="radio" name="costfam" id="fam-claude" checked>
   <input type="radio" name="costfam" id="fam-gpt56">
-  <div class="kicker">Cost illustration · uncached list price</div>
+  <div class="kicker">Cost illustration · 90% cached list price</div>
   <div class="tabs">
     {{range $fams}}<label for="fam-{{.ID}}">{{.Name}}</label>{{end}}
   </div>

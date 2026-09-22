@@ -79,6 +79,7 @@
 //! so it stays segmentable and joins back to this record via `seq`.
 
 use std::borrow::Cow;
+use std::cell::Cell;
 use std::fmt::Display;
 use std::sync::OnceLock;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -105,6 +106,15 @@ pub fn now_us() -> u64 {
 
 /// Numeric thread id, extracted from `ThreadId`'s `Debug` representation.
 /// `ThreadId` debug format is `ThreadId(N)`.
+///
+/// Parsing `Debug` because `std` exposes no stable accessor for the number
+/// (`ThreadId::as_u64` is unstable). The substitute is kept to exactly that
+/// question, it is the only place that parse lives (the stderr thread label
+/// reads it through here), and `thread_ids_are_distinct_and_nonzero` pins it:
+/// a `Debug` format that stopped matching would fall through to the `0` below
+/// on every thread, and `Profile`'s thread count — the `-vv` diagnostic
+/// report's answer to "did this run in parallel?" — would silently read 1 for
+/// every run.
 pub fn thread_id() -> u64 {
     let thread_id = std::thread::current().id();
     let debug_str = format!("{:?}", thread_id);
@@ -122,6 +132,41 @@ pub fn thread_id() -> u64 {
 /// construction (outside any verbosity gate) so the sequence is dense
 /// regardless of whether the file layers are active. Starts at 1.
 static CMD_SEQ: AtomicU64 = AtomicU64::new(1);
+
+/// Reserved context for subprocesses that build the `-vv` diagnostic report.
+///
+/// The raw trace retains these records, while aggregate profiles exclude them
+/// so they describe the command being diagnosed rather than its collector.
+pub const DIAGNOSTIC_CONTEXT: &str = "(diagnostic)";
+
+thread_local! {
+    static IN_DIAGNOSTIC_CONTEXT: Cell<bool> = const { Cell::new(false) };
+}
+
+struct DiagnosticContextGuard {
+    previous: bool,
+}
+
+impl Drop for DiagnosticContextGuard {
+    fn drop(&mut self) {
+        IN_DIAGNOSTIC_CONTEXT.set(self.previous);
+    }
+}
+
+/// Run `f` with subprocess trace records assigned to [`DIAGNOSTIC_CONTEXT`].
+///
+/// The override is thread-local so command work still completing on another
+/// thread keeps its original context. Nested scopes restore the prior state.
+pub fn with_diagnostic_context<T>(f: impl FnOnce() -> T) -> T {
+    let previous = IN_DIAGNOSTIC_CONTEXT.replace(true);
+    let _guard = DiagnosticContextGuard { previous };
+    f()
+}
+
+/// Active trace-context override for the current thread, if any.
+pub(crate) fn diagnostic_context() -> Option<&'static str> {
+    IN_DIAGNOSTIC_CONTEXT.get().then_some(DIAGNOSTIC_CONTEXT)
+}
 
 /// Emit a completed-command record (`ok=true`/`ok=false`).
 ///
@@ -244,7 +289,7 @@ impl CommandTrace {
     /// the captured start time brackets the subprocess.
     pub fn new(context: Option<&str>, cmd: &str) -> Self {
         Self {
-            context: context.map(ToOwned::to_owned),
+            context: diagnostic_context().or(context).map(ToOwned::to_owned),
             cmd: cmd.to_owned(),
             start_ts_us: now_us(),
             start: Instant::now(),
@@ -404,6 +449,19 @@ impl Drop for Span {
 mod tests {
     use super::*;
 
+    /// `thread_id` reads a number out of `ThreadId`'s `Debug` string, so a
+    /// change to that format degrades silently to `0` everywhere rather than
+    /// failing. Two threads reporting distinct non-zero ids is what proves the
+    /// parse still lands.
+    #[test]
+    fn thread_ids_are_distinct_and_nonzero() {
+        let current = thread_id();
+        let spawned = std::thread::spawn(thread_id).join().unwrap();
+        assert_ne!(current, 0, "this thread's id parsed as the 0 fallback");
+        assert_ne!(spawned, 0, "spawned thread id parsed as the 0 fallback");
+        assert_ne!(current, spawned, "two threads reported the same id");
+    }
+
     // Resolution (complete/fail) marks the guard so its drop is a no-op. No
     // tracing subscriber is installed, so the records themselves are dropped —
     // the point is that the drop-time tripwire does not fire on a resolved
@@ -420,6 +478,23 @@ mod tests {
         drop(failed);
 
         CommandTrace::record_failed(None, "git nope", false, "precondition");
+    }
+
+    #[test]
+    fn diagnostic_context_overrides_and_restores_command_context() {
+        let assert_context = |expected: &str| {
+            let mut trace = CommandTrace::new(Some("worktree"), "git status");
+            assert_eq!(trace.context(), Some(expected));
+            trace.complete(true);
+        };
+
+        assert_context("worktree");
+        with_diagnostic_context(|| {
+            assert_context(DIAGNOSTIC_CONTEXT);
+            with_diagnostic_context(|| assert_context(DIAGNOSTIC_CONTEXT));
+            assert_context(DIAGNOSTIC_CONTEXT);
+        });
+        assert_context("worktree");
     }
 
     // A guard that reaches drop without complete()/fail() is a spawn site that

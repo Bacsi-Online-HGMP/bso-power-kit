@@ -22,15 +22,35 @@ import {
   countBookSections,
   countProductionRisks,
   countTestRisks,
+  extractChangelogSection,
   extractChangelogVersion,
   extractGuideStepLabels,
+  hasOpencodeSlashFlag,
 } from "./frontmatter.mjs";
+import {
+  auditRange,
+  changelogTrailer,
+  exemption,
+  commitsSince,
+  coverageVerdict,
+  isTagged,
+  lastTag,
+  parseCommitLog,
+  pullRequestOf,
+  report,
+} from "./changelog-audit.mjs";
 import { extractRiskCodes, classify } from "./eval-utils.mjs";
 import { parseFindings, countFindings, extractLocation, SOURCE_EXTENSIONS } from "./report-parse.mjs";
 import { reportToSarif } from "./sarif.mjs";
 import { severityBreached, isRegression } from "./ci-gate.mjs";
 import { summarize } from "./benchmark.mjs";
 import { versionRefs } from "./version-refs.mjs";
+import {
+  linkedSetupGuides,
+  parseInstallerPlatforms,
+  platformEnumeration,
+  namesPlatform,
+} from "./platforms.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -261,6 +281,57 @@ test("assembles sweep prompt with both risk catalogs and sweep guide", () => {
   assert.match(prompt, /## Risk 1: Cognitive Overload/);
   assert.match(prompt, /## Risk T1: Test Obscurity/);
   assert.match(prompt, /# Brooks-Lint .* Full Sweep Guide/);
+});
+
+// ── hasOpencodeSlashFlag ───────────────────────────────────────────────────
+
+console.log("\nhasOpencodeSlashFlag");
+
+const SLASH_FRONTMATTER = [
+  "---",
+  "name: brooks-review",
+  "description: >",
+  "  PR code review. Do NOT trigger for: architecture audits.",
+  "metadata:",
+  '  opencode/slash: "true"',
+  "---",
+  "",
+  "# Brooks-Lint — PR Review",
+  "",
+].join("\n");
+
+test("accepts frontmatter carrying the opt-in flag", () => {
+  assert.equal(hasOpencodeSlashFlag(SLASH_FRONTMATTER), true);
+});
+
+test("rejects frontmatter with no metadata block", () => {
+  const text = SLASH_FRONTMATTER.replace('metadata:\n  opencode/slash: "true"\n', "");
+  assert.equal(hasOpencodeSlashFlag(text), false);
+});
+
+test("rejects a metadata block that omits opencode/slash", () => {
+  const text = SLASH_FRONTMATTER.replace('  opencode/slash: "true"', "  audience: maintainers");
+  assert.equal(hasOpencodeSlashFlag(text), false);
+});
+
+test("rejects the flag set to false", () => {
+  assert.equal(hasOpencodeSlashFlag(SLASH_FRONTMATTER.replace('"true"', '"false"')), false);
+});
+
+test("accepts YAML's bare true, which parses to the same boolean", () => {
+  assert.equal(hasOpencodeSlashFlag(SLASH_FRONTMATTER.replace('"true"', "true")), true);
+});
+
+test("ignores an opencode/slash line outside the frontmatter", () => {
+  const text = ["---", "name: brooks-review", "---", "", "metadata:", '  opencode/slash: "true"', ""].join("\n");
+  assert.equal(hasOpencodeSlashFlag(text), false);
+});
+
+test("every shipped skill carries the flag", () => {
+  for (const mode of VALID_MODES) {
+    const skillMd = readFileSync(path.join(__dirname, "..", "skills", `brooks-${mode}`, "SKILL.md"), "utf8");
+    assert.ok(hasOpencodeSlashFlag(skillMd), `brooks-${mode}/SKILL.md should opt into OpenCode's / menu`);
+  }
 });
 
 // ── readHistory ────────────────────────────────────────────────────────────
@@ -905,6 +976,104 @@ test("patterns match the real badge and JSON-LD shapes", () => {
   });
 });
 
+console.log("\nlinkedSetupGuides");
+
+test("collects guides from README-style and sibling-style links alike", () => {
+  const text = "| Kiro | [setup](docs/kiro-setup.md) |\n| pi | [pi-setup.md](pi-setup.md) |";
+  assert.deepEqual(linkedSetupGuides(text), ["kiro-setup.md", "pi-setup.md"]);
+});
+
+test("de-duplicates a guide linked more than once", () => {
+  const text = "[a](docs/dsh-setup.md) … [b](dsh-setup.md)";
+  assert.deepEqual(linkedSetupGuides(text), ["dsh-setup.md"]);
+});
+
+test("returns an empty array when no guide is linked", () => {
+  assert.deepEqual(linkedSetupGuides("no links here"), []);
+});
+
+console.log("\nplatformEnumeration");
+
+test("picks the enumeration line, not the earlier <platform> placeholder", () => {
+  const text = "bash -s -- <platform>\n#   <platform> = opencode · kiro\n```";
+  assert.equal(platformEnumeration(text), "#   <platform> = opencode · kiro\n```");
+});
+
+test("keeps the continuation line, since getting-started wraps mid-list", () => {
+  const text = "`<platform>` ∈ `opencode · dsh ·\ngemini · agents`. Add `--project` to …";
+  assert.ok(platformEnumeration(text).includes("agents"));
+});
+
+test("matches the localized <平台> form", () => {
+  assert.ok(platformEnumeration("#   <平台> = opencode · kiro").includes("kiro"));
+});
+
+test("returns an empty string when the document has no enumeration", () => {
+  assert.equal(platformEnumeration("bash -s -- <platform>\n"), "");
+});
+
+console.log("\nnamesPlatform");
+
+test("matches a platform delimited by list separators", () => {
+  assert.ok(namesPlatform("opencode · bob · agents", "bob"));
+});
+
+test("does not match a platform buried in a hyphenated filename", () => {
+  assert.equal(namesPlatform("[setup](docs/bob-setup.md)", "bob"), false);
+});
+
+test("does not match a platform that is only a substring", () => {
+  assert.equal(namesPlatform("opencode · piper", "pi"), false);
+});
+
+console.log("\nparseInstallerPlatforms");
+
+const INSTALLER_FIXTURE = [
+  'PLATFORMS="kiro dsh"',
+  "",
+  "global_dir() {",
+  "  case $1 in",
+  "    kiro)        printf '%s' \"$HOME/.kiro/skills\" ;;",
+  "    # DeepSeek Harness resolves its config root from $DSH_HOME.",
+  "    dsh)         printf '%s' \"${DSH_HOME:-$HOME/.dsh}/skills\" ;;",
+  "    *)           return 1 ;;",
+  "  esac",
+  "}",
+  "",
+  "project_dir() {",
+  "  case $1 in",
+  "    kiro)        printf '%s' \"$PWD/.kiro/skills\" ;;",
+  "    *)           return 1 ;;",
+  "  esac",
+  "}",
+].join("\n");
+
+test("reads the declared list and both directory mappings", () => {
+  const parsed = parseInstallerPlatforms(INSTALLER_FIXTURE);
+  assert.deepEqual(parsed.declared, ["kiro", "dsh"]);
+  assert.deepEqual(parsed.global, ["kiro", "dsh"]);
+});
+
+test("omits a platform whose case arm is missing, so the validator can catch it", () => {
+  // project_dir() in the fixture handles kiro but not dsh — running
+  // `install.sh dsh --project` would die with "unknown platform".
+  assert.deepEqual(parseInstallerPlatforms(INSTALLER_FIXTURE).project, ["kiro"]);
+});
+
+test("skips comments and the catch-all arm", () => {
+  const { global: arms } = parseInstallerPlatforms(INSTALLER_FIXTURE);
+  assert.ok(!arms.includes("*"));
+  assert.equal(arms.length, 2);
+});
+
+test("parses the real installer, proving the patterns still match", () => {
+  const installer = readFileSync(path.join(__dirname, "install.sh"), "utf8");
+  const { declared, global: globalArms, project } = parseInstallerPlatforms(installer);
+  assert.ok(declared.length >= 12, `expected the full platform list, got ${declared.length}`);
+  assert.deepEqual(new Set(globalArms), new Set(declared));
+  assert.deepEqual(new Set(project), new Set(declared));
+});
+
 // ── Integration: validate-repo.mjs passes against current repo ─────────────
 
 console.log("\nvalidate-repo integration");
@@ -912,6 +1081,14 @@ console.log("\nvalidate-repo integration");
 test("validate-repo.mjs exits 0 against the current repository", () => {
   execFileSync("node", [path.join(__dirname, "validate-repo.mjs")], { encoding: "utf8" });
   // execFileSync throws on non-zero exit — reaching here means exit 0
+});
+
+test("validate-repo.mjs runs the changelog coverage check and says what it did", () => {
+  // Deleting checkChangelogCoverage() from the registration list, or inverting
+  // its release-in-progress guard, both silence this line — and a gate whose
+  // off-state is invisible is the silence this whole check exists to remove.
+  const stdout = execFileSync("node", [path.join(__dirname, "validate-repo.mjs")], { encoding: "utf8" });
+  assert.match(stdout, /Changelog coverage: (not audited — |audited)/);
 });
 
 test("validate-repo.mjs ignores an inherited CLAUDE_PLUGIN_ROOT", () => {
@@ -922,6 +1099,376 @@ test("validate-repo.mjs ignores an inherited CLAUDE_PLUGIN_ROOT", () => {
     encoding: "utf8",
     env: { ...process.env, CLAUDE_PLUGIN_ROOT: path.resolve(__dirname, "..") },
   });
+});
+
+
+// ── changelog audit ────────────────────────────────────────────────────────
+
+console.log("\nchangelog audit");
+
+const FIELD = "\x1f";
+const RECORD = "\x1e";
+
+/**
+ * Build a `git log --name-only` record the way changelog-audit.mjs formats it:
+ * RECORD leads, and the file list follows a trailing FIELD.
+ */
+function logRecord({ hash = "0".repeat(40), author = "hyh", parents = "abc123", subject, body = "", files = [] }) {
+  const fileBlock = files.length > 0 ? `\n\n${files.join("\n")}\n` : "";
+  return RECORD + [hash, author, parents, subject, body, fileBlock].join(FIELD);
+}
+
+test("parseCommitLog keeps multi-line bodies intact", () => {
+  const stdout =
+    logRecord({ hash: "a".repeat(40), subject: "first", body: "line one\n\nline two\n", files: ["a.md"] }) +
+    "\n" +
+    logRecord({ hash: "b".repeat(40), subject: "second" });
+  const commits = parseCommitLog(stdout);
+  assert.equal(commits.length, 2);
+  assert.equal(commits[0].body, "line one\n\nline two\n");
+  assert.deepEqual(commits[0].files, ["a.md"]);
+  assert.equal(commits[1].subject, "second");
+  assert.equal(commits[1].hash, "b".repeat(40));
+});
+
+test("parseCommitLog reads a merge commit's two parents", () => {
+  const [commit] = parseCommitLog(logRecord({ parents: "abc123 def456", subject: "Merge pull request #34 from x/y" }));
+  assert.deepEqual(commit.parents, ["abc123", "def456"]);
+});
+
+test("parseCommitLog returns nothing for an empty range", () => {
+  assert.deepEqual(parseCommitLog(""), []);
+});
+
+test("exemption covers merges, release bumps and the star history refresh", () => {
+  assert.match(
+    exemption({ parents: ["a", "b"], author: "hyh", subject: "Merge pull request #34 from x/y", files: [] }),
+    /merge/,
+  );
+  assert.match(
+    exemption({ parents: ["a"], author: "hyh", subject: "chore(release): bump version to 1.6.0", files: ["package.json"] }),
+    /release bump/,
+  );
+  assert.match(
+    exemption({
+      parents: ["a"],
+      author: "github-actions[bot]",
+      subject: "chore: refresh the star history chart",
+      files: ["assets/star-history.svg"],
+    }),
+    /star history refresh/,
+  );
+});
+
+test("exemption covers nothing else — internal hardening still needs an entry", () => {
+  // d4b5c40 changed no user-visible behavior and was still a 1.6.0 omission.
+  assert.equal(
+    exemption({
+      parents: ["a"],
+      author: "hyh",
+      subject: "test: fail validation when a platform is documented unevenly",
+      files: ["scripts/validate-repo.mjs"],
+    }),
+    null,
+  );
+  assert.equal(exemption({ parents: ["a"], author: "hyh", subject: "chore: tidy up", files: ["a.md"] }), null);
+});
+
+test("exemption judges a bot commit by what it changed, not by its subject", () => {
+  // `[bot]` + `chore:` was wide enough to swallow a dependency bump, which is a
+  // change this repo's changelog records.
+  assert.equal(
+    exemption({
+      parents: ["a"],
+      author: "dependabot[bot]",
+      subject: "chore(deps): bump @anthropic-ai/sdk from 1.0.0 to 1.1.0",
+      files: ["package.json", "package-lock.json"],
+    }),
+    null,
+  );
+  // Nor does the refresh's own subject exempt a commit that touched more.
+  assert.equal(
+    exemption({
+      parents: ["a"],
+      author: "github-actions[bot]",
+      subject: "chore: refresh the star history chart",
+      files: ["assets/star-history.svg", "README.md"],
+    }),
+    null,
+  );
+});
+
+test("pullRequestOf reads both GitHub merge subject conventions", () => {
+  assert.equal(pullRequestOf("docs: finish the singular-badge cleanup (#25)"), 25);
+  assert.equal(pullRequestOf("Merge pull request #34 from rapcal/feat/opencode-command-wrappers"), 34);
+});
+
+test("pullRequestOf ignores a number that is only a reference", () => {
+  // "#21" here points at an issue the commit mentions, not the PR it is.
+  assert.equal(pullRequestOf("fix: stop the wrapper looping (#21 upstream)"), null);
+  assert.equal(pullRequestOf("feat: add a generic api-base-url input"), null);
+});
+
+test("changelogTrailer reads the trailer and ignores prose about one", () => {
+  assert.equal(changelogTrailer("Body text.\n\nChangelog: added — platform docs are cross-checked\n"), "added — platform docs are cross-checked");
+  // a1036cc quotes d4b5c40's wording; a phrase regex flagged it, a trailer does not.
+  assert.equal(changelogTrailer("its own commit message asked to be carried into the next release's changelog.\n"), null);
+});
+
+test("changelogTrailer takes the commit's own trailer, not one it quotes", () => {
+  const body = [
+    "Reverting d4b5c40, whose message ended:",
+    "",
+    "Changelog: added — platform docs are cross-checked",
+    "",
+    "That entry is withdrawn.",
+    "",
+    "Changelog: removed — the platform doc cross-check",
+  ].join("\n");
+  assert.equal(changelogTrailer(body), "removed — the platform doc cross-check");
+});
+
+test("changelogTrailer tolerates a commit with no body", () => {
+  assert.equal(changelogTrailer(undefined), null);
+  assert.equal(changelogTrailer(""), null);
+});
+
+test("auditRange flags a merged pull request the section never cites", () => {
+  const commits = parseCommitLog(
+    logRecord({ hash: "c".repeat(40), author: "2233admin", subject: "docs: finish the singular-badge cleanup (#25)" }),
+  );
+  const [entry] = auditRange(commits, "## [1.6.0] - 2026-09-20\n\n- **IBM Bob support** (#32, #33)\n");
+  assert.equal(entry.pr, 25);
+  assert.equal(entry.gap, true);
+  assert.equal(entry.exempt, null);
+});
+
+test("auditRange clears a pull request the section cites", () => {
+  const commits = parseCommitLog(logRecord({ subject: "feat(install): add IBM Bob platform support (#33)" }));
+  const [entry] = auditRange(commits, "## [1.6.0] - 2026-09-20\n\n- **IBM Bob support** (#32, #33)\n");
+  assert.equal(entry.gap, false);
+});
+
+test("auditRange audits a merge commit's pull request despite the exemption", () => {
+  // The merge itself needs no entry, but the PR it lands does — and the branch
+  // commit under it carries no number, so this is the only place to catch it.
+  const commits = parseCommitLog(
+    logRecord({ parents: "abc123 def456", subject: "Merge pull request #34 from rapcal/feat/opencode-command-wrappers" }),
+  );
+  const [entry] = auditRange(commits, "## [1.6.0] - 2026-09-20\n\n- nothing relevant\n");
+  assert.match(entry.exempt, /merge/);
+  assert.equal(entry.gap, true);
+});
+
+/** A throwaway repository, so the git layer is covered without mocking git. */
+function withTempRepo(build) {
+  const dir = mkdtempSync(path.join(os.tmpdir(), "brooks-audit-"));
+  const git = (...args) =>
+    execFileSync(
+      "git",
+      ["-C", dir, "-c", "user.email=test@example.invalid", "-c", "user.name=test", ...args],
+      { encoding: "utf8" },
+    );
+  const commit = (subject) => {
+    writeFileSync(path.join(dir, "file.txt"), subject);
+    git("add", "file.txt");
+    git("commit", "-q", "-m", subject);
+  };
+  try {
+    git("init", "-q", "-b", "main");
+    build({ dir, git, commit });
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+test("lastTag, isTagged and commitsSince read a real repository", () => {
+  withTempRepo(({ dir, git, commit }) => {
+    commit("first");
+    git("tag", "v0.1.0");
+    commit("feat: something (#7)");
+    assert.equal(lastTag(dir), "v0.1.0");
+    assert.equal(isTagged("0.1.0", dir), true);
+    assert.equal(isTagged("9.9.9", dir), false, "an unreleased version reads as a release in progress");
+    const commits = commitsSince("v0.1.0", dir);
+    assert.equal(commits.length, 1);
+    assert.equal(commits[0].subject, "feat: something (#7)");
+    assert.equal(commits[0].parents.length, 1);
+  });
+});
+
+test("lastTag ignores a tag that is not a release", () => {
+  // Any tag wins `git describe` by default, which would collapse the range to
+  // nothing and make the whole coverage gate a vacuous pass.
+  withTempRepo(({ dir, git, commit }) => {
+    commit("first");
+    git("tag", "v0.1.0");
+    commit("feat: something (#7)");
+    git("tag", "nightly-2026-09-20");
+    assert.equal(lastTag(dir), "v0.1.0");
+    assert.equal(commitsSince(lastTag(dir), dir).length, 1);
+  });
+});
+
+test("lastTag returns null when no release tag is reachable", () => {
+  withTempRepo(({ dir, commit }) => {
+    commit("first");
+    assert.equal(lastTag(dir), null);
+  });
+});
+
+test("commitsSince reads the author and a real merge's two parents", () => {
+  // Swapping %an and %P in LOG_FORMAT leaves subject-only assertions green
+  // while quietly killing both exemptions, so both fields come from real git.
+  withTempRepo(({ dir, git, commit }) => {
+    commit("first");
+    git("tag", "v0.1.0");
+    git("checkout", "-q", "-b", "feature");
+    commit("feat: on a branch");
+    git("checkout", "-q", "main");
+    git("merge", "-q", "--no-ff", "feature", "-m", "Merge pull request #34 from x/y");
+    const commits = commitsSince("v0.1.0", dir);
+    const merge = commits.find((c) => c.subject.startsWith("Merge pull request"));
+    assert.equal(commits[0].author, "test", "%an must land in author, not a parent hash");
+    assert.equal(merge.parents.length, 2, "%P must land in parents");
+    assert.match(exemption(merge), /merge/);
+    assert.deepEqual(commits[0].files, ["file.txt"], "--name-only must reach the files field");
+  });
+});
+
+test("coverageVerdict reports an uncited pull request while a release is in progress", () => {
+  withTempRepo(({ dir, git, commit }) => {
+    commit("first");
+    git("tag", "v0.1.0");
+    commit("docs: a contributor fix (#25)");
+    const verdict = coverageVerdict({
+      version: "0.2.0",
+      cwd: dir,
+      changelog: "## [0.2.0] - 2026-09-20\n\n- something unrelated\n",
+    });
+    assert.equal(verdict.skipped, null);
+    assert.equal(verdict.errors.length, 1);
+    assert.match(verdict.errors[0], /never cites #25/);
+  });
+});
+
+test("coverageVerdict reports what it audited, so a clean pass is not silent", () => {
+  // The gate proves only that each merged pull request's number appears in the
+  // section. Without these fields validate-repo prints nothing on the one path
+  // that actually audits, and an unwalked checklist reads as a complete one.
+  withTempRepo(({ dir, git, commit }) => {
+    commit("first");
+    git("tag", "v0.1.0");
+    commit("docs: a contributor fix (#25)");
+    commit("chore: unrelated");
+    // Exempt, and still counted: report() heads its checklist with the whole
+    // range, so counting only what needs an entry would make the two commands
+    // disagree about how long the checklist is.
+    commit("chore(release): bump version to 0.2.0");
+    const verdict = coverageVerdict({
+      version: "0.2.0",
+      cwd: dir,
+      changelog: "## [0.2.0] - 2026-09-20\n\n- credits #25\n",
+    });
+    assert.deepEqual(verdict.errors, []);
+    assert.equal(verdict.range, "v0.1.0..HEAD");
+    assert.equal(verdict.commitCount, 3);
+  });
+});
+
+test("coverageVerdict stands down once the version is tagged", () => {
+  // Wiring this guard backwards would audit between releases and never during
+  // one — the precise failure the check exists to prevent.
+  withTempRepo(({ dir, git, commit }) => {
+    commit("first");
+    git("tag", "v0.1.0");
+    commit("docs: a contributor fix (#25)");
+    git("tag", "v0.2.0");
+    const verdict = coverageVerdict({
+      version: "0.2.0",
+      cwd: dir,
+      changelog: "## [0.2.0] - 2026-09-20\n\n- something unrelated\n",
+    });
+    assert.match(verdict.skipped, /already tagged/);
+    assert.deepEqual(verdict.errors, []);
+  });
+});
+
+test("coverageVerdict stands down before the new section is written", () => {
+  // checkChangelog() already reports the mismatch; auditing here would tell the
+  // maintainer to add an entry to a section that does not exist yet.
+  withTempRepo(({ dir, git, commit }) => {
+    commit("first");
+    git("tag", "v0.1.0");
+    commit("docs: a contributor fix (#25)");
+    const verdict = coverageVerdict({
+      version: "0.2.0",
+      cwd: dir,
+      changelog: "## [0.1.0] - 2026-08-14\n\n- the previous release\n",
+    });
+    assert.match(verdict.skipped, /no \[0\.2\.0\] section yet/);
+    assert.deepEqual(verdict.errors, []);
+  });
+});
+
+test("coverageVerdict stands down outside a git work tree root", () => {
+  const dir = mkdtempSync(path.join(os.tmpdir(), "brooks-audit-"));
+  try {
+    const verdict = coverageVerdict({ version: "0.2.0", cwd: dir, changelog: "## [0.2.0] - 2026-09-20\n" });
+    assert.match(verdict.skipped, /not a git work tree root/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("extractChangelogSection returns only the newest release", () => {
+  const changelog = [
+    "# Changelog",
+    "",
+    "## [1.6.0] - 2026-09-20",
+    "",
+    "- newest",
+    "",
+    "[#25]: https://example.invalid/25",
+    "",
+    "## [1.5.0] - 2026-08-14",
+    "",
+    "- older",
+    "",
+  ].join("\n");
+  const section = extractChangelogSection(changelog);
+  assert.match(section, /1\.6\.0/);
+  assert.match(section, /\[#25\]/, "a section's own link definitions belong to it");
+  assert.equal(section.includes("1.5.0"), false);
+  assert.equal(section.includes("older"), false);
+});
+
+test("report names every uncited pull request in its FAIL line", () => {
+  const commits = parseCommitLog(
+    logRecord({ hash: "c".repeat(40), author: "2233admin", subject: "docs: finish the cleanup (#25)" }) +
+      "\n" +
+      logRecord({
+        hash: "d".repeat(40),
+        author: "github-actions[bot]",
+        subject: "chore: refresh the star history chart",
+        files: ["assets/star-history.svg"],
+      }),
+  );
+  const lines = report("v1.5.0..HEAD", auditRange(commits, "## [1.6.0] - 2026-09-20\n\n- nothing\n"), "[1.6.0]").join("\n");
+  assert.match(lines, /FAIL: 1 pull request/);
+  assert.match(lines, /#25/);
+  assert.match(lines, /no entry needed \(1\)/, "the bot chore is reported as exempt, not as a line to walk");
+});
+
+test("report says so when nothing is provably missing", () => {
+  const commits = parseCommitLog(logRecord({ subject: "feat: add IBM Bob support (#33)" }));
+  const lines = report("v1.5.0..HEAD", auditRange(commits, "## [1.6.0]\n\n- Bob (#33)\n"), "[1.6.0]").join("\n");
+  assert.match(lines, /Every pull request in the range is cited/);
+  assert.equal(lines.includes("FAIL"), false);
+});
+
+test("extractChangelogSection returns an empty string when there is no release heading", () => {
+  assert.equal(extractChangelogSection("# Changelog\n\nNothing released yet.\n"), "");
 });
 
 // ── Summary ────────────────────────────────────────────────────────────────

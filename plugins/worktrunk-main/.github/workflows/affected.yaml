@@ -103,9 +103,9 @@ jobs:
         include:
           - os: ubuntu-24.04
             name: linux
-          - os: macos-15
+          - os: macos-26
             name: macos
-          - os: windows-2022
+          - os: windows-2025
             name: windows
     runs-on: ${{ matrix.os }}
     steps:
@@ -135,7 +135,7 @@ jobs:
       uses: baptiste0928/cargo-install@v3
       with:
         crate: cargo-affected
-        version: "=0.4.0"
+        version: "=0.4.1"
 
     - name: Install llvm-tools
       run: rustup component add llvm-tools
@@ -180,9 +180,9 @@ jobs:
         include:
           - os: ubuntu-24.04
             name: linux
-          - os: macos-15
+          - os: macos-26
             name: macos
-          - os: windows-2022
+          - os: windows-2025
             name: windows
     runs-on: ${{ matrix.os }}
     # Advisory while we calibrate selection accuracy against the full suite.
@@ -246,7 +246,7 @@ jobs:
       uses: baptiste0928/cargo-install@v3
       with:
         crate: cargo-affected
-        version: "=0.4.0"
+        version: "=0.4.1"
 
     - name: 🎯 Run affected tests
       env:

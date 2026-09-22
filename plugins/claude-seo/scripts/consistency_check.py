@@ -49,7 +49,7 @@ RUNTIME_UTILITY_COMMANDS = {"setup", "doctor"}
 def tracked_files():
     out = subprocess.run(["git", "-C", REPO, "ls-files"],
                          capture_output=True, text=True, check=True).stdout
-    return [l for l in out.splitlines() if l.strip()]
+    return [line for line in out.splitlines() if line.strip()]
 
 
 def read(rel, _cache={}):
@@ -176,11 +176,21 @@ def check_runtime_invocations(texts):
     bare = re.compile(
         r"\b(?:python3|python|py\s+-3)\s+[^\n`]*?scripts/[A-Za-z0-9_./-]+\.py"
     )
-    runtime = re.compile(r"\bclaude-seo\s+run(?:\s+--extension\s+[a-z0-9-]+)?\s+([A-Za-z0-9_-]+\.py)")
+    raw_path = re.compile(r"(?<![\w/])scripts/([A-Za-z0-9_]+\.py)\b")
+    # The canonical form is "${CLAUDE_PLUGIN_ROOT}/scripts/claude-seo" run <script>,
+    # so the closing quote may sit between the launcher name and the subcommand.
+    runtime = re.compile(
+        r"claude-seo[\"']?\s+run(?:\s+--extension\s+[a-z0-9-]+)?\s+([A-Za-z0-9_-]+\.py)"
+    )
     for f in carriers:
         content = read(f)
         for match in bare.finditer(content):
             errors.append(f"{f}: bare bundled-script invocation: {match.group(0)}")
+        for script in sorted(set(raw_path.findall(content))):
+            errors.append(
+                f"{f}: unsupported raw script path scripts/{script}; "
+                f'use "${{CLAUDE_PLUGIN_ROOT}}/scripts/claude-seo" run {script}'
+            )
         for script in sorted(set(runtime.findall(content))):
             if not os.path.isfile(os.path.join(REPO, "scripts", script)) and not any(
                 os.path.isfile(path)
@@ -224,6 +234,18 @@ def check_agent_refs(files, texts):
     return errors
 
 
+def _normalise_newlines(data):
+    """Hash lock inputs as LF text so a CRLF checkout matches the baseline.
+
+    The lock is written from LF content (sync_flow.py hashes the fetched text
+    directly). Git for Windows defaults to core.autocrlf=true, which checks the
+    same files out with CRLF, so a byte-for-byte hash flagged every locked file
+    as tampered on a stock Windows clone. Only CRLF is folded; any other change
+    still fails the check.
+    """
+    return data.replace(b"\r\n", b"\n")
+
+
 def check_flow_lock(files):
     errors = []
     locked = {}
@@ -240,7 +262,7 @@ def check_flow_lock(files):
             errors.append(f"flow lock: missing {rel}")
             continue
         with open(full, "rb") as fh:
-            got = hashlib.sha256(fh.read()).hexdigest()
+            got = hashlib.sha256(_normalise_newlines(fh.read())).hexdigest()
         if got != want:
             errors.append(f"flow lock: hash mismatch {rel}")
     extra = {f for f in files

@@ -29,7 +29,9 @@ export const PROVIDERS = {
     providerTags: ['claude-code', 'claude'],
     configDir: '.claude',
     displayName: 'Claude Code',
-    frontmatterFields: ['user-invocable', 'argument-hint', 'license', 'compatibility', 'metadata', 'allowed-tools'],
+    frontmatterFields: ['user-invocable', 'argument-hint', 'license', 'compatibility', 'metadata'],
+    // allowed-tools omitted: Claude Code blocks skill activation in non-interactive
+    // sessions when the field is present (issue #736). Other providers keep it.
     agentFormat: 'claude-md',
     emitHooks: 'claude',
     // Project-local Claude Code hooks live in `.claude/settings.json`.
@@ -42,12 +44,29 @@ export const PROVIDERS = {
     displayName: 'Gemini',
     frontmatterFields: [],
   },
+  dsh: {
+    provider: 'dsh',
+    providerTags: ['dsh'],
+    configDir: '.dsh',
+    displayName: 'DeepSeek Harness',
+    // DeepSeek Harness reads the Agent Skills spec subset (`name`,
+    // `description`, `license`, `compatibility`, `metadata`) plus
+    // `user-invocable` and `disable-model-invocation`; unknown keys are
+    // silently ignored. No hook surface (hooks are in-process plugins, not
+    // on-disk manifests) and no native subagent file format, so no
+    // emitHooks / agentFormat. Global skills live at ~/.dsh/skills
+    // ($DSH_HOME/skills when set), matching the engine's home override.
+    frontmatterFields: ['user-invocable', 'license', 'compatibility', 'metadata'],
+  },
   codex: {
     provider: 'codex',
     providerTags: ['codex'],
     configDir: '.codex',
     displayName: 'Codex',
     frontmatterFields: [],
+    // Codex's validator rejects unknown top-level keys. Version remains
+    // available to Impeccable's updater under the spec-defined metadata map.
+    versionInMetadata: true,
     writeOpenAIMetadata: true,
     // No agentFormat: the Codex subagent ships nested inside the skill's own
     // agents/ folder (see CODEX_SKILL_PROVIDERS in factory.js), which Codex
@@ -63,6 +82,7 @@ export const PROVIDERS = {
     displayName: 'Codex Repo Skills',
     placeholderProvider: 'codex',
     frontmatterFields: [],
+    versionInMetadata: true,
     writeOpenAIMetadata: true,
   },
   github: {
@@ -137,6 +157,13 @@ export const PROVIDERS = {
     configDir: '.vibe',
     displayName: 'Mistral Vibe',
     frontmatterFields: ['user-invocable', 'license', 'compatibility', 'metadata', 'allowed-tools'],
+  },
+  veto: {
+    provider: 'veto',
+    providerTags: ['veto'],
+    configDir: '.veto',
+    displayName: 'Veto',
+    frontmatterFields: ['license', 'compatibility', 'metadata'],
   },
   grok: {
     provider: 'grok',

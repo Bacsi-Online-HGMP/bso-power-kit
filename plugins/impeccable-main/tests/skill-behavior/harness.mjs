@@ -1,11 +1,11 @@
 /**
- * Sandboxed scenario runner for skill-behavior tests.
+ * Synthetic-workspace scenario runner for skill-behavior tests.
  *
  * Each scenario:
  *   1. Creates a temp workspace.
- *   2. Symlinks the real .claude/skills/impeccable into the workspace so
- *      scripts (context.mjs, etc.) resolve from the canonical path
- *      the skill references.
+ *   2. Builds a neutral .claude/skills/impeccable into the workspace so
+ *      the launcher (`scripts/impeccable`) resolves from the canonical path
+ *      the skill references, and points it at an engine binary.
  *   3. Optionally writes PRODUCT.md / DESIGN.md fixtures.
  *   4. Inlines SKILL.md as the system prompt (placeholders stripped to
  *      neutral values so the same body works for all providers).
@@ -15,8 +15,8 @@
  *      messages (so multi-turn scenarios can append to them).
  *
  * The harness deliberately mirrors the live-mode E2E pattern: real LLM,
- * no mocks, but tightly bounded execution surface so we observe the routing
- * behavior of the skill without paying for full-fledged design work.
+ * no mocked model. File tools are workspace-scoped; bash is a real host shell,
+ * not a security sandbox. Run only against disposable synthetic fixtures.
  */
 import { generateText, stepCountIs, tool } from 'ai';
 import { z } from 'zod';
@@ -27,11 +27,35 @@ import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { getProviderOptions } from './providers.mjs';
+import { ENGINE_MISSING_MESSAGE, findEngineBinary } from '../lib/engine-bin.mjs';
+import { readSourceFiles, compileProviderBlocks, replacePlaceholders, stripRuleMarkers } from '../../scripts/lib/utils.js';
+import { createTransformer } from '../../scripts/lib/transformers/factory.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.resolve(__dirname, '..', '..');
-const SKILL_SOURCE_DIR = path.join(REPO_ROOT, 'skill');
 const MAX_BASH_OUTPUT_BYTES = 200_000;
+
+function renderNeutral(content) {
+  return stripRuleMarkers(replacePlaceholders(compileProviderBlocks(content, [])
+    .replaceAll('{{ask_instruction}}', 'Use the ask_user_question tool.')
+    .replaceAll('{{model}}', 'the assistant'), 'dsh'))
+    .replaceAll('{{scripts_path}}', '.claude/skills/impeccable/scripts')
+    .replaceAll('{{command_hint}}', 'command');
+}
+
+// Use the production builder so fallback reviewer/documenter references exist.
+// Generic tool names are shared by the API providers; host-specific blocks are
+// deliberately absent. Exact provider transforms have separate loader tests.
+const sourceSkills = readSourceFiles(REPO_ROOT).skills.map((skill) => ({
+  ...skill,
+  body: renderNeutral(skill.body),
+  references: skill.references.map((ref) => ({ ...ref, content: renderNeutral(ref.content) })),
+  agents: skill.agents.map((agent) => ({ ...agent, body: renderNeutral(agent.body) })),
+}));
+const stageSkill = createTransformer({
+  provider: 'skill-behavior', placeholderProvider: 'dsh', providerTags: [],
+  configDir: '.claude', displayName: 'Behavior fixture',
+});
 
 function snapshotWorkspaceFiles(root) {
   const snapshot = new Map();
@@ -65,53 +89,39 @@ function changedPaths(before, after) {
  * is provider-neutral when inlined.
  */
 function loadSkillBody() {
-  let md = fs.readFileSync(path.join(SKILL_SOURCE_DIR, 'SKILL.src.md'), 'utf8');
-  // Strip frontmatter.
-  if (md.startsWith('---')) {
-    const end = md.indexOf('\n---', 3);
-    if (end !== -1) md = md.slice(end + 4).trimStart();
-  }
-  // The source uses placeholders that the build step replaces per-provider.
-  // For the test harness we want a single body that works for any provider,
-  // and the scripts the skill references live at .claude/skills/impeccable/
-  // (the workspace symlink), so hard-code those values.
-  md = md
-    .replaceAll('{{model}}', 'the assistant')
-    .replaceAll('{{command_prefix}}', '/')
-    .replaceAll('{{ask_instruction}}', 'Use the ask_user_question tool.')
-    .replaceAll('{{config_file}}', 'AGENTS.md')
-    .replaceAll('{{scripts_path}}', '.claude/skills/impeccable/scripts')
-    .replaceAll('{{command_hint}}', 'command');
-  return md.trim();
+  return sourceSkills[0].body.trim();
 }
 
-export const SKILL_BODY = loadSkillBody();
+// This provider-neutral fixture assumes a loaded skill with a known base
+// directory, not an exact copy of each host's transformed prompt. Claude's
+// loader supplies a base-directory prefix; here it is workspace-relative
+// because the file tools reject absolute paths. Provider rewrite/loader
+// contracts are tested separately, not established by these behavior cases.
+export const SKILL_BODY = `Base directory for this skill (workspace-relative): .claude/skills/impeccable\n\n${loadSkillBody()}`;
 
 /**
  * Create a temp workspace and prepopulate it.
  *
- * - `.claude/skills/impeccable` is symlinked at the SOURCE skill dir (not
- *   the built `.claude/skills/impeccable/`) so the test exercises whatever
- *   is in `skill/` right now, without needing `bun run build` to refresh
- *   the harness output dirs. The trade-off: reference files surface their
- *   raw `{{placeholders}}`, but the assertions only check tool calls, not
- *   their content.
+ * - Compile current source into an independent fixture distribution. Shell
+ *   and read tools see the same resolved references, including degraded roles.
  * - `files` lets the test seed PRODUCT.md / DESIGN.md (or anything else).
- * - `skillVersion` switches from symlink to a real COPY of the skill dir and
- *   writes a `SKILL.md` carrying that version. context.mjs reads its own
- *   version from that sibling file, so this is required for any scenario that
- *   exercises the update-check path (the source dir has only SKILL.src.md).
+ * - `skillVersion` adds a `SKILL.md` version. `impeccable context` reads its
+ *   own version from that sibling file, so this is required for any scenario
+ *   that exercises the update-check path (the source dir has only SKILL.src.md).
+ *
+ * The launcher in the staged scripts dir needs an engine binary. Every bash
+ * call the agent makes gets `IMPECCABLE_BIN` (tests/lib/engine-bin.mjs:
+ * `IMPECCABLE_BIN` or `skill/scripts/bin/<os>-<arch>/`), which the launcher
+ * honors first, so the staged skill works without a download.
  */
+export const ENGINE_BIN = findEngineBinary();
+export { ENGINE_MISSING_MESSAGE };
+
 export function prepareWorkspace({ files = {}, skillVersion = null } = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'impeccable-skill-test-'));
-  const skillDest = path.join(dir, '.claude', 'skills', 'impeccable');
-  fs.mkdirSync(path.join(dir, '.claude', 'skills'), { recursive: true });
-  if (skillVersion) {
-    fs.cpSync(SKILL_SOURCE_DIR, skillDest, { recursive: true });
-    fs.writeFileSync(path.join(skillDest, 'SKILL.md'), `---\nname: impeccable\nversion: ${skillVersion}\n---\n\nbody\n`);
-  } else {
-    fs.symlinkSync(SKILL_SOURCE_DIR, skillDest, 'dir');
-  }
+  stageSkill(sourceSkills, dir, { skillsVersion: skillVersion || '' });
+  fs.renameSync(path.join(dir, 'skill-behavior', '.claude'), path.join(dir, '.claude'));
+  fs.rmdirSync(path.join(dir, 'skill-behavior'));
   for (const [name, contents] of Object.entries(files)) {
     const target = path.join(dir, name);
     fs.mkdirSync(path.dirname(target), { recursive: true });
@@ -140,12 +150,44 @@ function safeResolve(root, userPath) {
   if (rel.startsWith('..') || rel.split(path.sep).includes('..')) {
     return { error: 'path escapes the workspace' };
   }
-  return resolved;
+  try {
+    // New write targets need not exist; validate their nearest existing
+    // ancestor, including dangling links, before appending the missing suffix.
+    let ancestor = resolved;
+    while (!fs.existsSync(ancestor)) {
+      if (fs.lstatSync(ancestor, { throwIfNoEntry: false })?.isSymbolicLink()) {
+        return { error: 'path follows a dangling symlink' };
+      }
+      ancestor = path.dirname(ancestor);
+    }
+    const canonical = path.resolve(fs.realpathSync(ancestor), path.relative(ancestor, resolved));
+    const realRel = path.relative(fs.realpathSync(root), canonical);
+    if (realRel === '..' || realRel.startsWith(`..${path.sep}`) || path.isAbsolute(realRel)) {
+      return { error: 'path escapes the workspace through a symlink' };
+    }
+    return canonical;
+  } catch {
+    return { error: 'path cannot be resolved safely' };
+  }
+}
+
+function isContextOnlyCommand(workspace, command) {
+  const match = command.trim().match(/^\.claude\/skills\/impeccable\/scripts\/impeccable context(?: --target(?: |=)(?:"([a-zA-Z0-9_./+ -]+)"|'([a-zA-Z0-9_./+ -]+)'|([a-zA-Z0-9_./+-]+)))?$/);
+  if (!match) return false;
+  const target = match[1] ?? match[2] ?? match[3];
+  return target === undefined || (!target.startsWith('-') && typeof safeResolve(workspace, target) === 'string');
 }
 
 function execBash(workspace, command, timeoutMs = 20_000, extraEnv = {}) {
   return new Promise((resolve) => {
-    const proc = spawn('bash', ['-lc', command], { cwd: workspace, env: { ...process.env, ...extraEnv } });
+    // Model credentials belong to generateText, not to child image helpers.
+    // Real decision pages have browser E2E; this suite has a structured user.
+    const shellEnv = Object.fromEntries(Object.entries({ ...process.env, ...extraEnv })
+      .filter(([name]) => !/(?:^|_)(?:API_KEY|AUTH_TOKEN|ACCESS_TOKEN)$/.test(name)));
+    const proc = spawn('bash', ['-lc', command], {
+      cwd: workspace,
+      env: { ...shellEnv, ...(ENGINE_BIN ? { IMPECCABLE_BIN: ENGINE_BIN } : {}), IMPECCABLE_QUESTION_DISABLED: '1' },
+    });
     let stdout = '';
     let stderr = '';
     const truncatedFlag = { val: false };
@@ -207,7 +249,11 @@ function defaultSimulatedAnswer(question) {
   return 'Use the brief, preserve real operational content, and make the primary decision obvious.';
 }
 
-export function makeTools(workspace, extraEnv = {}, simulatedUser = {}) {
+export function makeTools(workspace, extraEnv = {}, simulatedUser = {}, { contextOnlyBash = false, denyBash = false } = {}) {
+  const referenceDir = path.join(workspace, '.claude/skills/impeccable/reference');
+  const references = fs.readdirSync(referenceDir, { recursive: true })
+    .filter((file) => file.endsWith('.md'))
+    .map((file) => ({ file: file.split(path.sep).join('/'), content: fs.readFileSync(path.join(referenceDir, file), 'utf8').trim() }));
   const trace = {
     toolCalls: [],
     bashCommands: [],
@@ -230,16 +276,34 @@ export function makeTools(workspace, extraEnv = {}, simulatedUser = {}) {
   }
   const tools = {
     bash: tool({
-      description:
-        'Run a bash command in the workspace root. Use this to invoke skill scripts (e.g. `node .claude/skills/impeccable/scripts/context.mjs`).',
+      description: contextOnlyBash
+        ? 'Only `.claude/skills/impeccable/scripts/impeccable context` with an optional `--target <workspace-relative path>` is allowed here. Use read/list for files and references; write remains available for requested edits.'
+        : 'Run a bash command in the workspace root. Use this to invoke skill commands (e.g. `.claude/skills/impeccable/scripts/impeccable context`).',
       inputSchema: z.object({
         command: z.string().describe('The bash command to execute.'),
       }),
       execute: async ({ command }) => {
         const call = record('bash', { command });
+        // Simulate a host refusal, not a process failure. Nothing reaches a
+        // shell, including retries, alternate launchers, and compound commands.
+        if (denyBash) {
+          call.denied = true;
+          const out = 'Error: Bash permission denied by the host. This command was not executed.';
+          trace.bashOutputs.push(out);
+          return out;
+        }
+        // Routing tests need the real context loader, not a general-purpose
+        // shell on the host. Reject before execution (still record attempts).
+        if (contextOnlyBash && !isContextOnlyCommand(workspace, command)) {
+          const out = 'Error: only `.claude/skills/impeccable/scripts/impeccable context` with an optional workspace-relative `--target` is allowed. Use read/list for files; references live at .claude/skills/impeccable/reference/.';
+          trace.bashOutputs.push(out);
+          return out;
+        }
         const before = snapshotWorkspaceFiles(workspace);
         const res = await execBash(workspace, command, 20_000, extraEnv);
         call.mutatedPaths = changedPaths(before, snapshotWorkspaceFiles(workspace));
+        call.loadedFiles = references.filter(({ content }) => content && res.stdout.includes(content))
+          .map(({ file }) => `.claude/skills/impeccable/reference/${file}`);
         const head = `exit=${res.exitCode}`;
         const body = (res.stdout ? `stdout:\n${res.stdout}` : '') + (res.stderr ? `\nstderr:\n${res.stderr}` : '');
         const out = `${head}\n${body}${res.truncated ? '\n[output truncated]' : ''}`;
@@ -253,13 +317,17 @@ export function makeTools(workspace, extraEnv = {}, simulatedUser = {}) {
         path: z.string().describe('Workspace-relative file path.'),
       }),
       execute: async ({ path: p }) => {
-        record('read', { path: p });
+        const call = record('read', { path: p });
+        call.succeeded = false;
         const resolved = safeResolve(workspace, p);
         if (typeof resolved !== 'string') return `Error: ${resolved.error}`;
         if (!fs.existsSync(resolved)) return `File not found: ${p}`;
         const stat = fs.statSync(resolved);
         if (stat.isDirectory()) return `Path is a directory: ${p}. Use list instead.`;
-        return fs.readFileSync(resolved, 'utf8');
+        const contents = fs.readFileSync(resolved, 'utf8');
+        call.succeeded = true;
+        call.loadedFiles = [p];
+        return contents;
       },
     }),
     write: tool({
@@ -272,6 +340,9 @@ export function makeTools(workspace, extraEnv = {}, simulatedUser = {}) {
         const call = record('write', { path: p, contents });
         const resolved = safeResolve(workspace, p);
         if (typeof resolved !== 'string') return `Error: ${resolved.error}`;
+        if (path.relative(fs.realpathSync(workspace), resolved).split(path.sep)[0] === '.claude') {
+          return 'Error: the staged skill is read-only; edits must target project files.';
+        }
         fs.mkdirSync(path.dirname(resolved), { recursive: true });
         fs.writeFileSync(resolved, contents);
         call.mutatedPaths = [p];
@@ -335,35 +406,85 @@ export function makeTools(workspace, extraEnv = {}, simulatedUser = {}) {
  * `priorMessages` lets multi-turn scenarios chain context from a previous
  * call (append the SDK's response messages between turns).
  */
-export async function runTurn({ workspace, model, userPrompt, priorMessages = [], maxSteps = 8, env = {}, simulatedUser = {} }) {
-  const { tools, trace } = makeTools(workspace, env, simulatedUser);
+// A single turn (generateText) can drive up to ~30 tool-use steps against a
+// frontier model; the thorough path was measured near 580s. generateText
+// takes no timeout of its own, so a provider socket that stalls mid-stream
+// keeps the fetch — and therefore the whole node process — alive indefinitely,
+// past node's own `--test-timeout` (which cancels the test but not the open
+// handle). We attach a real AbortSignal instead: on expiry the underlying
+// fetch is aborted, the socket closes, the turn throws, and the scenario
+// fails-and-continues so the sweep still produces a per-provider tally. The
+// cap sits just under the 900s per-test timeout so a genuine slow-but-correct
+// run is never killed. The timer is unref'd (it must not keep the loop alive
+// after a healthy turn) and cleared on completion.
+const TURN_TIMEOUT_MS = Number(process.env.IMPECCABLE_SKILL_BEHAVIOR_TURN_TIMEOUT_MS) || 840_000;
+export async function runTurn({ workspace, model, userPrompt, priorMessages = [], maxSteps = 8, env = {}, simulatedUser = {}, timeoutMs = TURN_TIMEOUT_MS, contextOnlyBash = false, denyBash = false, stopAfter, additionalTools, environment = '' }) {
+  const { tools, trace } = makeTools(workspace, env, simulatedUser, { contextOnlyBash, denyBash });
+  if (additionalTools) Object.assign(tools, additionalTools(trace));
   const messages = [
     ...priorMessages,
     { role: 'user', content: userPrompt },
   ];
+  const traceDir = process.env.IMPECCABLE_SKILL_BEHAVIOR_TRACE_DIR;
+  const tracePath = traceDir && path.join(traceDir, `${path.basename(workspace)}-${crypto.randomUUID()}.json`);
+  const saveTrace = (details) => {
+    if (!tracePath) return;
+    fs.mkdirSync(traceDir, { recursive: true });
+    fs.writeFileSync(tracePath, JSON.stringify({ model: model.modelId, userPrompt, trace, ...details }, null, 2));
+  };
   let result;
+  const controller = new AbortController();
+  const timer = setTimeout(
+    () => controller.abort(new Error(`LLM turn exceeded ${timeoutMs}ms; aborting the provider call`)),
+    timeoutMs,
+  );
+  if (typeof timer.unref === 'function') timer.unref();
   try {
     result = await generateText({
       model,
-      system: SKILL_BODY,
+      system: environment ? `${SKILL_BODY}\n\nRuntime environment: ${environment}` : SKILL_BODY,
       messages,
       tools,
-      stopWhen: [stepCountIs(maxSteps)],
+      onStepFinish: (step) => {
+        (trace.assistantTexts ??= []).push(step.text ?? '');
+        saveTrace({ status: 'in-progress', lastStepMessages: step.response.messages });
+      },
+      stopWhen: [stepCountIs(maxSteps), ...(stopAfter ? [() => stopAfter(trace)] : [])],
+      // Real client-side deadline on the provider call: without it a stalled
+      // stream wedges the whole sweep with no tally.
+      abortSignal: controller.signal,
+      // The Anthropic-compatible adapter does not recognize DeepSeek and
+      // otherwise caps each response at 4096 tokens, truncating valid tool
+      // continuations. Keep an explicit ceiling; length remains a test failure.
+      maxOutputTokens: model?.modelId?.startsWith('deepseek-') ? 16_384 : undefined,
       // Resolved from the model object so the 21 runTurn call sites stay
       // unchanged. Reasoning models run at the provider default otherwise,
       // which is not the tier this suite is meant to measure.
       providerOptions: getProviderOptions(model?.modelId ?? ''),
     });
   } catch (err) {
-    throw new Error(`LLM behavior turn failed before completing: ${String(err)}`, { cause: err });
+    const reason = controller.signal.aborted ? ` (aborted after ${timeoutMs}ms client-side timeout)` : '';
+    saveTrace({ status: 'failed', error: `${String(err)}${reason}` });
+    throw new Error(`LLM behavior turn failed before completing${reason}: ${String(err)}`, { cause: err });
+  } finally {
+    clearTimeout(timer);
   }
   const generatedResponseMessages = result.responseMessages ?? result.response?.messages ?? [];
   const responseMessages = [...messages, ...generatedResponseMessages];
+  const outcome = stopAfter?.(trace) ? 'checkpoint'
+    : result.finishReason === 'length' ? 'output-limit'
+    : result.finishReason === 'tool-calls' && result.steps.length >= maxSteps ? 'step-budget'
+    : result.finishReason === 'stop' ? 'complete' : result.finishReason;
+  saveTrace({ status: 'completed', responseMessages,
+    outcome, finishReason: result.finishReason, steps: result.steps.length, usage: result.totalUsage ?? result.usage });
   return {
     trace,
+    outcome,
+    steps: result.steps.length,
     text: result.text ?? '',
+    stepTexts: result.steps.map((step) => step.text ?? ''),
     finishReason: result.finishReason,
-    usage: result.usage,
+    usage: result.totalUsage ?? result.usage,
     responseMessages,
   };
 }
@@ -383,8 +504,12 @@ export function readsMatching(trace, substring) {
  * True if the agent loaded a file by Read OR by a bash `cat` (some models
  * stream multiple files via bash to save tool calls).
  */
+export function callLoadedFile(call, filename) {
+  return (call.loadedFiles || []).some((file) => file === filename || file.endsWith(`/${filename}`));
+}
+
 export function fileLoaded(trace, filename) {
-  return readsMatching(trace, filename).length > 0 || bashCommandsMatching(trace, filename).length > 0;
+  return trace.toolCalls.some((call) => callLoadedFile(call, filename));
 }
 
 export function summarizeTrace(trace) {

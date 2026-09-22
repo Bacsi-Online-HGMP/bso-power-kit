@@ -1,6 +1,6 @@
 <!-- markdownlint-disable MD033 -->
 
-<h1><img src="docs/static/logo.png" alt="Worktrunk logo" width="50" align="absmiddle">&nbsp;&nbsp;Worktrunk</h1>
+<h1><img src="docs/public/logo.png" alt="Worktrunk logo" width="50" align="absmiddle">&nbsp;&nbsp;Worktrunk</h1>
 
 <!-- Crates.io badge below disabled while shields.io is rate-limited by crates.io
      (renders "CRATES.IO: INVALID"). Tracking: badges/shields#11879. Restore once fixed.
@@ -13,7 +13,7 @@
 [![Stars](https://img.shields.io/github/stars/max-sixty/worktrunk?style=for-the-badge&logo=github)](https://github.com/max-sixty/worktrunk/stargazers)
 [![maintained with tend](https://img.shields.io/badge/maintained_with-tend-bba580?style=for-the-badge&logo=data:image/svg%2bxml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAxNiAxNiI+PGcgdHJhbnNmb3JtPSJ0cmFuc2xhdGUoMCwxNikgc2NhbGUoMC4wMTI1LC0wLjAxMjUpIiBmaWxsPSIjZmZmIiBzdHJva2U9Im5vbmUiPjxwYXRoIGQ9Ik02ODAgMTEyOCBjNjIgLTk2IDY5IC0xNzggMjAgLTI0MSAtMTcgLTIyIC0yMCAtNDAgLTIwIC0xMzQgbDEgLTEwOCAyMSAyOCBjMTEgMTYgMzAgNDcgNDIgNzAgMTIgMjIgMzIgNDkgNDYgNTkgMzcgMjcgMTE0IDM4IDE4NCAyNyA5MyAtMTUgOTQgLTE4IDQ0IC03OSAtNzIgLTg4IC0xMDkgLTExMyAtMTc2IC0xMTcgLTMxIC0yIC02NCAxIC03MiA2IC0yMyAxNSAyMSA1NiAxMDcgOTggNDAgMjAgNzEgMzggNjkgNDAgLTYgNyAtODggLTE3IC0xMjYgLTM3IC00OSAtMjUgLTEwMCAtNzggLTEyMSAtMTI1IC0xNSAtMzMgLTE5IC02NiAtMTkgLTE4OCAwIC0xNTcgOCAtMTk1IDUwIC0yMzIgMTcgLTE2IDM2IC0yMCA4NSAtMTkgNjIgMSA2MyAxIDczIC0zMiA5IC0zMiA5IC0zMyAtMjIgLTQwIC01MCAtMTIgLTEzMiAtNyAtMTY0IDEwIC00MCAyMSAtNzkgNjkgLTkyIDExNCAtNSAyMCAtMTAgMTAyIC0xMCAxODIgMCA4MCAtNSAxNjIgLTExIDE4NCAtMjIgNzkgLTEzNSAxNjYgLTIzNCAxODEgLTM3IDYgLTM1IDMgMzAgLTI4IDc4IC0zOSAxNDQgLTkxIDEzMiAtMTA0IC01IC00IC0zNyAtOCAtNzEgLTggLTc3IDAgLTExNyAyNCAtMTgyIDEwOSAtNTIgNjggLTUxIDcwIDQyIDg1IDcxIDExIDE0MyAwIDE4MyAtMjkgMTYgLTExIDQwIC00MyA1NCAtNzMgMTMgLTI5IDMyIC01OSA0MSAtNjYgMTQgLTEyIDE2IC03IDE2IDU4IDAgNTkgNCA3NyAyMyAxMDIgMTkgMjYgMjMgNDYgMjUgMTMwIDMgNjcgMCA5OSAtNyA5OSAtNyAwIC0xMSAtMjMgLTEyIC01NyAwIC0zMiAtNiAtNzYgLTEyIC05NyBsLTEyIC00MCAtMjcgMzIgYy0zNCA0MSAtNDMgOTYgLTI0IDE1MSAxNCA0MSA3NSAxNDEgODYgMTQxIDMgMCAyMSAtMjQgNDAgLTUyeiIvPjwvZz48L3N2Zz4K)](https://github.com/max-sixty/tend)
 
-> **August 2026**: Worktrunk was [released](https://x.com/max_sixty/status/2006077845391724739?s=20) at the start of the year, and has quickly become the most popular git worktree manager. It's built with love (there's no slop!). Please let me know any frictions at all; I'm intensely focused on continuing to make Worktrunk excellent, and the biggest help is folks posting problems they perceive.
+> **September 2026**: Worktrunk was [released](https://x.com/max_sixty/status/2006077845391724739?s=20) at the start of the year, and has quickly become the most popular git worktree manager. It's built with love (there's no slop!). Please let me know any frictions at all; I'm intensely focused on continuing to make Worktrunk excellent, and the biggest help is folks posting problems they perceive.
 
 Worktrunk is a CLI for git worktree management, designed for running AI agents in parallel.
 
@@ -25,13 +25,13 @@ A quick demo:
 
 > ### 📚 Full documentation at [worktrunk.dev](https://worktrunk.dev) 📚
 
-<!-- ⚠️ AUTO-GENERATED from docs/content/worktrunk.md#context-git-worktrees..worktrunk-makes-git-worktrees-as-easy-as-branches — edit source to update -->
+<!-- ⚠️ AUTO-GENERATED from docs/src/content/docs/worktrunk.md#context-git-worktrees..worktrunk-makes-git-worktrees-as-easy-as-branches — edit source to update -->
 
 ## Context: git worktrees
 
 AI agents like Claude Code and Codex can handle longer tasks without
 supervision, such that it's possible to manage 5-10+ in parallel. Git's native
-worktree feature give each agent its own working directory, so they don't step
+worktree feature gives each agent its own working directory, so they don't step
 on each other's changes.
 
 But the git worktree UX is clunky. Even a task as small as starting a new
@@ -42,7 +42,7 @@ worktree requires typing the branch name three times: `git worktree add -b feat
 
 Worktrees are addressed by branch name; paths are computed from a configurable template. Commands that take a branch also accept the path of the worktree it is checked out in.
 
-> Start with the core commands
+<p class="workflow-stage">Start with the core commands</p>
 
 **Core commands:**
 
@@ -57,40 +57,40 @@ Worktrees are addressed by branch name; paths are computed from a configurable t
   <tbody>
     <tr>
       <td>Switch worktrees</td>
-      <td><pre>wt switch feat</pre></td>
-      <td><pre>cd ../repo.feat</pre></td>
+      <td data-label="Worktrunk"><code>wt switch feat</code></td>
+      <td data-label="Plain git"><code>cd ../repo.feat</code></td>
     </tr>
     <tr>
       <td>Create + start Claude</td>
-      <td><pre>wt switch -c -x claude feat</pre></td>
-      <td><pre>git worktree add -b feat ../repo.feat && \
+      <td data-label="Worktrunk"><code>wt switch -c -x claude feat</code></td>
+      <td data-label="Plain git"><pre><code>git worktree add -b feat ../repo.feat && \
 cd ../repo.feat && \
-claude</pre></td>
+claude</code></pre></td>
     </tr>
     <tr>
       <td>Clean up</td>
-      <td><pre>wt remove</pre></td>
-      <td><pre>cd ../repo && \
+      <td data-label="Worktrunk"><code>wt remove</code></td>
+      <td data-label="Plain git"><pre><code>cd ../repo && \
 git worktree remove ../repo.feat && \
-git branch -d feat</pre></td>
+git branch -d feat</code></pre></td>
     </tr>
     <tr>
       <td>List with status</td>
-      <td><pre>wt list</pre></td>
-      <td><pre>git worktree list</pre> (paths only)</td>
+      <td data-label="Worktrunk"><code>wt list</code></td>
+      <td data-label="Plain git"><span class="cmd-compare-value"><code>git worktree list</code> (paths only)</span></td>
     </tr>
   </tbody>
 </table>
 
-> Expand into the more advanced commands as needed
+<p class="workflow-stage">Expand into the more advanced commands as needed</p>
 
-**Workflow automation:**
+<p class="workflow-heading"><strong>Workflow automation:</strong></p>
 
 - **[Hooks](https://worktrunk.dev/hook/)** — run commands on create, pre-merge, post-merge, etc
 - **[LLM commit messages](https://worktrunk.dev/llm-commits/)** — generate commit messages from diffs
 - **[Merge workflow](https://worktrunk.dev/merge/)** — squash, rebase, merge, clean up in one command
-- **[Interactive picker](https://worktrunk.dev/switch/#interactive-picker)** — browse worktrees with live diff and log previews
-- **[Copy build caches](https://worktrunk.dev/step/#wt-step-copy-ignored)** — skip cold starts by sharing `target/`, `node_modules/`, etc between worktrees
+- **[Interactive picker](https://worktrunk.dev/switch/#interactive-picker)** — browse worktrees with streaming CI status and diff, log, PR and comment previews
+- **[Share build caches](https://worktrunk.dev/step/#wt-step-copy-ignored)** — ten worktrees get `target/`, `node_modules/`, etc without building or copying them (on APFS, btrfs, and XFS)
 - **[`wt list --full`](https://worktrunk.dev/list/#full-mode)** — [CI status](https://worktrunk.dev/list/#ci-status) and [AI-generated summaries](https://worktrunk.dev/list/#llm-summaries) per branch
 - **[PR checkout](https://worktrunk.dev/switch/#pull-requests-and-merge-requests)** — `wt switch pr:123` to jump straight to a PR's branch
 - **[Dev server per worktree](https://worktrunk.dev/tips-patterns/#dev-server-per-worktree)** — `hash_port` template filter gives each worktree a unique port
@@ -103,7 +103,7 @@ Multiple parallel agents, same simple commands:
 
 <!-- END AUTO-GENERATED -->
 
-<!-- ⚠️ AUTO-GENERATED from docs/content/worktrunk.md#install..further-reading — edit source to update -->
+<!-- ⚠️ AUTO-GENERATED from docs/src/content/docs/worktrunk.md#install..next-steps — edit source to update -->
 
 ## Install
 
@@ -158,19 +158,17 @@ Create a worktree for a new feature:
 ```console
 $ wt switch --create feature-auth
 ✓ Created branch feature-auth from main and worktree @ ~/repo.feature-auth
-
 ```
 
 This creates a new branch and worktree, then switches to it. Do your work, then check all worktrees with [`wt list`](https://worktrunk.dev/list/):
 
 ```console
 $ wt list
-  Branch        Status        HEAD±    main↕     main…±  Remote⇅  Commit   Age   Message
-@ feature-auth  +   ↑      +27   -8   ↑1       +31                4bc72dc  2h    Add authenticati…
-^ main              ^⇡                                    ⇡1      0e631ad  1d    Initial commit
+  Branch        Status      HEAD±     main↕    main…±    Remote⇅  Commit    Age  Message
+@ feature-auth  +   ↑      +27   -8   ↑1       +31                4bc72dc    2h  Add authenticati…
+^ main              ^⇡                                    ⇡1      0e631ad    1d  Initial commit
 
-○ Showing 2 worktrees, 1 with changes, 1 ahead, 1 column hidden
-
+○ Showing 2 worktrees, 1 with changes, 1 ahead, hidden: Path
 ```
 
 The `@` marks the current worktree. `+` means staged changes, `↑1` means 1 commit ahead of main, `⇡` means unpushed commits.
@@ -200,7 +198,6 @@ $ wt merge main
 ✓ Merged to main (1 commit, 2 files, +53)
 ◎ Removing feature-auth worktree & branch in background (same commit as main, _)
 ○ Switched to worktree for main @ ~/repo
-
 ```
 
 For parallel agents, create multiple worktrees and launch an agent in each:
@@ -222,15 +219,8 @@ The `-x` flag runs a command after switching; arguments after `--` are passed to
   status & PR links](https://worktrunk.dev/list/#ci-status)
 - Browse [tips & patterns](https://worktrunk.dev/tips-patterns/) for recipes: aliases, dev servers, databases, agent handoffs, and more
 - [Extending Worktrunk](https://worktrunk.dev/extending/) — customize workflows with hooks & aliases
+- Watch [@DevOpsToolbox's video on Worktrunk](https://youtu.be/WBQiqr6LevQ?t=345)
 - Run `wt --help` or `wt <command> --help` for quick CLI reference
-
-## Further reading
-
-- [Claude Code: Best practices for agentic coding](https://www.anthropic.com/engineering/claude-code-best-practices) — Anthropic's official guide, including the worktree pattern
-- [Shipping faster with Claude Code and Git Worktrees](https://incident.io/blog/shipping-faster-with-claude-code-and-git-worktrees) — incident.io's workflow for parallel agents
-- [Git worktree pattern discussion](https://github.com/anthropics/claude-code/issues/1052) — Community discussion in the Claude Code repo
-- [@DevOpsToolbox's video on Worktrunk](https://youtu.be/WBQiqr6LevQ?t=345)
-- [git-worktree documentation](https://git-scm.com/docs/git-worktree) — Official git reference
 
 <!-- END AUTO-GENERATED -->
 
@@ -241,10 +231,37 @@ The `-x` flag runs a command after switching; arguments after `--` are passed to
 - [Open an issue](https://github.com/max-sixty/worktrunk/issues/new?title=&body=%23%23%20Description%0A%0A%3C!--%20Describe%20the%20bug%20or%20feature%20request%20--%3E%0A%0A%23%23%20Context%0A%0A%3C!--%20Any%20relevant%20context%3A%20your%20workflow%2C%20what%20you%20were%20trying%20to%20do%2C%20etc.%20--%3E) — feedback, feature requests, even a small friction or imperfect user message, or [a worktree pain not yet solved](https://github.com/max-sixty/worktrunk/issues/new?title=Worktree%20friction%3A%20&body=%23%23%20The%20friction%0A%0A%3C!--%20What%20worktree-related%20task%20is%20still%20painful%3F%20--%3E%0A%0A%23%23%20Current%20workaround%0A%0A%3C!--%20How%20do%20you%20handle%20this%20today%3F%20--%3E%0A%0A%23%23%20Ideal%20solution%0A%0A%3C!--%20What%20would%20make%20this%20easier%3F%20--%3E)
 - Share: [X](https://twitter.com/intent/tweet?text=Worktrunk%20%E2%80%94%20CLI%20for%20git%20worktree%20management&url=https%3A%2F%2Fworktrunk.dev) · [Reddit](https://www.reddit.com/submit?url=https%3A%2F%2Fworktrunk.dev&title=Worktrunk%20%E2%80%94%20CLI%20for%20git%20worktree%20management) · [LinkedIn](https://www.linkedin.com/sharing/share-offsite/?url=https%3A%2F%2Fworktrunk.dev)
 
+### Running the tests
+
+```bash
+cargo test
+```
+
+The shell integration tests need bash, zsh, fish, nushell, and pwsh, plus `jq`:
+
+```bash
+cargo test --test integration --features shell-integration-tests
+```
+
 > ### 📚 Full documentation at [worktrunk.dev](https://worktrunk.dev) 📚
 
 ### Star history
 
+<!-- `sealed_token` is a GitHub token of ours encrypted with star-history's public
+     key, from "Generate embed code" on star-history.com. Without one the chart
+     renders a "GitHub restricted access to star data" placeholder: GitHub limits
+     stargazer data to a repo's admins and collaborators, and their servers are
+     neither.
+
+     The token is fine-grained and reaches only this repo. Its Contents permission
+     has to be read *and write* — write access is what GitHub accepts as proof of
+     collaborator status, so rotating to a read-only token brings the placeholder
+     straight back. Publishing the ciphertext is safe on its own; what the scope
+     buys is a bound on star-history, which decrypts it and so holds a credential
+     that can push here until it expires 2027-08-16 — at which point the chart
+     reverts to the placeholder with nothing else to signal it. star-history
+     reports GitHub is working on restoring access, so drop this parameter once
+     the plain URL renders a chart again. -->
 <a href="https://star-history.com/#max-sixty/worktrunk&Date">
-  <img src="https://api.star-history.com/svg?repos=max-sixty/worktrunk&type=Date" width="500" alt="Star History Chart">
+  <img src="https://api.star-history.com/svg?repos=max-sixty/worktrunk&type=Date&sealed_token=2ySbQiVbkVrGmwgDsJya-xr4ApbVVvR0siYI46d22Xj_1kPCcgA9X0YpUGc3__aMuZ0ZAWzG4NBhJtqepYjlkoYrVwmKbgaPmGpNZTCfSyVp8EDA_IXaOOYW2whsOXDAi6g7HD9ezsnqSl58n7AqW2_4IQ4hY2p3h7tNv_3k4am5ASq1NdpbfrOUazCl" width="500" alt="Star History Chart">
 </a>

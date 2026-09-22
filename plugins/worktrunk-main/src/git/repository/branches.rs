@@ -112,7 +112,10 @@ impl Repository {
     /// needs a current SHA for a ref must resolve through a `RefSnapshot`
     /// captured at the moment of read, not through this inventory. The
     /// inventory itself is used for branch listing and upstream-tracking
-    /// metadata, both of which are stable for the duration of a command.
+    /// metadata, stable for the duration of a command that runs no hook.
+    /// A hook runs inside the command, so one that touches refs leaves the
+    /// rest of the inventory stale too — which branches are in it, and where
+    /// each one's upstream points.
     pub fn local_branches(&self) -> anyhow::Result<&[LocalBranch]> {
         Ok(self.local_branch_inventory()?.entries())
     }
@@ -219,21 +222,6 @@ impl Repository {
         Ok(self
             .local_branches()?
             .iter()
-            .map(|b| b.name.clone())
-            .collect())
-    }
-
-    /// Get branches that don't have worktrees (available for switch).
-    pub fn available_branches(&self) -> anyhow::Result<Vec<String>> {
-        let worktrees = self.list_worktrees()?;
-        let branches_with_worktrees: HashSet<String> = worktrees
-            .iter()
-            .filter_map(|wt| wt.branch.clone())
-            .collect();
-        Ok(self
-            .local_branches()?
-            .iter()
-            .filter(|b| !branches_with_worktrees.contains(&b.name))
             .map(|b| b.name.clone())
             .collect())
     }
@@ -593,6 +581,8 @@ mod tests {
         let repo = Repository::at(test.root_path()).unwrap();
 
         let before = repo.default_branch_sha().expect("main resolves");
+        let cloned_repo = repo.clone();
+        assert!(std::sync::Arc::ptr_eq(&repo.cache, &cloned_repo.cache));
 
         // Move main forward outside `repo`'s knowledge.
         std::fs::write(test.root_path().join("after.txt"), "after\n").unwrap();
@@ -601,8 +591,8 @@ mod tests {
         let real_after = test.git_output(&["rev-parse", "main"]);
         assert_ne!(before, real_after, "test setup: main should have moved");
 
-        // Same `repo`: the cached inventory still serves the pre-move SHA.
-        assert_eq!(repo.default_branch_sha(), Some(before));
+        // A clone shares the cached inventory and still serves the pre-move SHA.
+        assert_eq!(cloned_repo.default_branch_sha(), Some(before));
 
         // A fresh `Repository::at` scans again and sees the new SHA.
         let repo2 = Repository::at(test.root_path()).unwrap();

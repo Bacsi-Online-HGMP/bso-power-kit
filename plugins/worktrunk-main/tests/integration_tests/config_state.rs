@@ -164,7 +164,7 @@ fn test_state_get_default_branch_fails_when_undetermined(repo: TestRepo) {
         .output()
         .unwrap();
     assert!(!output.status.success());
-    assert_snapshot!(String::from_utf8_lossy(&output.stderr), @"[31m✗[39m [31mCannot determine default branch. To configure, run [1mwt config state default-branch set BRANCH[22m[39m");
+    assert_snapshot!(String::from_utf8_lossy(&output.stderr), @"[31m✗[39m [31mCannot determine default branch; to configure one, run [1mwt config state default-branch set BRANCH[22m[39m");
 }
 
 #[rstest]
@@ -1094,6 +1094,78 @@ fn test_state_clear_marker_all_empty(repo: TestRepo) {
     assert_snapshot!(String::from_utf8_lossy(&output.stderr), @"[2m○[22m No markers to clear");
 }
 
+/// `marker set`/`marker clear` run unconditionally from the Claude Code,
+/// Codex, and Gemini plugin hooks (`UserPromptSubmit`, `Stop`, `SessionEnd`,
+/// …), whether or not the session's directory is inside a git repository.
+/// Outside a repository, both must no-op silently — exit 0, nothing on
+/// stdout or stderr — rather than the pre-fix behavior of printing
+/// `git rev-parse --git-common-dir failed (exit 128)` and exiting 1, a
+/// failure the hooks' own `|| true` already discarded (#3921).
+#[rstest]
+fn test_state_set_marker_outside_repo_is_noop() {
+    let mut cmd = wt_command();
+    cmd.args(["config", "state", "marker", "set", "🤖"]);
+    let output = cmd.output().unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(String::from_utf8_lossy(&output.stdout), "");
+    assert_eq!(String::from_utf8_lossy(&output.stderr), "");
+}
+
+#[rstest]
+fn test_state_clear_marker_outside_repo_is_noop() {
+    let mut cmd = wt_command();
+    cmd.args(["config", "state", "marker", "clear"]);
+    let output = cmd.output().unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(String::from_utf8_lossy(&output.stdout), "");
+    assert_eq!(String::from_utf8_lossy(&output.stderr), "");
+}
+
+/// The no-op fallback is scoped to `marker` — a state key without a git
+/// hook depending on it, run outside a repository, must keep failing the
+/// way every `wt` command does. Guards against widening the `#3921` fix
+/// beyond the one command the hooks actually call unconditionally.
+#[rstest]
+fn test_state_set_default_branch_outside_repo_still_fails() {
+    let mut cmd = wt_command();
+    cmd.args(["config", "state", "default-branch", "set", "main"]);
+    let output = cmd.output().unwrap();
+
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("git rev-parse --git-common-dir failed"),
+        "stderr: {stderr}"
+    );
+}
+
+/// Same guard as `test_state_set_default_branch_outside_repo_still_fails`,
+/// for the `clear` side — `handle_state_clear` has its own `Repository::current()`
+/// match with its own fallback arm.
+#[rstest]
+fn test_state_clear_default_branch_outside_repo_still_fails() {
+    let mut cmd = wt_command();
+    cmd.args(["config", "state", "default-branch", "clear"]);
+    let output = cmd.output().unwrap();
+
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("git rev-parse --git-common-dir failed"),
+        "stderr: {stderr}"
+    );
+}
+
 // ============================================================================
 // logs
 // ============================================================================
@@ -1507,10 +1579,7 @@ fn test_state_clear_all_prompt_declines(repo: TestRepo) {
     cmd.stdin(Stdio::null());
     let output = cmd.output().unwrap();
     assert!(output.status.success());
-    assert_snapshot!(String::from_utf8_lossy(&output.stderr), @"
-
-    [36m❯[39m Clear all stored state, including branch markers and vars? [1m[y/N/?][22m [2m○[22m Clear cancelled
-    ");
+    assert_snapshot!(String::from_utf8_lossy(&output.stderr), @"[36m❯[39m Clear all stored state, including branch markers and vars? [1m[y/N/?][22m [2m○[22m Clear cancelled");
 
     // Previous branch must survive the declined prompt.
     assert!(
@@ -2580,6 +2649,14 @@ fn test_vars_clear_single_key(repo: TestRepo) {
 }
 
 #[rstest]
+fn test_vars_clear_requires_key_or_all(repo: TestRepo) {
+    let output = wt_state_cmd(&repo, "vars", "clear", &[]).output().unwrap();
+
+    assert!(!output.status.success());
+    assert_snapshot!(String::from_utf8_lossy(&output.stderr), @"[31m✗[39m [31mSpecify a key to clear, or use --all to clear all keys[39m");
+}
+
+#[rstest]
 fn test_vars_clear_all(repo: TestRepo) {
     // Set multiple values
     wt_state_cmd(&repo, "vars", "set", &["env=staging"])
@@ -2699,6 +2776,7 @@ fn test_vars_overwrite(repo: TestRepo) {
 
 #[rstest]
 fn test_vars_in_json_output(repo: TestRepo) {
+    repo.write_test_config("[list]\njson-schema = 1\n");
     // Set vars data
     repo.git_command()
         .args(["config", "worktrunk.state.main.vars.env", "staging"])
@@ -2726,6 +2804,7 @@ fn test_vars_in_json_output(repo: TestRepo) {
 
 #[rstest]
 fn test_vars_absent_in_json_when_empty(repo: TestRepo) {
+    repo.write_test_config("[list]\njson-schema = 1\n");
     // No vars data set — vars field should be absent from JSON
     let output = repo
         .wt_command()
@@ -2833,6 +2912,7 @@ fn test_vars_branch_with_dots_in_name(repo: TestRepo) {
 
 #[rstest]
 fn test_vars_json_branch_with_vars_in_name(repo: TestRepo) {
+    repo.write_test_config("[list]\njson-schema = 1\n");
     // Regression: branch names containing ".vars." must not confuse the
     // all_vars_entries parser (which splits on ".vars." to find the separator).
     let wt_path = repo.root_path().join("..").join("fix-vars-cleanup-wt");

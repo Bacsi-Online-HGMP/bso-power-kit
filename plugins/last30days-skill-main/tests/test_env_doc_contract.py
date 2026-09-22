@@ -11,6 +11,7 @@ ROOT = Path(__file__).resolve().parents[1]
 DOC_PATHS = [
     ROOT / "skills" / "last30days" / "SKILL.md",
     ROOT / "README.md",
+    ROOT / "CONFIGURATION.md",
 ]
 CONFIG_ENV_KEY_RE = re.compile(
     r"(?<![A-Z0-9_])(?:"
@@ -19,7 +20,7 @@ CONFIG_ENV_KEY_RE = re.compile(
     r"BSKY|TRUTHSOCIAL|BRAVE|EXA|SERPER|OPENROUTER|PERPLEXITY|PARALLEL|"
     r"XQUIK|GROQ)_[A-Z0-9_]+|"
     r"OPENAI_API_KEY|AUTH_TOKEN|CT0|FROM_BROWSER|INCLUDE_SOURCES|"
-    r"EXCLUDE_SOURCES|SETUP_COMPLETE|FUN_LEVEL"
+    r"EXCLUDE_SOURCES|SETUP_COMPLETE|FUN_LEVEL|X_BEARER_TOKEN"
     r")(?![A-Z0-9_])"
 )
 DOC_ONLY_KEYS = {
@@ -28,6 +29,12 @@ DOC_ONLY_KEYS = {
     "LAST30DAYS_CACHE_DIR",
     "LAST30DAYS_MCP_TIMEOUT",
     "LAST30DAYS_PYTHON",
+    # Read from the process environment before or outside get_config
+    # (config-dir override, Keychain/pass source switches), so they are
+    # documented in CONFIGURATION.md without being config keys.
+    "LAST30DAYS_CONFIG_DIR",
+    "LAST30DAYS_PASS_PREFIX",
+    "LAST30DAYS_SKIP_KEYCHAIN",
 }
 
 
