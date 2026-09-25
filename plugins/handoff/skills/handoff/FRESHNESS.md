@@ -16,3 +16,10 @@ Last reviewed: 2026-09-25
   conversation holds the answers.
 - The template's section order is what makes a handoff skimmable. Check that a new model
   still fills every section and writes `none` rather than dropping empty ones.
+
+Observed on 2026-09-25 (Claude Code 2.1.282, default model): when the working folder did
+not contain what the user described, the model asked questions instead of writing the
+handoff, despite *Infer, don't interrogate*. The eval `never-overwrites-todays-handoff`
+now seeds the calendar file so it tests the overwrite rule. If the same refusal shows up
+in real sessions, strengthen step 1: the user's account is the source, and an
+unverified claim is recorded as unverified rather than asked about.

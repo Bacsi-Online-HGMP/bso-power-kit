@@ -16,3 +16,10 @@ Last reviewed: 2026-09-25
   captions and scripts in Vietnamese with the current model, audit them with this skill,
   and note tells the catalogue misses. Propose additions in the pull request; Vietnamese
   examples are written by a person, not by the check.
+
+Observed on 2026-09-25 (Claude Code 2.1.282, default model): the skill describes its
+output twice, in Vietnamese under *Two modes* (*Đã đổi gì*) and in English in the
+*Returning the result* template. The model followed the Vietnamese one (`## Bản đã
+sửa`, `## Đã đổi gì`) and left out `## Needs a human decision` when nothing needed one.
+The evals accept either language. Decide which headings the skill should ask for and
+make both places say the same.

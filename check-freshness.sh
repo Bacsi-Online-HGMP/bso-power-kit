@@ -2,6 +2,7 @@
 # Check that every first-party skill says what can go stale in it.
 #
 #   bash check-freshness.sh
+#   bash check-freshness.sh --list   # print the first-party skill directories, one per line
 #
 # First-party means skills/*/, the plugins sources.tsv marks "authored here", and each
 # local addition under patches/*/. Each needs a FRESHNESS.md with a "Last reviewed:"
@@ -29,6 +30,11 @@ done
 for d in $(git ls-files patches | awk -F/ 'NF > 2 {print $1 "/" $2}' | sort -u); do
   dirs="$dirs $d"
 done
+
+if [ "${1:-}" = "--list" ]; then
+  for d in $dirs; do [ -f "$d/SKILL.md" ] && echo "$d"; done
+  exit 0
+fi
 
 # shellcheck disable=SC2086 # word splitting is the point: one argument per directory
 python3 - 45 $dirs <<'PY'
