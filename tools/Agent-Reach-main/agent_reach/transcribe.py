@@ -1,12 +1,19 @@
 # -*- coding: utf-8 -*-
-"""Whisper audio transcription with Groq → OpenAI fallback.
+"""Whisper audio transcription with explicit provider routing.
 
 Downloads audio (yt-dlp), compresses + chunks (ffmpeg), and posts to a
-Whisper-compatible API. Defaults to Groq's free `whisper-large-v3` and falls
-back to OpenAI's `whisper-1` on HTTP error.
+Whisper-compatible API. Auto mode selects the first configured provider and
+only sends audio to another provider when the caller explicitly opts in.
 
 Public entry point:
-    transcribe(source, *, provider="auto", out_dir=None, config=None) -> str
+    transcribe(
+        source,
+        *,
+        provider="auto",
+        out_dir=None,
+        config=None,
+        allow_provider_fallback=False,
+    ) -> str
 
 Designed to be importable from channels (e.g. YouTubeChannel.transcribe).
 """
@@ -14,7 +21,9 @@ Designed to be importable from channels (e.g. YouTubeChannel.transcribe).
 from __future__ import annotations
 
 import ipaddress
+import math
 import shutil
+import socket
 import subprocess
 import tempfile
 from pathlib import Path
@@ -28,6 +37,11 @@ from agent_reach.config import Config
 # Whisper API limit is 25MB; leave headroom for multipart overhead.
 SIZE_LIMIT_BYTES = 24 * 1024 * 1024
 CHUNK_SECONDS = 600  # 10 min — small enough that boundary cuts rarely lose meaning
+MAX_SOURCE_BYTES = 512 * 1024 * 1024
+MAX_CHUNKS = 24  # 4 hours at the standard 10-minute segment size
+MAX_TOTAL_CHUNK_BYTES = 96 * 1024 * 1024
+MAX_AUDIO_SECONDS = MAX_CHUNKS * CHUNK_SECONDS
+FFPROBE_TIMEOUT_SECONDS = 30
 
 PROVIDERS = {
     "groq": {
@@ -66,6 +80,78 @@ def _require(binary: str) -> None:
         raise MissingDependency(f"{binary} not found in PATH")
 
 
+def _require_size_at_most(path: Path, limit: int, label: str) -> int:
+    """Return file size or fail before expensive downstream processing."""
+    size = path.stat().st_size
+    if size > limit:
+        limit_mib = limit / (1024 * 1024)
+        raise TranscribeError(f"{label} exceeds safety limit of {limit_mib:g} MiB")
+    return size
+
+
+def _probe_audio_duration(path: Path) -> float:
+    """Return duration in seconds or fail closed before media generation."""
+    _require("ffprobe")
+    cmd = [
+        "ffprobe",
+        "-v",
+        "error",
+        "-show_entries",
+        "format=duration",
+        "-of",
+        "default=noprint_wrappers=1:nokey=1",
+        "-i",
+        str(path),
+    ]
+    try:
+        proc = subprocess.run(
+            cmd,
+            capture_output=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=FFPROBE_TIMEOUT_SECONDS,
+        )
+    except subprocess.TimeoutExpired:
+        raise TranscribeError(
+            "ffprobe timed out while reading audio duration "
+            f"after {FFPROBE_TIMEOUT_SECONDS}s"
+        ) from None
+    except OSError as exc:
+        raise TranscribeError(
+            f"ffprobe could not read audio duration: {exc}"
+        ) from exc
+
+    if proc.returncode != 0:
+        detail = proc.stderr.strip()[:300] or "unknown ffprobe error"
+        raise TranscribeError(
+            f"ffprobe failed while reading audio duration: {detail}"
+        )
+
+    raw_duration = proc.stdout.strip()
+    try:
+        duration = float(raw_duration)
+    except (TypeError, ValueError):
+        raise TranscribeError(
+            "ffprobe could not parse a valid audio duration"
+        ) from None
+    if not math.isfinite(duration) or duration <= 0:
+        raise TranscribeError(
+            "ffprobe could not parse a valid positive audio duration"
+        )
+    return duration
+
+
+def _require_duration_within_budget(path: Path) -> float:
+    """Reject audio that cannot fit within the bounded chunk budget."""
+    duration = _probe_audio_duration(path)
+    if duration > MAX_AUDIO_SECONDS:
+        max_minutes = MAX_AUDIO_SECONDS // 60
+        raise TranscribeError(
+            f"audio duration exceeds safety limit of {max_minutes} minutes"
+        )
+    return duration
+
+
 def _run(cmd: List[str], timeout: int = 600) -> None:
     """Run a subprocess, raising TranscribeError on nonzero exit or timeout.
 
@@ -73,7 +159,13 @@ def _run(cmd: List[str], timeout: int = 600) -> None:
     network read or a hung probe must not block the CLI forever.
     """
     try:
-        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+        proc = subprocess.run(
+            cmd,
+            capture_output=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=timeout,
+        )
     except subprocess.TimeoutExpired:
         raise TranscribeError(f"{cmd[0]} timed out after {timeout}s")
     if proc.returncode != 0:
@@ -82,10 +174,30 @@ def _run(cmd: List[str], timeout: int = 600) -> None:
         )
 
 
-def _is_private_ip(value: str) -> bool:
+def _literal_ip(host: str):
+    """Return the address a literal host denotes, or None for a real hostname.
+
+    ``ipaddress`` only accepts the canonical dotted-quad form, but the C
+    resolver behind yt-dlp accepts the whole ``inet_aton`` grammar: ``127.1``,
+    ``2130706433``, ``0x7f000001`` and ``0177.0.0.1`` all reach 127.0.0.1, and
+    ``0xA9FEA9FE`` reaches the cloud metadata endpoint. Parsing with the same
+    grammar keeps those shorthands from slipping past the private-address
+    check. This is literal parsing only — no name is resolved here.
+    """
     try:
-        ip = ipaddress.ip_address(value)
+        return ipaddress.ip_address(host)
     except ValueError:
+        pass
+    try:
+        packed = socket.inet_aton(host)
+    except OSError:
+        return None
+    return ipaddress.IPv4Address(packed)
+
+
+def _is_private_ip(value: str) -> bool:
+    ip = _literal_ip(value)
+    if ip is None:
         return False
     return any(
         (
@@ -107,15 +219,28 @@ def _assert_safe_public_url(url: str) -> None:
             host_part, port_part = before_slash.rsplit(":", 1)
             if not host_part or not port_part.isdigit():
                 raise TranscribeError("SSRF blocked: only public http(s) URLs are allowed")
-        parsed = urlparse(f"https://{url}")
+        normalized_url = f"https://{url}"
+        parsed = urlparse(normalized_url)
     else:
+        normalized_url = url
         parsed = urlparse(url)
         if parsed.scheme not in {"http", "https"}:
             raise TranscribeError("SSRF blocked: only public http(s) URLs are allowed")
 
-    host = (parsed.hostname or "").strip().lower().rstrip(".")
-    if not host:
+    raw_authority = normalized_url.split("://", 1)[1]
+    raw_authority = raw_authority.split("/", 1)[0]
+    raw_authority = raw_authority.split("?", 1)[0]
+    raw_authority = raw_authority.split("#", 1)[0]
+    if "\\" in raw_authority or "%" in raw_authority:
+        raise TranscribeError("SSRF blocked: encoded or ambiguous URL host")
+
+    raw_host = (parsed.hostname or "").strip().rstrip(".")
+    if not raw_host:
         raise TranscribeError("SSRF blocked: URL host is missing")
+    try:
+        host = raw_host.encode("idna").decode("ascii").lower().rstrip(".")
+    except UnicodeError:
+        raise TranscribeError("SSRF blocked: URL host is invalid") from None
     if host in _BLOCKED_HOSTS or host.endswith(".localhost"):
         raise TranscribeError("SSRF blocked: internal host is not allowed")
     if _is_private_ip(host):
@@ -135,6 +260,9 @@ def download_audio(url: str, out_dir: Path) -> Path:
             "m4a",
             "--audio-quality",
             "0",
+            "--no-playlist",
+            "--max-filesize",
+            str(MAX_SOURCE_BYTES),
             "-o",
             str(template),
             "--",
@@ -144,8 +272,13 @@ def download_audio(url: str, out_dir: Path) -> Path:
     )
     files = sorted(out_dir.glob("source.*"))
     if not files:
-        raise TranscribeError("yt-dlp produced no output file")
-    return files[0]
+        limit_mib = MAX_SOURCE_BYTES // (1024 * 1024)
+        raise TranscribeError(
+            f"yt-dlp produced no output file (source may exceed {limit_mib} MiB limit)"
+        )
+    audio = files[0]
+    _require_size_at_most(audio, MAX_SOURCE_BYTES, "downloaded source")
+    return audio
 
 
 def compress_audio(src: Path, out_dir: Path) -> Path:
@@ -160,6 +293,8 @@ def compress_audio(src: Path, out_dir: Path) -> Path:
             "-y",
             "-i",
             str(src),
+            "-t",
+            str(MAX_AUDIO_SECONDS),
             "-vn",
             "-ac",
             "1",
@@ -175,6 +310,17 @@ def compress_audio(src: Path, out_dir: Path) -> Path:
 
 def chunk_audio(src: Path, out_dir: Path, segment_seconds: int = CHUNK_SECONDS) -> List[Path]:
     """Split src into segments. Re-encodes each segment so cuts align to keyframes."""
+    if segment_seconds <= 0:
+        raise TranscribeError("chunk segment duration must be positive")
+    possible_chunks = (
+        MAX_AUDIO_SECONDS + segment_seconds - 1
+    ) // segment_seconds
+    if possible_chunks > MAX_CHUNKS:
+        raise TranscribeError(
+            f"chunk generation safety limit is {MAX_CHUNKS}; "
+            f"segment duration {segment_seconds}s could create "
+            f"{possible_chunks} chunks"
+        )
     _require("ffmpeg")
     pattern = out_dir / "chunk_%03d.m4a"
     _run(
@@ -185,6 +331,8 @@ def chunk_audio(src: Path, out_dir: Path, segment_seconds: int = CHUNK_SECONDS) 
             "-y",
             "-i",
             str(src),
+            "-t",
+            str(MAX_AUDIO_SECONDS),
             "-f",
             "segment",
             "-segment_time",
@@ -260,19 +408,32 @@ def transcribe(
     provider: str = "auto",
     out_dir: Optional[Path] = None,
     config: Optional[Config] = None,
+    allow_provider_fallback: bool = False,
 ) -> str:
     """Transcribe a URL or local file path. Returns the joined transcript text.
 
-    `provider` is one of `auto` (groq → openai), `groq`, or `openai`.
+    `provider` is one of `auto`, `groq`, or `openai`. Auto mode selects the
+    first configured provider (Groq, then OpenAI). In auto mode only, set
+    `allow_provider_fallback=True` to permit sending failed chunks to the next
+    configured provider; using the flag with an explicit provider is rejected.
     `out_dir` defaults to a fresh temp directory; intermediate files stay there.
     """
+    if allow_provider_fallback and provider != "auto":
+        raise TranscribeError(
+            "allow_provider_fallback requires provider='auto'"
+        )
     cfg = config or Config()
-    order = _provider_order(provider)
+    candidates = _provider_order(provider)
+    configured = [p for p in candidates if _provider_key(p, cfg)]
 
     # Validate at least one provider is configured before doing expensive work.
-    if not any(_provider_key(p, cfg) for p in order):
-        names = ", ".join(PROVIDERS[p]["key_field"] for p in order)
+    if not configured:
+        names = ", ".join(PROVIDERS[p]["key_field"] for p in candidates)
         raise NoProviderConfigured(f"no provider key configured (need one of: {names})")
+
+    order = configured
+    if provider == "auto" and not allow_provider_fallback:
+        order = configured[:1]
 
     if out_dir:
         return _transcribe_in_dir(source, order, cfg, Path(out_dir))
@@ -290,11 +451,31 @@ def _transcribe_in_dir(source: str, order: List[str], cfg: Config, work_dir: Pat
     else:
         audio = download_audio(source, work_dir)
 
+    _require_size_at_most(audio, MAX_SOURCE_BYTES, "source")
+    _require_duration_within_budget(audio)
     compressed = compress_audio(audio, work_dir)
     if compressed.stat().st_size <= SIZE_LIMIT_BYTES:
         chunks = [compressed]
     else:
         chunks = chunk_audio(compressed, work_dir)
+
+    if len(chunks) > MAX_CHUNKS:
+        max_minutes = MAX_CHUNKS * CHUNK_SECONDS // 60
+        raise TranscribeError(
+            f"audio produced {len(chunks)} chunks; safety limit is "
+            f"{MAX_CHUNKS} (~{max_minutes} minutes)"
+        )
+    chunk_sizes = [
+        _require_size_at_most(chunk, SIZE_LIMIT_BYTES, f"chunk {chunk.name}")
+        for chunk in chunks
+    ]
+    total_chunk_bytes = sum(chunk_sizes)
+    if total_chunk_bytes > MAX_TOTAL_CHUNK_BYTES:
+        limit_mib = MAX_TOTAL_CHUNK_BYTES / (1024 * 1024)
+        raise TranscribeError(
+            f"audio chunks total {total_chunk_bytes} bytes; "
+            f"safety limit is {limit_mib:g} MiB"
+        )
 
     pieces: List[str] = []
     for chunk in chunks:

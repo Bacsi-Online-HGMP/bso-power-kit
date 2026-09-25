@@ -1,6 +1,6 @@
 # Authentication Guide
 
-This guide explains how to authenticate with NotebookLM MCP and CLI.
+This guide explains how to authenticate with Gemini Notebook (formerly Google NotebookLM) MCP and CLI.
 
 > For public HTTP deployment or Claude web/mobile connectors, see
 > [Remote MCP Deployment](REMOTE_MCP.md). Remote use introduces a separate MCP
@@ -9,17 +9,24 @@ This guide explains how to authenticate with NotebookLM MCP and CLI.
 
 ## Overview
 
-NotebookLM uses browser cookies for authentication (there is no official API). The CLI/MCP extracts these cookies automatically from a managed browser session:
-- Chromium-family browsers use Chrome DevTools Protocol (CDP)
+Gemini Notebook uses browser cookies for authentication (there is no official API). The CLI/MCP extracts these cookies automatically from a managed browser session:
 
-**Supported browsers**: Google Chrome, Arc (macOS), Brave, Microsoft Edge, Chromium, Vivaldi, Opera.
+- Chromium-family browsers use Chrome DevTools Protocol (CDP)
+- Firefox uses an isolated profile and reads its cookie store directly (no CDP or WebDriver required)
+
+**Supported browsers**: Google Chrome, Arc (macOS), Dia (macOS) Brave, Microsoft Edge, Chromium, Firefox, Vivaldi, Opera.
+
+On Windows, standalone Chromium is discovered in the standard machine-wide
+locations under `C:\Program Files` and `C:\Program Files (x86)`, plus the
+per-user `%LOCALAPPDATA%\Chromium\Application\chrome.exe` location. You can
+select it explicitly with `nlm config set auth.browser chromium`.
 
 **Two authentication methods are available:**
 
-| Method | Best For | Requires |
-|--------|----------|----------|
-| **Auto Mode** (default) | Most users | Any supported Chromium-family browser installed |
-| **File Mode** (`--file`) | Complex setups, troubleshooting | Manual cookie extraction |
+| Method                   | Best For                        | Requires                        |
+| ------------------------ | ------------------------------- | ------------------------------- |
+| **Auto Mode** (default)  | Most users                      | Any supported browser installed |
+| **File Mode** (`--file`) | Complex setups, troubleshooting | Manual cookie extraction        |
 
 ---
 
@@ -29,7 +36,7 @@ This method launches your browser automatically and extracts cookies after you l
 
 ### Prerequisites
 
-- A supported browser installed (Chrome, Arc, Brave, Edge, Chromium, Vivaldi, or Opera)
+- A supported browser installed (Chrome, Arc, Dia, Brave, Edge, Chromium, Firefox, Vivaldi, or Opera)
 - Chromium-family browsers should be **completely closed** before running
 
 ### Steps
@@ -56,9 +63,11 @@ nlm login --devtools-timeout 15
 1. The first available supported browser is detected (or your preferred browser if configured)
 2. A dedicated browser profile is created for authentication
 3. The browser launches with the appropriate automation backend
-4. You log in to NotebookLM via the browser
-5. Cookies, CSRF token, and account email are extracted and cached
+4. You log in to Gemini Notebook via the browser
+5. Cookies are extracted and cached; CSRF/session fields are refreshed automatically when needed
 6. The browser is closed automatically
+
+When Firefox is selected, the profile is isolated under the NLM storage directory and its cookie database is read directly. Because cookie extraction cannot prove which Google account is active, re-login against an existing saved profile requires explicit `nlm login --force` after you confirm the account.
 
 ### Browser Preference
 
@@ -71,13 +80,14 @@ nlm config set auth.browser brave
 # Or use an environment variable
 export NLM_BROWSER=arc
 
-# Valid values: auto, chrome, arc, brave, edge, chromium, vivaldi, opera
+# Valid values: auto, chrome, arc, brave, edge, chromium, firefox, vivaldi, opera
 # If the preferred browser is not installed, falls back to auto-detection.
 ```
 
 ### Persistent Login
 
 The dedicated browser profile persists your Google login:
+
 - **First run:** You must log in to Google
 - **Future runs:** Already logged in, just extracts fresh cookies
 
@@ -116,6 +126,7 @@ nlm login profile delete old-profile
 ### How Multi-Profile Works
 
 Each profile gets:
+
 - **Separate credentials**: Stored in `~/.notebooklm-mcp-cli/profiles/<name>/`
 - **Separate browser profile**: Isolated browser session in `~/.notebooklm-mcp-cli/chrome-profiles/<name>/`
 - **Captured email**: Automatically extracted during login for easy identification
@@ -124,19 +135,53 @@ This means you can stay logged into multiple Google accounts simultaneously with
 
 ---
 
-## Enterprise / Google Workspace
+## Unattended / Scheduled Refresh
 
-If your organization uses **Google Workspace** with a managed NotebookLM instance (e.g., `notebooklm.cloud.google.com` instead of `notebooklm.google.com`), set the `NOTEBOOKLM_BASE_URL` environment variable before authenticating:
+A logged-in session normally self-heals: when the short-lived cookies age out,
+the client automatically runs a headless-browser pass to make Google reissue
+them. For unattended machines (a Mac mini or server running scheduled jobs),
+you can also refresh proactively so a session never lapses between jobs:
 
 ```bash
-# Set the enterprise URL
-export NOTEBOOKLM_BASE_URL=https://notebooklm.cloud.google.com
-
-# Then authenticate as usual
-nlm login
+nlm auth refresh                 # Refresh the default profile
+nlm auth refresh --profile work  # Refresh a named profile
 ```
 
-All CLI commands, MCP tools, and internal API calls will use this URL automatically. If the variable is not set, the default personal URL (`https://notebooklm.google.com`) is used.
+`nlm auth refresh` runs a headless browser against the saved profile — no
+interactive login, no window to click. It exits non-zero when the refresh
+fails, so a scheduler can react. Example launchd/cron keep-alive (every 30 min):
+
+```bash
+*/30 * * * * /path/to/nlm auth refresh >/dev/null 2>&1
+```
+
+> **Note:** This needs a saved Chrome profile (from a prior `nlm login`). It
+> does not help when `NOTEBOOKLM_COOKIES` is set as an environment variable —
+> that value overrides saved credentials, so update it directly instead.
+
+> **Disabling the refresh:** Some Google Workspace accounts have their session
+> revoked server-side whenever the saved browser profile is relaunched (issue
+> #330). Set `NOTEBOOKLM_DISABLE_HEADLESS_REFRESH=1` to turn off both the
+> automatic self-heal and `nlm auth refresh` on those accounts.
+
+---
+
+## Enterprise / Google Workspace
+
+If your organization uses **Gemini Notebook Enterprise**, ask your Enterprise administrator for the project ID or number, the deployment location/multi-region, and confirmation that your account has access. Use the project- and location-specific host configured by your administrator (normally `notebook.cloud.google.com`). Set the base URL, project, and location before authenticating:
+
+```bash
+# Set the Enterprise URL and required Cloud resource context
+export NOTEBOOKLM_BASE_URL=https://notebook.cloud.google.com
+export NOTEBOOKLM_PROJECT_ID=your-gcp-project-id-or-number
+export NOTEBOOKLM_LOCATION=global   # or us / eu, as provided by your administrator
+
+# Then authenticate as usual
+nlm login --profile enterprise
+nlm login switch enterprise     # MCP uses the default profile
+```
+
+All CLI commands, MCP tools, and internal API calls will use this URL automatically. Enterprise requests require `NOTEBOOKLM_PROJECT_ID`; if the base URL is not set, the default personal URL (`https://notebooklm.google.com`) is used. The Enterprise variables apply to the current process, so use an Enterprise-only shell or MCP configuration when you also use a personal account.
 
 > **Tip:** Add the export to your shell profile (`~/.zshrc`, `~/.bashrc`) so it persists across sessions.
 
@@ -145,11 +190,13 @@ For MCP server configuration, pass the variable in your client config:
 ```json
 {
   "mcpServers": {
-    "notebooklm-mcp": {
+    "gemini-notebook-mcp": {
       "command": "notebooklm-mcp",
-      "env": {
-        "NOTEBOOKLM_BASE_URL": "https://notebooklm.cloud.google.com"
-      }
+        "env": {
+          "NOTEBOOKLM_BASE_URL": "https://notebook.cloud.google.com",
+          "NOTEBOOKLM_PROJECT_ID": "your-gcp-project-id-or-number",
+          "NOTEBOOKLM_LOCATION": "global"
+        }
     }
   }
 }
@@ -157,9 +204,22 @@ For MCP server configuration, pass the variable in your client config:
 
 ---
 
+## The "Gemini Notebook" rebrand (`notebook.google.com`)
+
+Google is rolling out a rebrand of Gemini Notebook that redirects some signed-in accounts to `notebook.google.com` instead of `notebooklm.google.com`. This is handled automatically: `nlm login` records whichever host accepts your account (per-profile, in `metadata.json`), and every CLI/MCP request is routed to that host afterward. No configuration is needed for personal accounts.
+
+Resolution order, if you need to override it manually:
+
+1. `NOTEBOOKLM_BASE_URL` env var, if set (see Enterprise section above).
+2. The host your account last signed in on (auto-detected).
+3. The default `https://notebooklm.google.com`.
+
+---
+
 ## Method 2: File Mode
 
 This method lets you manually extract and provide cookies. Use this if:
+
 - Auto mode doesn't work on your system
 - You have browser extensions that interfere (e.g., Google Antigravity IDE)
 - You prefer manual control
@@ -174,9 +234,17 @@ nlm login --manual
 nlm login --manual --file /path/to/cookies.txt
 ```
 
+File mode verifies the imported cookies before saving them. For personal accounts, it checks both `notebooklm.google.com` and the rebranded `notebook.google.com`, then stores the host that accepts the session. Managed Workspace accounts should set `NOTEBOOKLM_BASE_URL` as described above.
+
+To force the rebranded personal host explicitly:
+
+```bash
+NOTEBOOKLM_BASE_URL=https://notebook.google.com nlm login --manual --file /path/to/cookies.txt
+```
+
 ### How to Extract Cookies Manually
 
-1. Open Chrome and go to https://notebooklm.google.com
+1. Open Chrome and go to https://notebook.google.com
 2. Make sure you're logged in
 3. Press **F12** (or **Cmd+Option+I** on Mac) to open DevTools
 4. Click the **Network** tab
@@ -197,9 +265,11 @@ SID=abc123...; HSID=xyz789...; SSID=...; APISID=...; SAPISID=...; __Secure-1PSID
 ```
 
 **Notes:**
+
 - Lines starting with `#` are treated as comments and ignored
 - The file can contain the cookie string on one or multiple lines
 - A template file `cookies.txt` is included in the repository
+- Cookie files are static credentials. Re-export them when the live verification reports that they were rejected.
 
 ---
 
@@ -225,6 +295,7 @@ All data is stored under `~/.notebooklm-mcp-cli/`:
 ```
 
 Each profile's `auth.json` contains:
+
 - Parsed cookies
 - CSRF token (auto-extracted)
 - Session ID (auto-extracted)
@@ -238,20 +309,23 @@ Each profile's `auth.json` contains:
 Once authenticated, add the MCP to your AI tool:
 
 **Claude Code:**
+
 ```bash
-claude mcp add notebooklm-mcp -- notebooklm-mcp
+claude mcp add gemini-notebook-mcp -- notebooklm-mcp
 ```
 
 **Gemini CLI:**
+
 ```bash
-gemini mcp add notebooklm notebooklm-mcp
+gemini mcp add gemini-notebook-mcp notebooklm-mcp
 ```
 
 **Manual (settings.json):**
+
 ```json
 {
   "mcpServers": {
-    "notebooklm-mcp": {
+    "gemini-notebook-mcp": {
       "command": "notebooklm-mcp"
     }
   }
@@ -284,13 +358,13 @@ an `unverified` status is a network problem, not a credential problem.
 > file on disk is rewritten, so an external `nlm login` is reflected
 > without waiting for the TTL. `nlm login --check` is always live.
 
-| Status | Meaning | What to do |
-|--------|---------|------------|
-| `configured` | Live check passed. Credentials are good. | Nothing. |
-| `not_configured` | No credentials are stored at all (first-time setup). | Run `nlm login`. |
-| `stale` | Credentials are known-bad: the live check was redirected to `accounts.google.com` (cookies expired), the on-disk profile failed to load, or the last successful validation is older than 7 days. | Run `nlm login` to refresh. Subsequent API calls will fail. |
-| `unverified` | The live check could not be completed (network timeout, DNS failure, proxy block, non-200 HTTP). Cached credentials on disk are still intact and may work for actual API calls. | Retry later, or check your network/proxy. Do not assume the user needs to re-auth — operations often still succeed. |
-| `error` | Unexpected exception inside the check itself (very rare). | File a bug with the traceback. |
+| Status           | Meaning                                                                                                                                                                                          | What to do                                                                                                          |
+| ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------- |
+| `configured`     | Live check passed. Credentials are good.                                                                                                                                                         | Nothing.                                                                                                            |
+| `not_configured` | No credentials are stored at all (first-time setup).                                                                                                                                             | Run `nlm login`.                                                                                                    |
+| `stale`          | Credentials are known-bad: the live check was redirected to `accounts.google.com` (cookies expired), the on-disk profile failed to load, or the last successful validation is older than 7 days. | Run `nlm login` to refresh. Subsequent API calls will fail.                                                         |
+| `unverified`     | The live check could not be completed (network timeout, DNS failure, proxy block, non-200 HTTP). Cached credentials on disk are still intact and may work for actual API calls.                  | Retry later, or check your network/proxy. Do not assume the user needs to re-auth — operations often still succeed. |
+| `error`          | Unexpected exception inside the check itself (very rare).                                                                                                                                        | File a bug with the traceback.                                                                                      |
 
 > **Heads up for AI agents:** If you see `auth_status = "stale"`, prompt the
 > user to re-authenticate. If you see `auth_status = "unverified"` while
@@ -308,6 +382,7 @@ Close your browser completely and try again. On Mac, use **Cmd+Q** to fully quit
 ### Auto mode fails to connect
 
 Try file mode instead:
+
 ```bash
 nlm login --manual
 ```
@@ -319,6 +394,7 @@ Your cookies have expired. Run the auth command again to refresh.
 ### Browser opens with strange branding (e.g., Antigravity IDE)
 
 Some browser extensions or tools modify the browser's behavior. Try a different browser or use file mode:
+
 ```bash
 nlm login --manual
 ```
@@ -331,13 +407,13 @@ Make sure you copied the cookie **value**, not the header name. The value should
 
 If you keep getting "Authentication expired" even after running `nlm login` or calling `refresh_auth`, check whether `NOTEBOOKLM_COOKIES` is set as an environment variable in your MCP config.
 
-**Why this happens:** When `NOTEBOOKLM_COOKIES` is set in your config (e.g. `claude_desktop_config.json`), it takes absolute priority over all other auth sources — `auth.json`, profile cookies, `save_auth_tokens`, and `nlm login`. When those hardcoded cookies expire, no recovery action can fix a running MCP process because the stale env var is baked into its environment.
+**Why this happens:** When `NOTEBOOKLM_COOKIES` is set in your config (e.g. `claude_desktop_config.json`), it takes priority over default auth sources — `auth.json`, profile cookies, `save_auth_tokens`, and `nlm login`. An explicit CLI `--profile` or MCP `usage_get(profile="work")` uses that saved account instead. When those hardcoded cookies expire, no recovery action can fix a running MCP process because the stale env var is baked into its environment.
 
 **How to check:**
 
 ```python
 import os
-print("NOTEBOOKLM_COOKIES in env:", "YES (overrides everything!)" if os.environ.get("NOTEBOOKLM_COOKIES") else "no")
+print("NOTEBOOKLM_COOKIES in env:", "YES (used when no explicit profile is selected)" if os.environ.get("NOTEBOOKLM_COOKIES") else "no")
 ```
 
 **How to fix (pick one):**
@@ -346,6 +422,53 @@ print("NOTEBOOKLM_COOKIES in env:", "YES (overrides everything!)" if os.environ.
 2. **Remove the `NOTEBOOKLM_COOKIES` env var** from your config entirely and use `nlm login` instead (recommended — this way auth recovery works automatically)
 
 Similarly, if you have `NOTEBOOKLM_CSRF_TOKEN` or `NOTEBOOKLM_SESSION_ID` in your config, remove them — both are deprecated and auto-extracted. Stale values can prevent auto-refresh from working.
+
+---
+
+### Experimental browser-backed RPC transport
+
+`nlm doctor auth-replay` compares four lanes: saved cookies through httpx,
+httpx after a forced cookie rotation, cookies freshly re-extracted from a
+live logged-in browser (also replayed through httpx), and an in-page CDP
+fetch from that same browser session. The fresh-cookie lane exists to tell
+apart two failure modes that look identical if you only compare saved
+cookies against the browser: ordinary expired cookies (verdict
+`stale_cookies` — run `nlm login`, no transport needed) versus genuine
+device-bound replay (verdict `browser_bound_replay` — even fresh cookies
+fail outside the browser).
+
+Only opt in to the experimental CDP transport if the verdict is
+`browser_bound_replay`:
+
+```bash
+NOTEBOOKLM_RPC_TRANSPORT=cdp nlm notebook list
+NOTEBOOKLM_RPC_TRANSPORT=cdp nlm query notebook <notebook-id> "Question?"
+```
+
+For MCP clients, add the same environment variable to the server config:
+
+```json
+{
+  "mcpServers": {
+    "gemini-notebook-mcp": {
+      "command": "notebooklm-mcp",
+      "env": {
+        "NOTEBOOKLM_RPC_TRANSPORT": "cdp"
+      }
+    }
+  }
+}
+```
+
+This runs supported Gemini Notebook form POSTs through `fetch` inside the saved
+Gemini Notebook browser profile, so the browser supplies its live cookies. It is
+off by default and currently targets normal batchexecute RPCs plus notebook
+chat. Uploads, downloads, and artifact file transfers still use the existing
+HTTP paths.
+
+If the CDP transport cannot find a saved profile-owned browser session, run
+`nlm login` first. Do not use this flag as a general auth refresh shortcut;
+use it only for suspected browser-bound replay failures.
 
 ---
 
@@ -363,6 +486,6 @@ No action required from users.
 ## Security Notes
 
 - Cookies are stored locally in `~/.notebooklm-mcp-cli/profiles/<name>/auth.json`
-- Each browser profile contains your Google login for NotebookLM
+- Each browser profile contains your Google login for Gemini Notebook
 - Never share your `auth.json` files or commit them to version control
 - The `cookies.txt` file in the repo is a template - don't commit real cookies

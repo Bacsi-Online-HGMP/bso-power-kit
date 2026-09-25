@@ -28,18 +28,26 @@ from dataclasses import dataclass, replace
 from typing import Any
 
 from notebooklm_tools.core import auth as _core_auth
+from notebooklm_tools.services.auth_replay import (
+    AuthReplayDiagnostic,
+    AuthReplayProbe,
+    diagnose_auth_replay,
+)
 
 logger = logging.getLogger(__name__)
 
 __all__ = [
     "AuthHealthChecker",  # defined locally in this module
     "AuthHealthReport",  # defined locally in this module
+    "AuthReplayDiagnostic",  # provided by services.auth_replay
+    "AuthReplayProbe",  # provided by services.auth_replay
     "AuthManager",  # noqa: F822 — provided lazily via PEP 562 __getattr__
     "AuthProbeResult",  # defined locally in this module
     "AuthTokens",  # noqa: F822 — provided lazily via PEP 562 __getattr__
     "check_auth",
     "confirm_auth_via_api",
     "credentials_are_usable",
+    "diagnose_auth_replay",
     "get_active_auth_mtime",
     "get_auth_health_checker",
     "get_cache_path",
@@ -64,14 +72,26 @@ def check_auth(*args, **kwargs):
     return _core_auth.check_auth(*args, **kwargs)
 
 
-def load_cached_tokens():
+def load_cached_tokens(profile_name: str | None = None):
     """Re-export of `notebooklm_tools.core.auth.load_cached_tokens`."""
-    return _core_auth.load_cached_tokens()
+    if profile_name is None:
+        return _core_auth.load_cached_tokens()
+    return _core_auth.load_cached_tokens(profile_name=profile_name)
 
 
-def save_tokens_to_cache(tokens, silent: bool = False):
+def save_tokens_to_cache(
+    tokens,
+    silent: bool = False,
+    profile_name: str | None = None,
+):
     """Re-export of `notebooklm_tools.core.auth.save_tokens_to_cache`."""
-    return _core_auth.save_tokens_to_cache(tokens, silent=silent)
+    if profile_name is None:
+        return _core_auth.save_tokens_to_cache(tokens, silent=silent)
+    return _core_auth.save_tokens_to_cache(
+        tokens,
+        silent=silent,
+        profile_name=profile_name,
+    )
 
 
 def get_cache_path():
@@ -354,6 +374,8 @@ class AuthHealthChecker:
                 timeout=timeout,
                 session_id=getattr(profile, "session_id", None),
                 build_label=getattr(profile, "build_label", None),
+                base_host=getattr(profile, "base_host", None),
+                profile_name=resolved_profile,
             )
             api_latency = (time.perf_counter() - api_start) * 1000
 
@@ -433,6 +455,8 @@ class AuthHealthChecker:
         timeout: float,
         session_id: str | None = None,
         build_label: str | None = None,
+        base_host: str | None = None,
+        profile_name: str | None = None,
     ) -> tuple[bool, str | None]:
         """Lightweight API probe: create a NotebookLMClient and list notebooks.
 
@@ -454,6 +478,8 @@ class AuthHealthChecker:
                 csrf_token=csrf_token or "",
                 session_id=session_id or "",
                 build_label=build_label or "",
+                base_host=base_host or "",
+                profile_name=profile_name,
             ) as client:
                 client.list_notebooks()
             return True, None
@@ -475,10 +501,10 @@ class AuthHealthChecker:
     @staticmethod
     def _cookies_to_dict(profile: Any) -> dict[str, str]:
         """Convert profile cookies to a plain dict."""
-        if isinstance(profile.cookies, list):
-            return {c["name"]: c["value"] for c in profile.cookies if "name" in c and "value" in c}
-        if isinstance(profile.cookies, dict):
-            return profile.cookies
+        from notebooklm_tools.utils.browser import flatten_cookies
+
+        if isinstance(profile.cookies, (dict, list)):
+            return flatten_cookies(profile.cookies)
         return {}
 
     @staticmethod
@@ -510,6 +536,7 @@ class AuthHealthChecker:
                 session_id=profile.session_id,
                 email=profile.email,
                 build_label=profile.build_label,
+                base_host=profile.base_host,
             )
         except Exception as e:
             logger.debug(f"Failed to update profile on successful auth check: {e}")
@@ -578,6 +605,8 @@ def confirm_auth_via_api(profile: str | None = None) -> tuple[bool, str | None]:
             csrf_token=p.csrf_token or "",
             session_id=p.session_id or "",
             build_label=p.build_label or "",
+            base_host=p.base_host or "",
+            profile_name=profile,
         ) as client:
             client.list_notebooks()
         return True, None

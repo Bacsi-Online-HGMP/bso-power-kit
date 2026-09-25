@@ -1,14 +1,17 @@
-# NotebookLM MCP - Comprehensive Test Plan
+# Gemini Notebook (formerly Google NotebookLM) MCP - Comprehensive Test Plan
 
-**Purpose:** Verify all **30 consolidated MCP tools** work correctly.
+**Purpose:** Verify all **43 MCP tools** work correctly.
 
-**Version:** 2.4 (Updated 2026-06-20 - synchronized current MCP surface)
+**Version:** 2.6 (Updated 2026-08-03 - synchronized current MCP surface)
 
-**Changes from v2.1:**
-- Current tool count: 39 tools (including consolidated notes, labels, async query, batch, pipeline, tags, and server_info)
+**Changes from v2.4:**
+- Current tool count: 43 tools — added `chat_list`, `chat_get`, `chat_export` (list/view/export notebook chat sessions)
 
-**Changes from v1:**
-- Tools consolidated: 45+ → 29 (-36%)
+**Historical changes from v2.1:**
+- The test plan previously covered 39 tools, including consolidated notes, labels, async query, batch, pipeline, tags, and server_info.
+
+**Historical changes from v1:**
+- Tools were consolidated from 45+ to 29 (-36%) before the current 43-tool surface.
 - `source_add(source_type=...)` replaces 4 source tools
 - `studio_create(artifact_type=...)` replaces 9 creation tools
 - `download_artifact(artifact_type=...)` replaces 9 download tools
@@ -42,7 +45,7 @@ verify both staleness detection and sync functionality work correctly.
 
 ### Test 1.1 - Refresh Auth
 **Tool:** `refresh_auth`
-**CLI:** `nlm login --check` (or `nlm auth refresh` if implemented, but `nlm login --check` validates tokens)
+**CLI:** `nlm login --check` (validates tokens)
 
 **Prompt:**
 ```
@@ -53,16 +56,34 @@ Refresh authentication tokens for NotebookLM.
 
 ---
 
+### Test 1.1b - Non-Interactive Session Refresh (unattended)
+**CLI:** `nlm auth refresh` (headless refresh; `--profile <name>` for a named profile)
+
+**Prompt:**
+```
+Refresh my NotebookLM session without opening a browser window.
+```
+
+**Expected:** With a saved Chrome profile and a working login, prints
+`✓ Session refreshed for profile '<name>'` and exits 0. With no saved profile
+or a dead login, prints a clear failure and exits non-zero (usable in
+cron/launchd). Refuses up front when `NOTEBOOKLM_COOKIES` is set in the
+environment (that value overrides saved credentials).
+
+---
+
 ### Test 1.2 - Interactive Login (Primary)
 **Tool:** `save_auth_tokens` (Fallback)
 **CLI:** `nlm login` (Launches Chrome for automated extraction)
+**WSL2 CLI:** `nlm login --wsl` (Supports NAT and mirrored networking modes)
 
 **Prompt:**
 ```
 I need to authenticate with NotebookLM.
 ```
 
-**Expected:** Chrome opens, logs in, and tokens are saved.
+**Expected:** Chrome opens, logs in, and tokens are saved. On WSL2, Windows Chrome opens and
+the CDP connection succeeds in both NAT and mirrored networking modes.
 
 ---
 
@@ -76,6 +97,28 @@ List all my NotebookLM notebooks.
 ```
 
 **Expected:** List of notebooks with counts (owned, shared).
+
+---
+
+### Test 1.3E - Enterprise List and Query
+
+Before running this test, set `NOTEBOOKLM_BASE_URL`, `NOTEBOOKLM_PROJECT_ID`,
+and `NOTEBOOKLM_LOCATION` for a Gemini Notebook Enterprise deployment. The
+project setting is required; the location defaults to `global`. Authenticate
+the profile and make it the default profile used by MCP:
+
+```bash
+nlm login --profile enterprise
+nlm login switch enterprise
+nlm notebook list
+nlm notebook query <enterprise-notebook-id> "Summarize the sources" --new-conversation
+```
+
+**Expected:** Login opens the configured regional project URL, list returns
+Enterprise notebooks, and the query uses the Enterprise streamed endpoint.
+This test is not complete until it is run against an Enterprise deployment with
+a redacted request/response capture; the automated suite only verifies routing
+and payload contracts.
 
 ---
 
@@ -272,6 +315,28 @@ Ask notebook [notebook_id]: "What is artificial intelligence?"
 
 ---
 
+### Test 3.2a - Query Timeout and Async Fallback
+**Tool:** `notebook_query`, `notebook_query_start`, `notebook_query_status`
+**CLI:** `nlm query [notebook_id] "Summarize all sources" --timeout 45`
+
+**Prompt:**
+```
+Ask notebook [notebook_id] a source-heavy question with timeout=45.
+If it times out, retry with timeout=180. Also verify the async workflow:
+notebook_query_start(..., timeout=180), then poll notebook_query_status(query_id).
+```
+
+**Expected:**
+- A timed-out synchronous query returns a structured error with
+  `debug_code=query_deadline_exceeded`, a retryable flag, and a hint to use a
+  longer timeout.
+- The retry with `timeout=180` can complete when the notebook needs more than
+  the default 120-second budget.
+- The async workflow returns a `query_id` immediately and reaches `completed`
+  or a structured `error` status when polled.
+
+---
+
 ### Test 3.3 - Configure Chat (Learning Guide)
 **Tool:** `chat_configure`
 **CLI:** `nlm chat configure [notebook_id] --goal learning_guide --response-length longer`
@@ -453,6 +518,128 @@ Create a report for notebook [notebook_id]:
 
 ---
 
+### Test 5.3b - Create Interactive Report
+**Tool:** `studio_create`
+**CLI:** `nlm report create [notebook_id] --format Interactive --template learning_overview --prompt "Summarize the key ideas with a quiz" --confirm`
+
+**Prompt:**
+```
+Create an interactive report for notebook [notebook_id]:
+- artifact_type: report
+- report_format: Interactive
+- report_template: learning_overview
+- custom_prompt: Summarize the key ideas with a quiz
+- confirm: True
+```
+
+**Expected:** Interactive report generation starts (status "queued" -> "in_progress"
+-> "completed" in `studio_status`). The artifact type shows as `interactive_report`.
+
+---
+
+### Test 5.3c - Read Interactive Report
+**Tool:** `report` (action=get)
+**CLI:** `nlm report get [notebook_id] [artifact_id]` (or `--json`, `--output report.md`)
+
+**Prompt:**
+```
+Read interactive report [artifact_id] in notebook [notebook_id]:
+- call report(action="get")
+- show the first section of the markdown and the element list
+```
+
+**Expected:** Markdown content, prompt and the embedded elements
+(mind map / infographic / flashcards / slide deck / quiz) with status
+"suggested" before they are generated.
+
+---
+
+### Test 5.3d - List and Generate Report Elements
+**Tool:** `report` (action=elements, generate)
+**CLI:** `nlm report elements [notebook_id] [artifact_id]` then
+`nlm report element create [notebook_id] [artifact_id] --type quiz --confirm`
+
+**Prompt:**
+```
+List the embedded elements of interactive report [artifact_id], then generate
+the quiz element.
+```
+
+**Expected:** Element list shows ids/types/statuses; generating one flips its
+status from "suggested" to generation states and the element also appears in the
+notebook Studio panel.
+
+---
+
+### Test 5.3e - Report Element Settings Sweep
+**Tool:** `report` (action=generate, one-item plan)
+**CLI:** `nlm report element create [notebook_id] [artifact_id] --type quiz --setting difficulty=hard --setting question_amount=more --confirm`
+
+**Prompt:**
+```
+Generate an interactive report quiz element with settings difficulty=hard and question_amount=more.
+```
+
+**Expected:** Generation starts with custom settings passed into generation options (`difficulty=3`, `question_amount=3`).
+
+---
+
+### Test 5.3f - Batch Element Plan Validation (Invalid Item Stops All)
+**Tool:** `report` (action=generate)
+**CLI:** `nlm report element create-batch [notebook_id] [artifact_id] --plan invalid_plan.json --confirm`
+
+**Prompt:**
+```
+Validate and attempt to run a batch plan containing 2 valid element IDs and 1 non-existent or invalid element ID:
+[
+  {"element_id": "valid-id-1"},
+  {"element_id": "invalid-id-xyz"}
+]
+```
+
+**Expected:** Validation fails before any RPC mutation occurs; no elements change status or start generation.
+
+---
+
+### Test 5.3g - Batch Generation Stops on Quota Exhaustion
+**Tool:** `report` (action=generate)
+**CLI:** `nlm report element create-batch [notebook_id] [artifact_id] --plan plan.json --confirm`
+
+**Prompt:**
+```
+Run a multi-element batch plan when quota is exhausted.
+```
+
+**Expected:** Generation terminates immediately when encountering `RESOURCE_EXHAUSTED`; result reports `stopped_reason="quota"` and remaining planned items stay `not_started`.
+
+---
+
+### Test 5.3h - Element Bounded Waiting and Timeout
+**Tool:** `report` (action=elements)
+**CLI:** `nlm report elements [notebook_id] [artifact_id] --wait [element_id] --timeout 10`
+
+**Prompt:**
+```
+Wait on an in-progress element for up to 10 seconds.
+```
+
+**Expected:** Returns status before timeout if completed/failed, or returns `timed_out: true` with current status if timeout elapses without raising an error.
+
+---
+
+### Test 5.3i - Inline Content for Element Review
+**Tool:** `report` (action=elements)
+**CLI:** `nlm report elements [notebook_id] [artifact_id] --content`
+
+**Prompt:**
+```
+List report elements with include_content=True to review completed quiz, flashcard, or mind map elements.
+```
+
+**Expected:** Returns inline structured content for review with label "Checked against the plan and the report section, not against the original sources."
+
+---
+
 ### Test 5.4 - Create Flashcards
 **Tool:** `studio_create`
 **CLI:** `nlm flashcards create [notebook_id] --difficulty medium --focus "Focus on definitions" --confirm`
@@ -565,8 +752,15 @@ Check studio content generation status for notebook [notebook_id].
 ```
 
 **Expected:**
-- List of artifacts with status (in_progress/completed) and URLs.
-- **Verify:** Artifact from Test 5.1b shows `custom_instructions: "Explain this to a 5 year old"`.
+- Default MCP response contains at most 20 artifacts and only lean status fields.
+- `pagination` contains `returned`, `offset`, `limit`, and `has_more`.
+- Polling with `artifact_id` returns only the selected artifact.
+- Calling with `include_details=True` exposes rich fields and the artifact from
+  Test 5.1b shows `custom_instructions: "Explain this to a 5 year old"`.
+- `nlm studio status [notebook_id] --json` remains a plain list containing both
+  `id` and `artifact_id`.
+- `nlm studio status [notebook_id] --json --mcp-compatible` returns the MCP envelope.
+- `nlm video list [notebook_id] --json` returns only video artifacts.
 
 ---
 
@@ -681,6 +875,56 @@ Download slide deck from notebook [notebook_id]:
 ```
 
 **Expected:** Slides downloaded as PDF.
+
+---
+
+### Test 6.6 - Download Data Table Excel Export
+**Tool:** `download_artifact`
+
+**Prompt:**
+```
+Download the Excel data-table export from notebook [notebook_id]:
+- artifact_type: data_table_xlsx
+- output_path: /tmp/data-table.xlsx
+```
+
+**Expected:** The completed type-10 artifact is downloaded byte-for-byte as XLSX.
+
+---
+
+### Test 6.7 - Download All Artifacts
+**Tool:** `download_all_artifacts`
+**CLI:** `nlm download all [notebook_id] --output-dir /tmp/exports`
+
+**Prompt:**
+```
+Download all completed artifacts from notebook [notebook_id]:
+- output_dir: /tmp/exports
+```
+
+**Expected:** A subdirectory named after the notebook title created under the
+output dir, containing every completed artifact named after its title
+(report → .md, mind_map → .json, video → .mp4, slide_deck → .pdf, ...).
+In-progress/failed artifacts are listed as skipped; result reports
+downloaded/failed/skipped counts. Also test `--types video,report` filtering.
+
+---
+
+### Test 6.7 - Sweep All Notebooks (Incremental)
+**Tool:** `download_all_artifacts` with `all_notebooks=True, skip_existing=True`
+**CLI:** `nlm download all --all-notebooks --skip-existing --output-dir /tmp/exports`
+
+**Prompt:**
+```
+Download all artifacts from every notebook into /tmp/exports, skipping
+files that already exist.
+```
+
+**Expected:** One subdirectory per notebook. On a second run with
+`skip_existing`, previously downloaded artifacts are reported as skipped
+("already downloaded") and only new artifacts are fetched. A failure on one
+notebook doesn't stop the sweep; result includes per-notebook counts and
+`errored_notebooks`.
 
 ---
 
@@ -906,7 +1150,7 @@ Delete note [note_id] in notebook [notebook_id]:
 
 **Prompt:**
 ```
-Get NotebookLM MCP server version and check for updates.
+Get Gemini Notebook MCP server version and check for updates.
 ```
 
 **Expected:**
@@ -917,7 +1161,44 @@ Get NotebookLM MCP server version and check for updates.
 
 ---
 
-## Summary: 29 Consolidated Tools
+## Test Group 13: Plan Usage
+
+### Test 13.1 - Get Remaining Usage
+**Tool:** `usage_get`
+**CLI (Noun):** `nlm usage` (add `--json` for raw output)
+
+**Prompt:**
+```
+How much of my Gemini Notebook usage allowance is left?
+```
+
+**Expected:**
+- `windows`: two entries, `rolling` first then `weekly`
+- each with `percent_used`, `percent_remaining` and `resets_at` (ISO 8601 UTC)
+- `tier`: subscription tier string, e.g. `NOTEBOOKLM_TIER_PRO_CONSUMER_USER`
+
+**Also verify:**
+- Run it twice. The reported order stays `rolling`, `weekly` even though the API
+  returns the two entries in an unstable order.
+- `percent_used` and `percent_remaining` sum to 100 for a partly consumed window.
+- With an expired session it reports an authentication error and hints at
+  `nlm auth refresh`. It must NOT report the allowance as exhausted.
+
+### Test 13.2 - Check Work and Personal Profiles
+**Tool:** `usage_get(profile="work")`, then `usage_get(profile="personal")`
+**CLI:** `nlm usage --profile work`, then `nlm usage -p personal --json`
+
+**Expected:**
+- Each call reads the selected saved account's usage, even when
+  `NOTEBOOKLM_COOKIES` is set for a different account.
+- The configured default and the account used by other MCP tools are unchanged.
+- Missing profiles return an error without falling back to environment cookies
+  or the default account.
+- Omitting the profile keeps the existing environment/default authentication.
+
+---
+
+## Summary: 31 Consolidated Tools
 
 | Category | Tools | Count |
 |----------|-------|-------|
@@ -927,12 +1208,12 @@ Get NotebookLM MCP server version and check for updates.
 | **Sharing** | `notebook_share_status`, `notebook_share_public`, `notebook_share_invite` | 3 |
 | **Research** | `research_start`, `research_status`, `research_import` | 3 |
 | **Studio** | `studio_create`, `studio_status`, `studio_delete`, `studio_revise` | 4 |
-| **Downloads** | `download_artifact` | 1 |
+| **Downloads** | `download_artifact`, `download_all_artifacts` | 2 |
 | **Exports** | `export_artifact` | 1 |
 | **Chat** | `notebook_query`, `chat_configure` | 2 |
 | **Notes** | `note` (unified: list, create, update, delete) | 1 |
 | **Server** | `server_info` | 1 |
-| **Total** | | **30** |
+| **Total** | | **31** |
 
 ---
 

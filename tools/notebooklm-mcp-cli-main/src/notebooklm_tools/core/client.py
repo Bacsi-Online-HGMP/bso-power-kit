@@ -12,6 +12,7 @@ from collections.abc import Callable
 from typing import Any
 
 from . import constants
+from .collections import CollectionsMixin
 from .conversation import ConversationMixin
 from .download import DownloadMixin
 
@@ -29,6 +30,7 @@ from .research import ResearchMixin
 from .sharing import SharingMixin
 from .sources import SourceMixin
 from .studio import StudioMixin
+from .usage import UsageMixin
 
 # Backward compatibility alias - code importing AuthenticationError from client.py
 # will get the ClientAuthenticationError from errors.py
@@ -51,6 +53,8 @@ class NotebookLMClient(
     NotebookMixin,
     NotesMixin,
     LabelsMixin,
+    CollectionsMixin,
+    UsageMixin,
 ):
     """Client for NotebookLM MCP internal API.
 

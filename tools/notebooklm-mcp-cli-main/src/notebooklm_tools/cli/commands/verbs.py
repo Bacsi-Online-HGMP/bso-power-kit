@@ -25,6 +25,7 @@ from notebooklm_tools.cli.commands.config import (
     show_config,
 )
 from notebooklm_tools.cli.commands.download import (
+    download_all_cmd,
     download_audio,
     download_data_table,
     download_infographic,
@@ -105,7 +106,7 @@ def create_notebook_verb(
     profile: str | None = typer.Option(None, "--profile", "-p", help="Profile to use"),
 ) -> None:
     """Create a new notebook."""
-    create_notebook(title=title, profile=profile)
+    create_notebook(title=title, json_output=False, profile=profile)
 
 
 @create_app.command("audio")
@@ -125,6 +126,7 @@ def create_audio_verb(
         None, "--source-ids", "-s", help="Comma-separated source IDs"
     ),
     confirm: bool = typer.Option(False, "--confirm", "-y", help="Skip confirmation prompt"),
+    json_output: bool = typer.Option(False, "--json", "-j", help="Output as JSON"),
     profile: str | None = typer.Option(None, "--profile", "-p", help="Profile to use"),
 ) -> None:
     """Create an audio overview."""
@@ -136,6 +138,7 @@ def create_audio_verb(
         focus=focus,
         source_ids=source_ids,
         confirm=confirm,
+        json_output=json_output,
         profile=profile,
     )
 
@@ -161,6 +164,7 @@ def create_video_verb(
     focus: str | None = typer.Option(None, "--focus", help="Optional focus topic"),
     source_ids: str | None = typer.Option(None, "--source-ids", help="Comma-separated source IDs"),
     confirm: bool = typer.Option(False, "--confirm", "-y", help="Skip confirmation prompt"),
+    json_output: bool = typer.Option(False, "--json", "-j", help="Output as JSON"),
     profile: str | None = typer.Option(None, "--profile", "-p", help="Profile to use"),
 ) -> None:
     """Create a video overview."""
@@ -173,6 +177,7 @@ def create_video_verb(
         focus=focus or "",
         source_ids=source_ids,
         confirm=confirm,
+        json_output=json_output,
         profile=profile,
     )
 
@@ -184,7 +189,13 @@ def create_report_verb(
         None,
         "--format",
         "-f",
-        help="Format: 'Briefing Doc', 'Study Guide', 'Blog Post', 'Create Your Own'",
+        help="Format: 'Briefing Doc', 'Study Guide', 'Blog Post', 'Create Your Own', 'Interactive'",
+    ),
+    template: str | None = typer.Option(
+        None,
+        "--template",
+        "-t",
+        help="Interactive report template (only used with --format Interactive)",
     ),
     prompt: str | None = typer.Option(
         None, "--prompt", help="Custom prompt (required for 'Create Your Own')"
@@ -194,16 +205,19 @@ def create_report_verb(
         None, "--source-ids", "-s", help="Comma-separated source IDs"
     ),
     confirm: bool = typer.Option(False, "--confirm", "-y", help="Skip confirmation prompt"),
+    json_output: bool = typer.Option(False, "--json", "-j", help="Output as JSON"),
     profile: str | None = typer.Option(None, "--profile", "-p", help="Profile to use"),
 ) -> None:
     """Create a report."""
     create_report(
         notebook_id=notebook,
         format=format_opt or "Briefing Doc",
+        template=template or "learning_overview",
         prompt=prompt or "",
         language=language or "",
         source_ids=source_ids,
         confirm=confirm,
+        json_output=json_output,
         profile=profile,
     )
 
@@ -228,6 +242,7 @@ def create_infographic_verb(
         None, "--source-ids", "-s", help="Comma-separated source IDs"
     ),
     confirm: bool = typer.Option(False, "--confirm", "-y", help="Skip confirmation prompt"),
+    json_output: bool = typer.Option(False, "--json", "-j", help="Output as JSON"),
     profile: str | None = typer.Option(None, "--profile", "-p", help="Profile to use"),
 ) -> None:
     """Create an infographic."""
@@ -240,6 +255,7 @@ def create_infographic_verb(
         focus=focus or "",
         source_ids=source_ids,
         confirm=confirm,
+        json_output=json_output,
         profile=profile,
     )
 
@@ -257,6 +273,7 @@ def create_slides_verb(
         None, "--source-ids", "-s", help="Comma-separated source IDs"
     ),
     confirm: bool = typer.Option(False, "--confirm", "-y", help="Skip confirmation prompt"),
+    json_output: bool = typer.Option(False, "--json", "-j", help="Output as JSON"),
     profile: str | None = typer.Option(None, "--profile", "-p", help="Profile to use"),
 ) -> None:
     """Create a slide deck."""
@@ -268,6 +285,7 @@ def create_slides_verb(
         focus=focus or "",
         source_ids=source_ids,
         confirm=confirm,
+        json_output=json_output,
         profile=profile,
     )
 
@@ -284,6 +302,7 @@ def create_quiz_verb(
         None, "--source-ids", "-s", help="Comma-separated source IDs"
     ),
     confirm: bool = typer.Option(False, "--confirm", "-y", help="Skip confirmation prompt"),
+    json_output: bool = typer.Option(False, "--json", "-j", help="Output as JSON"),
     profile: str | None = typer.Option(None, "--profile", "-p", help="Profile to use"),
 ) -> None:
     """Create a quiz."""
@@ -294,6 +313,7 @@ def create_quiz_verb(
         focus=focus or "",
         source_ids=source_ids,
         confirm=confirm,
+        json_output=json_output,
         profile=profile,
     )
 
@@ -309,6 +329,7 @@ def create_flashcards_verb(
         None, "--source-ids", "-s", help="Comma-separated source IDs"
     ),
     confirm: bool = typer.Option(False, "--confirm", "-y", help="Skip confirmation prompt"),
+    json_output: bool = typer.Option(False, "--json", "-j", help="Output as JSON"),
     profile: str | None = typer.Option(None, "--profile", "-p", help="Profile to use"),
 ) -> None:
     """Create flashcards."""
@@ -318,6 +339,7 @@ def create_flashcards_verb(
         focus=focus or "",
         source_ids=source_ids,
         confirm=confirm,
+        json_output=json_output,
         profile=profile,
     )
 
@@ -331,6 +353,7 @@ def create_data_table_verb(
         None, "--source-ids", "-s", help="Comma-separated source IDs"
     ),
     confirm: bool = typer.Option(False, "--confirm", "-y", help="Skip confirmation prompt"),
+    json_output: bool = typer.Option(False, "--json", "-j", help="Output as JSON"),
     profile: str | None = typer.Option(None, "--profile", "-p", help="Profile to use"),
 ) -> None:
     """Create a data table."""
@@ -340,6 +363,7 @@ def create_data_table_verb(
         language=language or "",
         source_ids=source_ids,
         confirm=confirm,
+        json_output=json_output,
         profile=profile,
     )
 
@@ -352,6 +376,7 @@ def create_mindmap_verb(
         None, "--source-ids", "-s", help="Comma-separated source IDs"
     ),
     confirm: bool = typer.Option(False, "--confirm", "-y", help="Skip confirmation prompt"),
+    json_output: bool = typer.Option(False, "--json", "-j", help="Output as JSON"),
     profile: str | None = typer.Option(None, "--profile", "-p", help="Profile to use"),
 ) -> None:
     """Create a mind map."""
@@ -360,6 +385,7 @@ def create_mindmap_verb(
         title=title or "Mind Map",
         source_ids=source_ids,
         confirm=confirm,
+        json_output=json_output,
         profile=profile,
     )
 
@@ -419,7 +445,16 @@ def list_artifacts_verb(
     profile: str | None = typer.Option(None, "--profile", "-p", help="Profile to use"),
 ) -> None:
     """List all studio artifacts."""
-    studio_status(notebook_id=notebook, full=full, json_output=json_output, profile=profile)
+    studio_status(
+        notebook_id=notebook,
+        full=full,
+        json_output=json_output,
+        mcp_compatible=False,
+        artifact_id=None,
+        limit=None,
+        offset=0,
+        profile=profile,
+    )
 
 
 @list_app.command("aliases")
@@ -498,20 +533,32 @@ delete_app = typer.Typer(help="Delete resources (notebooks, sources, artifacts)"
 def delete_notebook_verb(
     notebook: str = typer.Argument(..., help="Notebook ID or alias"),
     confirm: bool = typer.Option(False, "--confirm", "-y", help="Skip confirmation prompt"),
+    json_output: bool = typer.Option(False, "--json", "-j", help="Output as JSON"),
     profile: str | None = typer.Option(None, "--profile", "-p", help="Profile to use"),
 ) -> None:
     """Delete a notebook permanently."""
-    delete_notebook(notebook_id=notebook, confirm=confirm, profile=profile)
+    delete_notebook(
+        notebook_id=notebook,
+        confirm=confirm,
+        json_output=json_output,
+        profile=profile,
+    )
 
 
 @delete_app.command("source")
 def delete_source_verb(
     source: str = typer.Argument(..., help="Source ID"),
     confirm: bool = typer.Option(False, "--confirm", "-y", help="Skip confirmation prompt"),
+    json_output: bool = typer.Option(False, "--json", "-j", help="Output as JSON"),
     profile: str | None = typer.Option(None, "--profile", "-p", help="Profile to use"),
 ) -> None:
     """Delete a source from notebook."""
-    delete_source(source_ids=[source], confirm=confirm, profile=profile)
+    delete_source(
+        source_ids=[source],
+        confirm=confirm,
+        json_output=json_output,
+        profile=profile,
+    )
 
 
 @delete_app.command("artifact")
@@ -548,6 +595,7 @@ def add_url_verb(
     profile: str | None = typer.Option(None, "--profile", "-p", help="Profile to use"),
     wait: bool = typer.Option(False, "--wait", "-w", help="Wait for source processing to complete"),
     wait_timeout: float = typer.Option(600.0, "--wait-timeout", help="Wait timeout in seconds"),
+    json_output: bool = typer.Option(False, "--json", "-j", help="Output as JSON"),
 ) -> None:
     """Add a URL source to notebook."""
     # Explicitly wrap the single URL string in a list so it doesn't get unpacked as characters
@@ -558,8 +606,11 @@ def add_url_verb(
         drive=None,
         youtube=None,
         file=None,
+        title="",
+        doc_type="doc",
         wait=wait,
         wait_timeout=wait_timeout,
+        json_output=json_output,
         profile=profile,
     )
 
@@ -572,6 +623,7 @@ def add_text_verb(
     profile: str | None = typer.Option(None, "--profile", "-p", help="Profile to use"),
     wait: bool = typer.Option(False, "--wait", "-w", help="Wait for source processing to complete"),
     wait_timeout: float = typer.Option(600.0, "--wait-timeout", help="Wait timeout in seconds"),
+    json_output: bool = typer.Option(False, "--json", "-j", help="Output as JSON"),
 ) -> None:
     """Add text source to notebook."""
     # Explicitly pass None for unused source types to avoid typer.Option resolution issues
@@ -583,8 +635,10 @@ def add_text_verb(
         youtube=None,
         file=None,
         title=title or "Pasted Text",
+        doc_type="doc",
         wait=wait,
         wait_timeout=wait_timeout,
+        json_output=json_output,
         profile=profile,
     )
 
@@ -598,6 +652,7 @@ def add_drive_verb(
     profile: str | None = typer.Option(None, "--profile", "-p", help="Profile to use"),
     wait: bool = typer.Option(False, "--wait", "-w", help="Wait for source processing to complete"),
     wait_timeout: float = typer.Option(600.0, "--wait-timeout", help="Wait timeout in seconds"),
+    json_output: bool = typer.Option(False, "--json", "-j", help="Output as JSON"),
 ) -> None:
     """Add a Google Drive source to notebook."""
     # Explicitly pass None for unused source types to avoid typer.Option resolution issues
@@ -612,6 +667,7 @@ def add_drive_verb(
         doc_type=doc_type,
         wait=wait,
         wait_timeout=wait_timeout,
+        json_output=json_output,
         profile=profile,
     )
 
@@ -671,7 +727,16 @@ def status_artifacts_verb(
     profile: str | None = typer.Option(None, "--profile", "-p", help="Profile to use"),
 ) -> None:
     """Check status of studio artifacts."""
-    studio_status(notebook_id=notebook, full=full, json_output=json_output, profile=profile)
+    studio_status(
+        notebook_id=notebook,
+        full=full,
+        json_output=json_output,
+        mcp_compatible=False,
+        artifact_id=None,
+        limit=None,
+        offset=0,
+        profile=profile,
+    )
 
 
 @status_app.command("research")
@@ -743,7 +808,15 @@ def query_notebook_verb(
     ),
     profile: str | None = typer.Option(None, "--profile", "-p", help="Profile to use"),
     timeout: float | None = typer.Option(
-        None, "--timeout", "-t", help="Query timeout in seconds (default: 120)"
+        None,
+        "--timeout",
+        "-t",
+        help="Query timeout in seconds (default: 120; source-heavy notebooks may need 180+)",
+    ),
+    new_conversation: bool = typer.Option(
+        False,
+        "--new-conversation",
+        help="Start a fresh conversation instead of reusing the notebook's chat",
     ),
 ) -> None:
     """Chat with notebook sources."""
@@ -755,6 +828,7 @@ def query_notebook_verb(
         source_ids=source_ids,
         profile=profile,
         timeout=timeout,
+        new_conversation=new_conversation,
     )
 
 
@@ -923,6 +997,51 @@ def configure_chat_verb(
 download_app = typer.Typer(help="Download studio artifacts")
 
 
+@download_app.command("all")
+def download_all_verb(
+    notebook: str | None = typer.Argument(
+        None, help="Notebook ID or alias (omit with --all-notebooks)"
+    ),
+    output_dir: str = typer.Option(
+        ".",
+        "--output-dir",
+        "-d",
+        help="Base directory; a subdirectory named after each notebook is created inside",
+    ),
+    types: str | None = typer.Option(
+        None, "--types", "-t", help="Comma-separated artifact types (default: all)"
+    ),
+    slide_format: str = typer.Option(
+        "pdf", "--slide-format", help="Slide deck format: pdf (default) or pptx"
+    ),
+    interactive_format: str = typer.Option(
+        "json", "--interactive-format", help="Quiz/flashcards format: json, markdown, or html"
+    ),
+    all_notebooks: bool = typer.Option(
+        False, "--all-notebooks", "-a", help="Sweep every notebook in the account"
+    ),
+    skip_existing: bool = typer.Option(
+        False,
+        "--skip-existing",
+        help="Skip artifacts whose file already exists (incremental re-runs)",
+    ),
+    no_progress: bool = typer.Option(False, "--no-progress", help="Disable download progress bars"),
+    json_output: bool = typer.Option(False, "--json", "-j", help="Output result as JSON"),
+) -> None:
+    """Download all completed artifacts into per-notebook directories."""
+    download_all_cmd(
+        notebook_id=notebook,
+        output_dir=output_dir,
+        types=types,
+        slide_format=slide_format,
+        interactive_format=interactive_format,
+        all_notebooks=all_notebooks,
+        skip_existing=skip_existing,
+        no_progress=no_progress,
+        json_output=json_output,
+    )
+
+
 @download_app.command("audio")
 def download_audio_verb(
     notebook: str = typer.Argument(..., help="Notebook ID or alias"),
@@ -1023,7 +1142,7 @@ def set_alias_verb(
     value: str = typer.Argument(..., help="ID to alias"),
 ) -> None:
     """Set an alias for an ID."""
-    set_alias(name=name, value=value)
+    set_alias(name=name, value=value, alias_type=None, profile=None)
 
 
 @set_app.command("config")

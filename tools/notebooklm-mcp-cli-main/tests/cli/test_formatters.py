@@ -64,6 +64,17 @@ def test_json_formatter_format_notebooks_preserves_non_ascii(capsys):
     assert "\\u00e9" not in output
 
 
+def test_json_formatter_format_sources_includes_processing_status(capsys):
+    formatter = JsonFormatter()
+
+    formatter.format_sources(
+        [{"id": "source-1", "title": "failed.txt", "source_type_name": "unknown", "status": 3}]
+    )
+
+    data = json.loads(capsys.readouterr().out)
+    assert data[0]["status"] == 3
+
+
 def test_json_formatter_format_artifacts_full_preserves_rich_fields(capsys):
     formatter = JsonFormatter()
     artifacts = [
@@ -89,6 +100,7 @@ def test_json_formatter_format_artifacts_full_preserves_rich_fields(capsys):
     assert data == [
         {
             "id": "art-1",
+            "artifact_id": "art-1",
             "type": "audio",
             "status": "completed",
             "custom_instructions": "Focus on key themes",
@@ -100,6 +112,27 @@ def test_json_formatter_format_artifacts_full_preserves_rich_fields(capsys):
             "duration_seconds": 321,
         }
     ]
+
+
+def test_json_formatter_format_artifacts_full_includes_file_metadata(capsys):
+    """Legacy CLI JSON must identify downloadable generic Studio files."""
+    formatter = JsonFormatter()
+    artifacts = [
+        {
+            "artifact_id": "art-file-1",
+            "type": "file",
+            "status": "completed",
+            "title": "Generated notes",
+            "download_filename": "generated-notes.md",
+            "mime_type": "text/markdown",
+        }
+    ]
+
+    formatter.format_artifacts(artifacts, full=True)
+
+    data = json.loads(capsys.readouterr().out)
+    assert data[0]["download_filename"] == "generated-notes.md"
+    assert data[0]["mime_type"] == "text/markdown"
 
 
 def test_json_formatter_format_artifacts_without_full_keeps_minimal_shape(capsys):
@@ -124,6 +157,7 @@ def test_json_formatter_format_artifacts_without_full_keeps_minimal_shape(capsys
     assert data == [
         {
             "id": "art-1",
+            "artifact_id": "art-1",
             "type": "audio",
             "status": "completed",
             "custom_instructions": None,

@@ -2,19 +2,139 @@
 """V2EX — public API channel for topics, nodes, users, and replies."""
 
 import json
+import shutil
+import ssl
+import subprocess
 import urllib.request
 from typing import Any
+from urllib.parse import quote, urlencode, urlsplit
+
+from agent_reach.utils.process import utf8_subprocess_env
+from agent_reach.utils.text import scrub_url_credentials
+
 from .base import Channel
 
 _UA = "agent-reach/1.0"
 _TIMEOUT = 10
+_MAX_RESPONSE_BYTES = 1024 * 1024
+_API_BASE = "https://www.v2ex.com"
+
+
+def _v2ex_url(path: str, **params: Any) -> str:
+    """Build a V2EX URL without letting caller values alter its query."""
+    return f"{_API_BASE}{path}?{urlencode(params)}"
+
+
+def _validate_api_url(url: str) -> None:
+    """Allow only the public V2EX HTTPS JSON API."""
+    try:
+        parsed = urlsplit(url)
+        port = parsed.port
+    except ValueError as exc:
+        raise ValueError("invalid V2EX API URL") from exc
+    if (
+        parsed.scheme.lower() != "https"
+        or (parsed.hostname or "").lower() not in {"v2ex.com", "www.v2ex.com"}
+        or port not in {None, 443}
+        or parsed.username is not None
+        or parsed.password is not None
+        or not parsed.path.startswith("/api/")
+    ):
+        raise ValueError("only the V2EX HTTPS API is allowed")
+
+
+def _get_json_with_urllib(url: str) -> Any:
+    """Fetch JSON with Python's standard HTTP stack."""
+    _validate_api_url(url)
+    req = urllib.request.Request(url, headers={"User-Agent": _UA})
+    with urllib.request.urlopen(req, timeout=_TIMEOUT) as resp:
+        raw = resp.read(_MAX_RESPONSE_BYTES + 1)
+    if len(raw) > _MAX_RESPONSE_BYTES:
+        raise ValueError("V2EX API response exceeds the 1 MiB safety limit")
+    return json.loads(raw.decode("utf-8"))
+
+
+def _is_unexpected_tls_eof(error: BaseException) -> bool:
+    """Return whether an exception chain contains the retryable TLS EOF."""
+    pending: list[BaseException] = [error]
+    seen: set[int] = set()
+    while pending:
+        current = pending.pop()
+        if id(current) in seen:
+            continue
+        seen.add(id(current))
+        if isinstance(current, ssl.SSLError) and not isinstance(
+            current, ssl.SSLCertVerificationError
+        ):
+            text = str(current).casefold()
+            if (
+                "unexpected_eof_while_reading" in text
+                or "eof occurred in violation of protocol" in text
+            ):
+                return True
+        for nested in (
+            getattr(current, "reason", None),
+            current.__cause__,
+            current.__context__,
+        ):
+            if isinstance(nested, BaseException):
+                pending.append(nested)
+    return False
+
+
+def _get_json_with_curl(url: str) -> Any:
+    """Fetch bounded JSON with the OS curl TLS stack."""
+    _validate_api_url(url)
+    curl = shutil.which("curl")
+    if not curl:
+        raise RuntimeError("curl is unavailable for the V2EX TLS fallback")
+
+    command = [
+        curl,
+        "--fail",
+        "--silent",
+        "--show-error",
+        "--proto",
+        "=https",
+        "--connect-timeout",
+        "5",
+        "--max-time",
+        str(_TIMEOUT),
+        "--max-filesize",
+        str(_MAX_RESPONSE_BYTES),
+        "--header",
+        f"User-Agent: {_UA}",
+        "--url",
+        url,
+    ]
+    try:
+        result = subprocess.run(
+            command,
+            capture_output=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=_TIMEOUT + 2,
+            env=utf8_subprocess_env(),
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise RuntimeError("curl could not complete the V2EX TLS fallback") from exc
+    if result.returncode != 0:
+        raise RuntimeError("curl could not complete the V2EX TLS fallback")
+    if len(result.stdout.encode("utf-8")) > _MAX_RESPONSE_BYTES:
+        raise ValueError("V2EX API response exceeds the 1 MiB safety limit")
+    return json.loads(result.stdout)
 
 
 def _get_json(url: str) -> Any:
-    """Fetch *url* and return parsed JSON. Raises on HTTP/network errors."""
-    req = urllib.request.Request(url, headers={"User-Agent": _UA})
-    with urllib.request.urlopen(req, timeout=_TIMEOUT) as resp:
-        return json.loads(resp.read().decode("utf-8"))
+    """Fetch JSON, retrying only Python's known TLS EOF via native curl."""
+    try:
+        return _get_json_with_urllib(url)
+    except Exception as exc:
+        if isinstance(exc, ssl.SSLCertVerificationError):
+            raise
+        if not _is_unexpected_tls_eof(exc):
+            raise
+        return _get_json_with_curl(url)
 
 
 class V2EXChannel(Channel):
@@ -28,9 +148,9 @@ class V2EXChannel(Channel):
     # ------------------------------------------------------------------ #
 
     def can_handle(self, url: str) -> bool:
-        from urllib.parse import urlparse
-        d = urlparse(url).netloc.lower()
-        return "v2ex.com" in d
+        from agent_reach.utils.url import host_matches
+
+        return host_matches(url, "v2ex.com")
 
     # ------------------------------------------------------------------ #
     # Health check
@@ -45,7 +165,10 @@ class V2EXChannel(Channel):
             return "ok", "公开 API 可用（热门主题、节点浏览、主题详情、用户信息）"
         except Exception as e:
             self.active_backend = None
-            return "warn", f"V2EX API 连接失败（可能需要代理）：{e}"
+            return (
+                "warn",
+                f"V2EX API 连接失败（可能需要代理）：{scrub_url_credentials(e)}",
+            )
 
     # ------------------------------------------------------------------ #
     # Data-fetching methods
@@ -86,9 +209,10 @@ class V2EXChannel(Channel):
         Returns a list of dicts with keys:
           title, url, replies, node_name, node_title, content
         """
-        url = (
-            f"https://www.v2ex.com/api/topics/show.json"
-            f"?node_name={node_name}&page=1"
+        url = _v2ex_url(
+            "/api/topics/show.json",
+            node_name=node_name,
+            page=1,
         )
         data = _get_json(url)
         results = []
@@ -120,7 +244,7 @@ class V2EXChannel(Channel):
           author, created, replies (list of dicts with: author, content, created)
         """
         topic_data = _get_json(
-            f"https://www.v2ex.com/api/topics/show.json?id={topic_id}"
+            _v2ex_url("/api/topics/show.json", id=topic_id)
         )
         # API returns a list even for single-ID queries
         if isinstance(topic_data, list):
@@ -134,8 +258,11 @@ class V2EXChannel(Channel):
         # Fetch replies (first page)
         try:
             replies_raw = _get_json(
-                f"https://www.v2ex.com/api/replies/show.json"
-                f"?topic_id={topic_id}&page=1"
+                _v2ex_url(
+                    "/api/replies/show.json",
+                    topic_id=topic_id,
+                    page=1,
+                )
             )
         except Exception:
             replies_raw = []
@@ -152,7 +279,10 @@ class V2EXChannel(Channel):
         return {
             "id": topic.get("id", topic_id),
             "title": topic.get("title", ""),
-            "url": topic.get("url", f"https://www.v2ex.com/t/{topic_id}"),
+            "url": topic.get(
+                "url",
+                f"{_API_BASE}/t/{quote(str(topic_id), safe='')}",
+            ),
             "content": topic.get("content", ""),
             "replies_count": topic.get("replies", 0),
             "node_name": node.get("name", ""),
@@ -173,12 +303,15 @@ class V2EXChannel(Channel):
           location, bio, avatar, created
         """
         data = _get_json(
-            f"https://www.v2ex.com/api/members/show.json?username={username}"
+            _v2ex_url("/api/members/show.json", username=username)
         )
         return {
             "id": data.get("id", 0),
             "username": data.get("username", username),
-            "url": data.get("url", f"https://www.v2ex.com/member/{username}"),
+            "url": data.get(
+                "url",
+                f"{_API_BASE}/member/{quote(str(username), safe='')}",
+            ),
             "website": data.get("website", ""),
             "twitter": data.get("twitter", ""),
             "psn": data.get("psn", ""),
@@ -203,11 +336,12 @@ class V2EXChannel(Channel):
             list of dicts with keys: title, url, snippet
             如果搜索不可用，返回包含单条 {"error": str} 的列表。
         """
+        search_url = _v2ex_url("/", q=query)
         return [
             {
                 "error": (
                     "V2EX 公开 API 不提供搜索端点。"
-                    f"建议改用：https://www.v2ex.com/?q={query} "
+                    f"建议改用：{search_url} "
                     "或通过 Exa channel 使用 site:v2ex.com 搜索。"
                 )
             }

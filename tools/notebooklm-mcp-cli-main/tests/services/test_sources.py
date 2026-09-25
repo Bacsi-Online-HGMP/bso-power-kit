@@ -1,5 +1,6 @@
 """Tests for services.sources module."""
 
+import os
 from unittest.mock import MagicMock
 
 import pytest
@@ -121,6 +122,51 @@ class TestAddSource:
         result = add_source(mock_client, "nb-1", "file", file_path="/tmp/doc.pdf")
         assert result["source_type"] == "file"
         assert result["source_id"] == "src-4"
+
+    def test_add_file_source_is_unrestricted_without_allowlist(self, mock_client, monkeypatch):
+        monkeypatch.delenv("NOTEBOOKLM_ALLOWED_FILE_DIRS", raising=False)
+
+        add_source(mock_client, "nb-1", "file", file_path="/outside/doc.pdf")
+
+        mock_client.add_file.assert_called_once_with(
+            "nb-1", "/outside/doc.pdf", wait=False, wait_timeout=120.0
+        )
+
+    def test_add_file_source_rejects_path_outside_configured_allowlist(
+        self, mock_client, monkeypatch, tmp_path
+    ):
+        allowed_dir = tmp_path / "allowed"
+        allowed_dir.mkdir()
+        monkeypatch.setenv("NOTEBOOKLM_ALLOWED_FILE_DIRS", str(allowed_dir))
+
+        with pytest.raises(ValidationError, match="outside allowed directories"):
+            add_source(
+                mock_client,
+                "nb-1",
+                "file",
+                file_path=str(tmp_path / "outside" / "doc.pdf"),
+            )
+
+        mock_client.add_file.assert_not_called()
+
+    def test_add_file_source_accepts_path_in_any_configured_root(
+        self, mock_client, monkeypatch, tmp_path
+    ):
+        first_dir = tmp_path / "first"
+        second_dir = tmp_path / "second"
+        first_dir.mkdir()
+        second_dir.mkdir()
+        monkeypatch.setenv(
+            "NOTEBOOKLM_ALLOWED_FILE_DIRS",
+            os.pathsep.join((str(first_dir), str(second_dir))),
+        )
+
+        file_path = second_dir / "doc.pdf"
+        add_source(mock_client, "nb-1", "file", file_path=str(file_path))
+
+        mock_client.add_file.assert_called_once_with(
+            "nb-1", str(file_path), wait=False, wait_timeout=120.0
+        )
 
     def test_add_file_source_without_title_does_not_rename(self, mock_client):
         """When no title is supplied, we must not call rename_source."""
@@ -266,6 +312,17 @@ class TestAddSource:
             wait_timeout=60,
         )
 
+    def test_file_processing_failure_preserves_actionable_hint(self, mock_client):
+        from notebooklm_tools.core.exceptions import SourceProcessingError
+
+        mock_client.add_file.side_effect = SourceProcessingError("source-failed")
+
+        with pytest.raises(ServiceError) as exc_info:
+            add_source(mock_client, "nb-1", "file", file_path="/tmp/failed.txt", wait=True)
+
+        assert "source-failed" in exc_info.value.user_message
+        assert "retained" in exc_info.value.hint
+
 
 class TestListDriveSources:
     """Test list_drive_sources function."""
@@ -275,6 +332,21 @@ class TestListDriveSources:
         assert result["drive_count"] == 1
         assert len(result["other_sources"]) == 1
         assert result["drive_sources"][0]["id"] == "s2"
+
+    def test_preserves_processing_status(self, mock_client):
+        mock_client.get_notebook_sources_with_types.return_value = [
+            {
+                "id": "s1",
+                "title": "failed.txt",
+                "source_type_name": "unknown",
+                "can_sync": False,
+                "status": 3,
+            }
+        ]
+
+        result = list_drive_sources(mock_client, "nb-1", skip_freshness=True)
+
+        assert result["other_sources"][0]["status"] == 3
 
     def test_stale_count(self, mock_client):
         mock_client.check_source_freshness.return_value = False
@@ -365,7 +437,13 @@ class TestListDriveSources:
             },
         ]
         mock_client.get_notebook_sources_with_types.return_value = sources
-        mock_client.check_source_freshness.side_effect = [True, RuntimeError("rpc fail"), False]
+
+        def _fake_freshness(source_id):
+            if source_id == "bad1":
+                raise RuntimeError("rpc fail")
+            return {"good1": True, "good2": False}[source_id]
+
+        mock_client.check_source_freshness.side_effect = _fake_freshness
 
         result = list_drive_sources(mock_client, "nb-1")
 
@@ -444,6 +522,42 @@ class TestGetSourceContent:
         mock_client.get_source_fulltext.return_value = None
         with pytest.raises(ServiceError, match="No content returned"):
             get_source_content(mock_client, "src-1")
+
+    def test_waits_until_indexed_content_is_available(self, mock_client, monkeypatch):
+        mock_client.get_source_fulltext.side_effect = [
+            {"content": "", "title": "Pending", "type": "text"},
+            {"content": "Ready", "title": "Indexed", "type": "text"},
+        ]
+        sleeps = []
+        monkeypatch.setattr(
+            "notebooklm_tools.services.sources.time.sleep",
+            sleeps.append,
+        )
+
+        result = get_source_content(
+            mock_client,
+            "src-1",
+            wait=True,
+            wait_timeout=10,
+            poll_interval=0.25,
+        )
+
+        assert result["content"] == "Ready"
+        assert mock_client.get_source_fulltext.call_count == 2
+        assert sleeps == [0.25]
+
+    def test_wait_timeout_has_stable_debug_code(self, mock_client):
+        mock_client.get_source_fulltext.return_value = None
+
+        with pytest.raises(ServiceError) as exc_info:
+            get_source_content(mock_client, "src-1", wait=True, wait_timeout=0)
+
+        assert exc_info.value.debug_code == "source_not_ready"
+        assert exc_info.value.hint is not None
+
+    def test_rejects_invalid_poll_interval(self, mock_client):
+        with pytest.raises(ValidationError, match="poll_interval"):
+            get_source_content(mock_client, "src-1", wait=True, poll_interval=0)
 
 
 class TestAddSources:

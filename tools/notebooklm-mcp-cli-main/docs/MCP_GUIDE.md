@@ -1,6 +1,6 @@
 # MCP Guide
 
-Complete reference for the NotebookLM MCP server — **39 tools** for AI assistants.
+Complete reference for the Gemini Notebook (formerly Google NotebookLM) MCP server — **43 tools** for AI assistants.
 
 ## Installation
 
@@ -9,20 +9,21 @@ Complete reference for the NotebookLM MCP server — **39 tools** for AI assista
 uv tool install notebooklm-mcp-cli
 
 # Add to Claude Code
-claude mcp add --scope user notebooklm-mcp notebooklm-mcp
+claude mcp add --scope user gemini-notebook-mcp notebooklm-mcp
 
 # Add to Gemini CLI
-gemini mcp add --scope user notebooklm-mcp notebooklm-mcp
+gemini mcp add --scope user gemini-notebook-mcp notebooklm-mcp
 ```
 
-> **Server naming:** Use `notebooklm-mcp` (the default) as the server
-> name when registering with your agent. If you have a legacy
-> browser-automation NotebookLM MCP installed under a different name
+> **Server naming:** Use `gemini-notebook-mcp` as the server name when
+> registering with your agent. The executable remains `notebooklm-mcp`.
+> If you have a legacy
+> browser-automation Gemini Notebook MCP installed under a different name
 > (e.g. `notebooklm`), remove that one first — agents like Hermes get
 > confused when two servers expose overlapping tool names
 > (`notebook_create`, `source_add`, `notebook_query`, …).
 >
-> See the [Migrating from another NotebookLM MCP](GETTING_STARTED.md#migrating-from-another-notebooklm-mcp)
+> See the [Migrating from another Gemini Notebook MCP](GETTING_STARTED.md#migrating-from-another-notebooklm-mcp)
 > section in the Getting Started guide for the full step-by-step.
 
 ## Authentication
@@ -53,7 +54,7 @@ nlm login
 | `notebook_rename` | Rename a notebook |
 | `notebook_delete` | Delete notebook (requires `confirm=True`) |
 
-### Sources (6 tools)
+### Sources (7 tools)
 
 | Tool | Description |
 |------|-------------|
@@ -63,6 +64,7 @@ nlm login
 | `source_delete` | Delete source (requires `confirm=True`) |
 | `source_describe` | Get AI summary with keywords |
 | `source_get_content` | Get raw text content |
+| `source_rename` | Rename a source in a notebook |
 
 **`source_list_drive` parameters:**
 ```python
@@ -88,14 +90,31 @@ source_add(
 )
 ```
 
-### Querying (2 tools)
+### Querying (4 tools)
 
 | Tool | Description |
 |------|-------------|
 | `notebook_query` | Ask AI about sources in notebook |
+| `notebook_query_start` | Start a query asynchronously for source-heavy notebooks or long-running questions |
+| `notebook_query_status` | Poll an async query started with `notebook_query_start` |
 | `chat_configure` | Set chat goal and response length |
 
-### Studio Content (4 tools)
+Queries use a 120-second wall-clock budget by default. Source-heavy notebooks
+can take longer than that; retry with `timeout=180` (or another value suited
+to the notebook). For longer operations, use `notebook_query_start` and poll
+`notebook_query_status` until it reports `completed` or `error`. A timeout
+returns a structured error with a retry hint rather than an uninformative
+transport failure.
+
+### Chat Sessions (3 tools)
+
+| Tool | Description |
+|------|-------------|
+| `chat_list` | List chat sessions for a notebook |
+| `chat_get` | Get full transcript of a chat session (defaults to latest) |
+| `chat_export` | Export a chat transcript to Markdown or JSON |
+
+### Studio Content (8 tools)
 
 | Tool | Description |
 |------|-------------|
@@ -103,11 +122,12 @@ source_add(
 | `studio_status` | Check generation progress |
 | `studio_delete` | Delete artifact (requires `confirm=True`) |
 | `studio_revise` | Revise slides in existing deck (requires `confirm=True`) |
+| `report` | **Unified** - Interactive report elements: `action=get` (markdown + elements), `elements` (list; optional `wait_for`, `include_content`), `generate` (validate a plan; runs with `confirm=True`) |
 
 **`studio_create` artifact types:**
 - `audio` - Podcast (formats: deep_dive, brief, critique, debate)
 - `video` - Video overview (formats: explainer, brief, cinematic, short)
-- `report` - Text report (Briefing Doc, Study Guide, Blog Post)
+- `report` - Report (Briefing Doc, Study Guide, Blog Post, or **Interactive**)
 - `quiz` - Multiple choice quiz
 - `flashcards` - Study flashcards
 - `mind_map` - Visual mind map
@@ -115,14 +135,54 @@ source_add(
 - `infographic` - Visual infographic
 - `data_table` - Structured data table
 
-### Downloads (1 tool)
+**Interactive reports (type 11):** create with
+`studio_create(artifact_type="report", report_format="Interactive", report_template="learning_overview", custom_prompt="...", confirm=True)`.
+The report weaves Studio elements (audio, video, mind map, infographic,
+flashcards, slide deck, quiz) into a single browsable document as recommended
+placeholders:
+
+```python
+# 1. Create interactive report
+studio_create(notebook_id, artifact_type="report", report_format="Interactive",
+              custom_prompt="Summarize the key ideas with a quiz", confirm=True)
+# ... poll studio_status until the artifact status is "completed" ...
+
+# 2. Read report and list suggested elements
+report(notebook_id, artifact_id, action="get")                 # markdown + element list
+listing = report(notebook_id, artifact_id, action="elements")  # ids, types, sections, settings
+
+# 3. Generation: validate the plan first (no confirm), then run it
+plan = [
+    {"element_id": "el-1", "settings": {"difficulty": "hard", "question_amount": "more"}},
+    {"element_id": "el-2", "steering_prompt": "Custom anchored prompt"},
+]
+preview = report(notebook_id, artifact_id, action="generate", plan=plan)
+# Show preview to user; after approval:
+batch_result = report(notebook_id, artifact_id, action="generate", plan=plan, confirm=True)
+
+# 4. Bounded wait and inline review content
+results = report(
+    notebook_id,
+    artifact_id,
+    action="elements",
+    wait_for=["el-1", "el-2"],
+    timeout=600,
+    include_content=True,
+)
+```
+
+Omit `steering_prompt` to use the element card's description (same as a plain
+"Generate" in the UI), or pass your own to steer the element.
+
+### Downloads (2 tools)
 
 | Tool | Description |
 |------|-------------|
 | `download_artifact` | **Unified** - Download any artifact type |
+| `download_all_artifacts` | Download every completed artifact of a notebook — or every notebook with `all_notebooks=True` — into per-notebook folders |
 
 **`download_artifact` types:**
-`audio`, `video`, `report`, `mind_map`, `slide_deck`, `infographic`, `data_table`, `quiz`, `flashcards`
+`audio`, `video`, `report`, `mind_map`, `slide_deck`, `infographic`, `data_table`, `data_table_xlsx`, `quiz`, `flashcards`
 
 ### Exports (1 tool)
 
@@ -152,13 +212,30 @@ note(notebook_id, action="update", note_id="...", content="...")
 note(notebook_id, action="delete", note_id="...", confirm=True)
 ```
 
-### Sharing (3 tools)
+### Labels (1 tool)
+
+| Tool | Description |
+|------|-------------|
+| `label` | **Unified** - Manage source labels (action: auto, list, reorganize, create, rename, set_emoji, move_source, delete) |
+
+**`label` actions:**
+```python
+label(notebook_id="abc", action="auto")           # AI auto-labels all sources
+label(notebook_id="abc", action="list")           # List current labels
+label(notebook_id="abc", action="reorganize", unlabeled_only=True)
+label(notebook_id="abc", action="create", name="Research", emoji="📚")
+label(notebook_id="abc", action="move_source", label_id="...", source_id="...")
+label(notebook_id="abc", action="delete", label_id="...", confirm=True)
+```
+
+### Sharing (4 tools)
 
 | Tool | Description |
 |------|-------------|
 | `notebook_share_status` | Get sharing settings |
 | `notebook_share_public` | Enable/disable public link |
 | `notebook_share_invite` | Invite collaborator by email |
+| `notebook_share_batch` | Invite multiple collaborators in a single request |
 
 ### Auth (2 tools)
 
@@ -237,9 +314,14 @@ tag(action="select", query="ai research")  # Find notebooks by tag match
 2a. research_status(notebook_id)  # waits up to 15 min, returns next_action hint
 2b. research_import(notebook_id, task_id, cited_only=True, timeout=600)  # optional cited subset
 4. studio_create(notebook_id, artifact_type="audio", confirm=True)
-5. studio_status(notebook_id)  # poll until complete
-6. download_artifact(notebook_id, artifact_type="audio", output_path="podcast.mp3")
+5. studio_status(notebook_id, artifact_id=created_artifact_id)  # poll one artifact
+6. download_artifact(notebook_id, artifact_type="audio", output_path="podcast.m4a")
 ```
+
+`studio_status` returns lean fields and at most 20 artifacts by default. Poll a
+new artifact with `artifact_id`, page large notebooks with `limit`/`offset`, and
+set `include_details=True` only when prompts, source IDs, report content, or media
+details are required.
 
 ### Add Sources with Wait
 
@@ -257,7 +339,7 @@ studio_create(notebook_id, artifact_type="report", report_format="Study Guide", 
 studio_create(notebook_id, artifact_type="audio", language="es-419", confirm=True)
 ```
 
-For Audio Overviews, NotebookLM has been observed using BCP-47 region
+For Audio Overviews, Gemini Notebook has been observed using BCP-47 region
 subtags to select the voice accent. `es` and `es-ES` produce Spain Spanish,
 while `es-US` and `es-419` produce Latin-American Spanish. The generation
 prompt does not reliably override the accent. Treat this as observed behavior,
@@ -296,7 +378,7 @@ pipeline(action="run", notebook_id="abc", pipeline_name="ingest-and-podcast", in
 
 > Planning to connect from Claude web/mobile or expose the server over a
 > network? Read [Remote MCP Deployment](REMOTE_MCP.md) first. HTTP transport
-> support does not provide HTTPS, caller authentication, per-user NotebookLM
+> support does not provide HTTPS, caller authentication, per-user Gemini Notebook
 > accounts, or remote file transfer.
 
 ### MCP Server Options
@@ -317,16 +399,48 @@ pipeline(action="run", notebook_id="abc", pipeline_name="ingest-and-podcast", in
 | `NOTEBOOKLM_HL` | Interface language and default artifact locale, including regional BCP-47 values such as `es-419` (default: en) |
 | `NOTEBOOKLM_QUERY_TIMEOUT` | Query timeout (seconds) |
 | `NOTEBOOKLM_BASE_URL` | Override base URL for Enterprise/Workspace (default: `https://notebooklm.google.com`) |
+| `NOTEBOOKLM_PROJECT_ID` | Required GCP project ID or number for Gemini Notebook Enterprise |
+| `NOTEBOOKLM_LOCATION` | Enterprise location/multi-region (`global`, `us`, or `eu`; default: `global`) |
+| `NOTEBOOKLM_DOWNLOAD_DIR` | Directory MCP artifact downloads are confined to. Unset defaults to `~/Downloads/gemini-notebook`, or `~/.notebooklm-mcp-cli/downloads/` where no `~/Downloads` exists. Also bounds CLI downloads when set. |
+| `NOTEBOOKLM_ALLOWED_FILE_DIRS` | Optional OS-separated list of directories allowed for local file sources. Unset means unrestricted. |
+| `NOTEBOOKLM_DISABLED_GROUPS` | Comma-separated tool groups to hide (see [Selective tool exposure](#selective-tool-exposure)) |
+| `NOTEBOOKLM_DISABLED_TOOLS` | Comma-separated individual tools to hide |
+| `NOTEBOOKLM_ENABLED_TOOLS` | Comma-separated tools to re-enable, overriding the two above |
 
 ---
 
 ## Context Window Tips
 
-This MCP has **39 tools** which consume context. Best practices:
+This MCP has **43 tools** which consume context. Best practices:
 
-- **Disable when not using**: In Claude Code, use `@notebooklm-mcp` to toggle
-- **Use unified tools**: `source_add`, `studio_create`, `download_artifact` handle multiple operations each
+- **Disable when not using**: In Claude Code, use `@gemini-notebook-mcp` to toggle
+- **Hide tools you don't need**: See [Selective tool exposure](#selective-tool-exposure) below to expose only a subset
+- **Use unified tools**: `source_add`, `studio_create`, `download_artifact`, `download_all_artifacts` handle multiple operations each
 - **Poll wisely**: Use `studio_status` sparingly - artifacts take 1-5 minutes
+
+### Selective tool exposure
+
+Gating is opt-in: with no configuration all tools are visible. To reduce context,
+hide tools by group or by name via environment variables. Tools are hidden rather
+than removed, so no code changes are needed.
+
+Resolution order (later wins): `NOTEBOOKLM_DISABLED_GROUPS`, then
+`NOTEBOOKLM_DISABLED_TOOLS`, then `NOTEBOOKLM_ENABLED_TOOLS`.
+
+```bash
+# Query-first setup: hide mutating groups, keep read + chat tools
+export NOTEBOOKLM_DISABLED_GROUPS="notebooks_manage,sources_manage,studio,research,sharing,notes"
+
+# Hide one extra tool, but keep studio_status from an otherwise-hidden group
+export NOTEBOOKLM_DISABLED_TOOLS="tag"
+export NOTEBOOKLM_ENABLED_TOOLS="studio_status"
+```
+
+Available groups: `notebooks_read`, `notebooks_manage`, `sources_read`,
+`sources_manage`, `chat`, `query_multi`, `organization`, `automation`, `notes`,
+`auth`, `server`, `sharing`, `research`, `studio`.
+
+Unknown group names are ignored. Changes take effect on server restart.
 
 ---
 
@@ -348,7 +462,7 @@ nlm setup add json              # Any other tool (interactive JSON generator)
 
 ### Claude Code
 ```bash
-claude mcp add --scope user notebooklm-mcp notebooklm-mcp
+claude mcp add --scope user gemini-notebook-mcp notebooklm-mcp
 ```
 
 ### Cursor
@@ -356,7 +470,7 @@ Add to `~/.cursor/mcp.json`:
 ```json
 {
   "mcpServers": {
-    "notebooklm-mcp": {
+    "gemini-notebook-mcp": {
       "command": "/path/to/notebooklm-mcp"
     }
   }
@@ -368,7 +482,7 @@ Add to `.vscode/mcp.json`:
 ```json
 {
   "servers": {
-    "notebooklm-mcp": {
+    "gemini-notebook-mcp": {
       "command": "notebooklm-mcp",
       "args": []
     }
@@ -378,7 +492,7 @@ Add to `.vscode/mcp.json`:
 
 ### Gemini CLI
 ```bash
-gemini mcp add --scope user notebooklm-mcp notebooklm-mcp
+gemini mcp add --scope user gemini-notebook-mcp notebooklm-mcp
 ```
 
 </details>

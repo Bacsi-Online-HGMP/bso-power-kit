@@ -7,6 +7,162 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.4.0] - 2026-09-24
+
+### Added
+
+- New `seo-agentic` sub-skill and `seo-agentic` audit agent (`/seo agentic
+  [audit|fix|lighthouse|refresh] <url>`) for agent readiness. Three scripts:
+  `lighthouse_agentic.py` reads the Lighthouse Agentic Browsing category
+  through PSI v5 (`category=AGENTIC_BROWSING`) or a saved report and
+  reproduces the report renderer's fraction exactly (N/A, manual and
+  informative audits excluded, pass at score 0.9), with per-audit status and
+  the changes that add a counted audit; `agentic_check.py` checks server
+  rendering, RFC 9309 robots.txt group selection per AI agent and
+  Content-Signal, llms.txt with Lighthouse parity, Markdown delivery
+  (`Accept: text/markdown` with `Vary: Accept`, `.md` alternates),
+  `ai-catalog.json` discovery and ARD conformance, `/.well-known`
+  documents (RFC 9727, 9728, 8414, A2A), WebMCP markup, and, only with
+  `--ua-matrix`, responses to AI agent user agents; `agentic_fix.py` drafts
+  Content-Signal lines for every robots.txt group without touching
+  Allow/Disallow, llms.txt, `ai-catalog.json`, and WebMCP tools bound to each
+  form's own submit handler. Every request goes through `url_safety`. Facts
+  were verified on 2026-09-23 against the Lighthouse 13.5.0 source, live PSI
+  runs, the WebMCP spec draft, and vendor bot documentation, and the dated,
+  source-graded vendor matrix lives in one reference file. Full audits now
+  spawn `seo-agentic` alongside `seo-geo`, writing `findings/agentic.md`.
+
+- New optional Matomo extension (`extensions/matomo/`) for self-hosted or
+  Matomo Cloud analytics. Adds `/seo matomo organic | top-pages | device
+  | country | referrers | keywords` as a GA4 alternative or complement.
+  The audit orchestrator spawns a new `seo-matomo` agent when
+  `"${CLAUDE_PLUGIN_ROOT}/scripts/claude-seo" run matomo_auth.py --check`
+  succeeds, writing `findings/matomo.md` alongside the existing specialists.
+  Response parsing is verified live against Matomo 5, including array-shaped
+  DataTables, count-based bounce fields, `Referrers.getReferrerType` naming,
+  and locale-independent anonymized-keyword detection via the row `segment`
+  field. Credentials live in `~/.config/claude-seo/matomo.json` (0600, written
+  atomically), with the `MATOMO_URL` / `MATOMO_API_TOKEN` / `MATOMO_SITE_ID`
+  environment variables still taking precedence. Every request to the instance
+  goes through `url_safety`'s DNS-pinned helpers; a self-hosted instance on a
+  private address is reached by naming it in `CLAUDE_SEO_LOCAL_TARGETS`, which
+  both installers print at install time, and a redirect away from the instance
+  is refused rather than followed. Contributed by Tim J. Peters (#275).
+
+### Security
+
+- **Extension installers no longer put secrets on the command line.** Every
+  `extensions/*/install.sh` that writes credentials, and the four
+  `install.ps1` files that hand credentials to Python (profound, seranking,
+  bing-webmaster, matomo), passed API keys, tokens and passwords to Python as arguments, readable by any local user through
+  `ps`. They now travel in the environment (`CLAUDE_SEO_SECRET` and
+  friends), which only the same user can read; PowerShell clears the
+  variables afterwards. Found while reviewing #305, whose installer shares
+  the flaw.
+- **Installers no longer wipe a malformed config.** Seven shell writers and
+  three PowerShell writers reset
+  `~/.claude.json` or `~/.claude/settings.json` to `{}` when the file failed
+  to parse and wrote that back, deleting the user's whole Claude Code
+  configuration. They now exit with "Nothing was changed". The PowerShell
+  writers check `$LASTEXITCODE`, so they no longer print "Done." after the
+  refusal.
+- The banana `setup_mcp.py` and `validate_setup.py` checks printed the first
+  eight characters of the Google AI key as well as the last four. They now
+  show only the last four. Found by CodeQL, now enabled on the repository.
+- `keywordseverywhere_api.py` could echo the API key in an error when the
+  stored key had a trailing newline (pre-existing). Keys are stripped,
+  rejected if they contain control characters, and every error is redacted.
+
+### Fixed
+
+- The ahrefs and dataforseo PowerShell installers failed to parse on
+  Windows PowerShell 5.1 (pre-existing). 5.1 reads a script without a BOM as
+  ANSI, so their check-mark and box symbols broke the string quoting; pwsh was
+  unaffected. Every shipped `.ps1` file is now ASCII, a test enforces it, and
+  CI parses every extension script on both PowerShell versions; the Matomo
+  credential writer prints plain ASCII so it runs under a cp1252 console.
+
+- UTF-8 pages served as `text/html` without a charset were decoded as
+  ISO-8859-1 in seven scripts (`render_page`, `parse_html`, `nlp_analyze`,
+  `preload_check`, `parasite_risk`, `ucp_check`, `gbp_deprecation_lint`).
+  One decoder, `url_safety.decode_response_text` / `decode_body`, now
+  serves every fetch. (#314)
+- The Keywords Everywhere fallback called a removed endpoint and never
+  worked; it now uses `POST /v1/domains/bulk` with Bearer auth. Verified
+  against the API docs and with an invalid key (documented 401); not yet
+  exercised with a valid key. (#312)
+- Skills named DataForSEO tools the pinned `dataforseo-mcp-server@2.8.10`
+  does not have (`dataforseo_backlinks_*`, `on_page_content_parsing_live`,
+  `serp_google_images_live_advanced`), and `serp-images` was advertised as a
+  full Google Images SERP. A fixture of the pinned server's 80 tool names now
+  guards every skill. (#317)
+- Cross-skill reference paths in agents and skills are anchored to
+  `${CLAUDE_PLUGIN_ROOT}` (manual installs rewrite them to the absolute
+  skills directory), so subagents no longer search the disk for paths they
+  cannot resolve. This removes one trigger for #252; the orphaned-process
+  cleanup it reports is Claude Code behaviour, not fixed here.
+- `ucp_check.py` rejected real, spec-conformant UCP profiles ("0
+  capabilities, 3 structural issues"); it now parses the ucp.dev shape.
+- Hostile or malformed content that crashed `agentic_check`, `ucp_check`,
+  `keywordseverywhere_api` and `lighthouse_agentic` (deeply nested JSON,
+  non-string UCP endpoints and transports, unexpected API bodies, malformed
+  Lighthouse categories, non-string ARD types and audit ids, BOM-prefixed
+  reports) now produces a finding; each shape found in two audit passes and a
+  random-shape fuzz has a test, and a seeded fuzz runs in the suite. robots.txt is split on CR/LF
+  only, so a Unicode line separator inside a comment no longer becomes a rule.
+- `render_page` keeps the raw status, headers and URL when Chromium fails,
+  and `agent_ux_check` falls back to raw-HTML findings with the score left
+  unavailable.
+- Facts re-verified against primary sources (2026-09-23): Claude-User
+  honours robots.txt; PerplexityBot is not a training crawler; good TTFB is
+  0.8s or less; Book actions markup is not deprecated; the 2025-09-09
+  tooling removal dates; CrUX LCP image subparts; the AI optimization
+  guide's real wording and its Search Console "Search generative AI"
+  control; aggregator and supplier units are EEA-only; GBP Q&A API
+  discontinued; Google-GeminiNotebook; Gemini model naming; Content API for
+  Shopping sunset; Privacy Sandbox retirements; soft navigations; schema.org
+  30.1; UCP 2026-08-25. `tests/test_canonical_facts.py` keeps each
+  disproved statement out of the skills.
+
+### Changed
+
+- **Breaking (`keywordseverywhere_api.py` output):** `page_rank_integer` is
+  removed and `rank` is now the API's global rank (an integer), no longer a
+  0-10 string. New fields: `open_page_rank`, `found`, `referring_domains`,
+  `as_of`, `invalid`. `page_rank_decimal` remains as an alias of
+  `open_page_rank`.
+- **Breaking (`ucp_check.py` output):** `parse.merchant` is removed (the spec
+  has no such field); capability entries no longer carry `endpoint`, which
+  moved to `parse.services`; a flat, non-spec profile reports
+  `missing-ucp-root`; the summary reads "UCP <version>, N capabilities";
+  `--probe-endpoints` probes service endpoints with GET.
+- **Breaking (installers):** an unparseable settings file now makes the
+  installer exit non-zero instead of overwriting it.
+- `agentic_check.py` adds an `http-404` check: a host that answers unknown
+  paths with 200 makes Lighthouse fail `llms-txt` and `ard-schema`.
+- `seo_updates.py --json` adds `freshness` (stale after 30 days); text mode
+  also warns on stderr; `seo-audit`, `seo-content` and `seo-geo` now correlate traffic
+  changes with the ledger, which gains 8 entries and `last_verified`
+  2026-09-23.
+- Dependency floors raised: `lxml_html_clean` 0.4.5 (advisories fixed in
+  0.4.4 and 0.4.5), `trafilatura` 2.2.0, `htmldate` 1.10.0,
+  `google-auth-httplib2` 0.4.2, `google-ads` 31.4.0. Supersedes #307 to #311.
+- `pdf/google-seo-reference.md` is removed: it declared itself deprecated,
+  nothing loaded it, and it shipped a stale copy into manual installs.
+- `seo-technical` drops rel=next/prev pagination advice and unsourced
+  figures; `seo-geo` labels passage length as a heuristic, gives llms.txt no
+  score weight and scores only platforms a tool measured; `seo-ecommerce`
+  requires a merchant-listing price above zero; `seo-schema` flags JSON-LD
+  blocks without `@context` or `@type`.
+- `agent-friendly-pages.md` moved from `seo-technical` to `seo-agentic` and
+  was rewritten for Lighthouse 13.5.0: the category has seven audits
+  (`agent-accessibility-tree` aggregates 33 axe rules; `ard-schema` validates
+  `ai-catalog.json`), not three accessibility audits. `seo-technical` now
+  points to `/seo agentic`, and the Lighthouse notes in `seo-performance`
+  and `cwv-thresholds.md` name 13.5.0.
+- Counts corrected to what is on disk: 26 sub-skills, 19 sub-agents, 60
+  scripts, up to 17 parallel audit agents.
+
 ## [2.3.1] - 2026-09-10
 
 ### Added

@@ -121,6 +121,7 @@ def rename_notebook(
 def delete_notebook(
     notebook_id: str = typer.Argument(..., help="Notebook ID"),
     confirm: bool = typer.Option(False, "--confirm", "-y", help="Skip confirmation"),
+    json_output: bool = typer.Option(False, "--json", "-j", help="Output as JSON"),
     profile: str | None = typer.Option(None, "--profile", "-p", help="Profile to use"),
 ) -> None:
     """Delete a notebook permanently."""
@@ -136,7 +137,10 @@ def delete_notebook(
         with get_client(profile) as client:
             result = notebooks_service.delete_notebook(client, notebook_id)
 
-        console.print(f"[green]✓[/green] {result['message']}")
+        if json_output:
+            get_formatter(detect_output_format(True), console).format_item(result)
+        else:
+            console.print(f"[green]✓[/green] {result['message']}")
     except (ServiceError, NLMError) as e:
         handle_error(e, json_output=locals().get("json_output", False))
 
@@ -160,7 +164,15 @@ def query_notebook(
     ),
     profile: str | None = typer.Option(None, "--profile", "-p", help="Profile to use"),
     timeout: float | None = typer.Option(
-        None, "--timeout", "-t", help="Query timeout in seconds (default: 120)"
+        None,
+        "--timeout",
+        "-t",
+        help="Query timeout in seconds (default: 120; source-heavy notebooks may need 180+)",
+    ),
+    new_conversation: bool = typer.Option(
+        False,
+        "--new-conversation",
+        help="Start a fresh conversation instead of reusing the notebook's chat",
     ),
 ) -> None:
     """Chat with notebook sources."""
@@ -176,6 +188,7 @@ def query_notebook(
                 source_ids=sources,
                 conversation_id=conversation_id,
                 timeout=timeout,
+                new_conversation=new_conversation,
             )
 
         fmt = detect_output_format(json_output)

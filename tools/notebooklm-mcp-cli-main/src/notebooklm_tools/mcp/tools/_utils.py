@@ -12,12 +12,40 @@ from typing import Any, ParamSpec, TypeAlias, TypeVar, cast
 from notebooklm_tools.core.client import NotebookLMClient
 from notebooklm_tools.core.utils import extract_cookies_from_chrome_export
 from notebooklm_tools.services.auth import load_cached_tokens
+from notebooklm_tools.services.errors import ServiceError
 
 # MCP request/response logger
 mcp_logger = logging.getLogger("notebooklm_tools.mcp")
 
-# Parameters that must never appear in log output
-_SENSITIVE_PARAMS = frozenset({"cookies", "csrf_token", "session_id", "request_body"})
+# Keys that must never appear in log output, matched exactly.
+_SENSITIVE_PARAMS = frozenset(
+    {"cookies", "csrf_token", "session_id", "request_body", "request_url"}
+)
+
+# Substrings that mark a key as sensitive wherever it appears, including in
+# nested response payloads. An exact denylist is fail-open: any key added to a
+# tool signature or a service return value later would log in clear by default.
+# These markers make the common shapes fail closed instead.
+_SENSITIVE_MARKERS = (
+    "cookie",
+    "csrf",
+    "token",
+    "secret",
+    "password",
+    "passwd",
+    "credential",
+    "apikey",
+    "api_key",
+    "authorization",
+    "bearer",
+    "session_id",
+    "sessionid",
+    "request_body",
+    "request_url",
+)
+
+# Guard against deeply nested or self-referential payloads.
+_MAX_REDACT_DEPTH = 8
 P = ParamSpec("P")
 R = TypeVar("R")
 T = TypeVar("T")
@@ -26,9 +54,37 @@ _StrConverter: TypeAlias = Callable[[Any], str]
 _DEFAULT_STR_CONVERTER: _StrConverter = str
 
 
+def _is_sensitive_key(key: str) -> bool:
+    """True if a key name should have its value redacted before logging."""
+    if key in _SENSITIVE_PARAMS:
+        return True
+    normalized = key.lower()
+    return any(marker in normalized for marker in _SENSITIVE_MARKERS)
+
+
+def _redact(value: Any, _depth: int = 0) -> Any:
+    """Recursively replace sensitive values with [REDACTED] before logging.
+
+    Walks dicts and lists so nested payloads are covered, not just top-level
+    keyword arguments.
+    """
+    if _depth >= _MAX_REDACT_DEPTH:
+        return "[TRUNCATED]"
+    if isinstance(value, dict):
+        return {
+            k: "[REDACTED]"
+            if isinstance(k, str) and _is_sensitive_key(k)
+            else _redact(v, _depth + 1)
+            for k, v in value.items()
+        }
+    if isinstance(value, (list, tuple)):
+        return [_redact(item, _depth + 1) for item in value]
+    return value
+
+
 def _sanitize_params(params: ResultDict) -> ResultDict:
     """Replace sensitive parameter values with [REDACTED] before logging."""
-    return {k: "[REDACTED]" if k in _SENSITIVE_PARAMS else v for k, v in params.items()}
+    return cast(ResultDict, _redact(params))
 
 
 def error_result(
@@ -43,6 +99,15 @@ def error_result(
     if hint:
         result["hint"] = hint
     result.update(extra)
+    return result
+
+
+def service_error_result(error: ServiceError, *, status: str = "error") -> ResultDict:
+    """Serialize a ServiceError without breaking the existing MCP error shape."""
+    result = error_result(error.user_message, hint=error.hint, status=status)
+    details = error.details()
+    if details:
+        result["error_details"] = details
     return result
 
 
@@ -107,6 +172,7 @@ def get_client() -> NotebookLMClient:
         csrf_token = ""
         session_id = ""
         build_label = ""
+        base_host = ""
 
         if cookie_header:
             # Use environment variables
@@ -119,6 +185,7 @@ def get_client() -> NotebookLMClient:
                 csrf_token = cached.csrf_token
                 session_id = cached.session_id
                 build_label = cached.build_label or ""
+                base_host = cached.base_host or ""
             else:
                 raise ValueError(
                     "No authentication found. Either:\n"
@@ -131,6 +198,7 @@ def get_client() -> NotebookLMClient:
             csrf_token=csrf_token,
             session_id=session_id,
             build_label=build_label,
+            base_host=base_host,
         )
     return _client
 
@@ -178,7 +246,7 @@ def logged_tool() -> Callable[[Callable[P, Any]], Callable[P, Any]]:
                 result: Any = await async_func(*args, **kwargs)
 
                 if mcp_logger.isEnabledFor(logging.DEBUG):
-                    result_str = json.dumps(result, default=str)
+                    result_str = json.dumps(_redact(result), default=str)
                     if len(result_str) > 1000:
                         result_str = result_str[:1000] + "..."
                     mcp_logger.debug(f"MCP Response: {tool_name} -> {result_str}")
@@ -199,7 +267,7 @@ def logged_tool() -> Callable[[Callable[P, Any]], Callable[P, Any]]:
                 result: R = sync_func(*args, **kwargs)
 
                 if mcp_logger.isEnabledFor(logging.DEBUG):
-                    result_str = json.dumps(result, default=str)
+                    result_str = json.dumps(_redact(result), default=str)
                     if len(result_str) > 1000:
                         result_str = result_str[:1000] + "..."
                     mcp_logger.debug(f"MCP Response: {tool_name} -> {result_str}")
@@ -253,6 +321,8 @@ def coerce_list(
       - A JSON string          → ``'["a","b"]'``
       - A comma-separated str  → ``'a,b,c'``
       - A single bare value    → ``'a'``
+      - A serialized JSON null → ``None``
+      - A null string-list sentinel → ``None``
       - None                   → ``None``
 
     This helper normalizes all forms into ``list[item_type]`` while preserving
@@ -262,14 +332,19 @@ def coerce_list(
     if val is None:
         return None  # Preserve None semantics (means "use default / all")
     if isinstance(val, list):
+        if converter is _DEFAULT_STR_CONVERTER and val == ["null"]:
+            return None
         return [converter(x) for x in val]
     if isinstance(val, str):
         val = val.strip()
-        if not val:
+        if not val or val == "null":
             return None
         if val.startswith("["):
             try:
-                return [converter(x) for x in json.loads(val)]
+                parsed = json.loads(val)
+                if converter is _DEFAULT_STR_CONVERTER and parsed == ["null"]:
+                    return None
+                return [converter(x) for x in parsed]
             except (json.JSONDecodeError, ValueError):
                 pass  # Fall through to comma-split
         return [converter(x.strip()) for x in val.split(",") if x.strip()]

@@ -1,6 +1,6 @@
 # WSL2 Authentication Guide
 
-This guide explains how to authenticate with NotebookLM MCP when running in Windows Subsystem for Linux (WSL2).
+This guide explains how to authenticate with Gemini Notebook (formerly Google NotebookLM) MCP when running in Windows Subsystem for Linux (WSL2).
 
 ## The Problem
 
@@ -13,7 +13,7 @@ This happens because WSL2 uses a virtual machine, and GUI apps crossing the Wind
 
 ## The Solution
 
-NotebookLM MCP now includes WSL2-aware authentication that:
+Gemini Notebook MCP now includes WSL2-aware authentication that:
 1. Launches Windows Chrome from your WSL terminal
 2. Waits for Chrome DevTools Protocol to be ready
 3. Extracts cookies over the WSL-Windows network bridge
@@ -36,17 +36,32 @@ via port **9222** (the proxy port accessible from WSL).
 netsh interface portproxy add v4tov4 listenport=9222 listenaddress=0.0.0.0 connectport=9223 connectaddress=127.0.0.1
 ```
 
+The port proxy listens on `0.0.0.0`, so the Windows Firewall rule is the only
+boundary in front of it. Chrome DevTools Protocol has no authentication, so
+anything that reaches port 9222 while Chrome is running can drive the browser.
+
 **Mitigations in place:**
-- **Windows Firewall**: Only connections from `LocalSubnet` (WSL virtual network)
-  are allowed to reach port 9222
+- **Windows Firewall**: The rule is scoped with `-InterfaceAlias "vEthernet (WSL)"`,
+  so traffic arriving on Wi-Fi or Ethernet cannot match it. `-RemoteAddress LocalSubnet`
+  is kept as a second layer. Interface scoping is what does the work here, because the
+  WSL adapter usually lands on the **Public** network profile and profile filtering
+  cannot separate it from a real network.
 - **Port proxy**: Only forwards to localhost:9223; Chrome is never exposed
   directly on the network
 - **Temporary profiles**: Each Chrome instance uses a fresh, isolated profile
   on the Windows filesystem that is cleaned up after authentication
 - **Short-lived**: Remote debugging is only active during the explicit `nlm login --wsl`
-  command and terminated immediately after
-- **No external exposure**: The Windows Firewall rule prevents connections from
-  external network hosts
+  command and terminated immediately after. Outside that window nothing listens on 9223,
+  so the bridge forwards to a closed port.
+
+**Known limits, stated plainly:**
+- You create the port proxy and the firewall rule yourself, in Windows. Nothing in this
+  package can remove them, and both survive upgrades. See
+  [Removing the bridge](#removing-the-bridge) below.
+- If you created the firewall rule before v0.11.2 it has no `-InterfaceAlias` and applies
+  to every adapter on every network profile. Replace it using the commands below.
+- If you later switch WSL to mirrored networking, the rule is no longer needed at all and
+  should be removed.
 
 If you have concerns about this setup, you can use manual mode instead:
 ```bash
@@ -86,11 +101,11 @@ nlm login --wsl
 ```
 
 This will:
-- Detect your Windows IP address from WSL
+- Detect the WSL networking mode and Windows host address
 - **Check Windows Firewall setup** (prompts with instructions)
 - Launch Chrome on Windows on port 9223 with remote debugging
 - Connect via the port proxy on port 9222
-- Open NotebookLM in Chrome
+- Open Gemini Notebook in Chrome
 - Wait for you to log in
 - Extract cookies automatically
 - Close Chrome
@@ -109,18 +124,45 @@ When you run `nlm login --wsl`:
 
 ```
 WSL Terminal
-    ↓  detects Windows host IP (from default gateway)
+    ↓  detects networking mode with wslinfo
+    ↓  uses the default gateway (NAT) or 127.0.0.1 (mirrored)
     ↓  launches /mnt/c/Program Files/Google/Chrome/Application/chrome.exe
 Windows Chrome
     ↓  starts on 127.0.0.1:9223 (Windows side, localhost only)
 netsh portproxy
     ↓  forwards 0.0.0.0:9222 → 127.0.0.1:9223
 WSL Auth Script
-    ↓  connects to http://172.x.x.x:9222 (via port proxy)
-    ↓  opens notebooklm.google.com tab
+    ↓  connects to the Windows host on port 9222 (via port proxy)
+    ↓  opens notebook.google.com tab
     ↓  waits for login
     ↓  extracts cookies via CDP
     ↓  terminates Chrome process
+```
+
+## Removing the bridge
+
+The port proxy and the firewall rule persist until you remove them. Run both in an
+**elevated PowerShell** when you no longer need WSL login, or before recreating a
+narrower rule:
+
+```powershell
+Remove-NetFirewallRule -DisplayName "NotebookLM-CDP-9222"
+netsh interface portproxy delete v4tov4 listenport=9222 listenaddress=0.0.0.0
+```
+
+### Replacing a pre-v0.11.2 firewall rule
+
+Check whether your existing rule is scoped to the WSL adapter:
+
+```powershell
+Get-NetFirewallRule -DisplayName "NotebookLM-CDP-9222" | Get-NetFirewallInterfaceFilter
+```
+
+If `InterfaceAlias` comes back as `Any`, remove the rule and create the scoped one:
+
+```powershell
+Remove-NetFirewallRule -DisplayName "NotebookLM-CDP-9222"
+New-NetFirewallRule -DisplayName "NotebookLM-CDP-9222" -Direction Inbound -Action Allow -Protocol TCP -LocalPort 9222 -InterfaceAlias "vEthernet (WSL)" -RemoteAddress LocalSubnet
 ```
 
 ## Troubleshooting
@@ -180,13 +222,18 @@ cat /etc/resolv.conf
 grep nameserver /etc/resolv.conf
 ```
 
-You should see an IP like `172.20.x.x`. If not, your WSL2 networking may be in a different mode.
+In NAT mode, you should see an IP like `172.20.x.x`. In mirrored mode, the Windows host is
+available at `127.0.0.1`.
 
 **Workaround:**
 ```bash
-# Find Windows IP manually
-WINDOWS_IP=$(ip route show | grep default | awk '{print $3}')
-nlm login --cdp-url http://$WINDOWS_IP:9222
+# Find the Windows host address manually
+if [ "$(wslinfo --networking-mode 2>/dev/null)" = "mirrored" ]; then
+    WINDOWS_IP=127.0.0.1
+else
+    WINDOWS_IP=$(ip route show default | awk '{print $3; exit}')
+fi
+nlm login --cdp-url "http://${WINDOWS_IP}:9222"
 ```
 
 ### "Chrome did not start within 30 seconds"
@@ -202,7 +249,12 @@ Sometimes Windows firewall or antivirus blocks the connection.
    ```
    ```bash
    # In WSL (wait a few seconds first)
-   nlm login --cdp-url http://$(grep nameserver /etc/resolv.conf | awk '{print $2}'):9222
+   if [ "$(wslinfo --networking-mode 2>/dev/null)" = "mirrored" ]; then
+       WINDOWS_IP=127.0.0.1
+   else
+       WINDOWS_IP=$(ip route show default | awk '{print $3; exit}')
+   fi
+   nlm login --cdp-url "http://${WINDOWS_IP}:9222"
    ```
 
 ### Terminal still goes black
@@ -245,11 +297,15 @@ CHROME_PID=$!
 # Wait for startup
 sleep 3
 
-# Get Windows IP
-WINDOWS_IP=$(grep nameserver /etc/resolv.conf | awk '{print $2}')
+# Get the Windows host address
+if [ "$(wslinfo --networking-mode 2>/dev/null)" = "mirrored" ]; then
+    WINDOWS_IP=127.0.0.1
+else
+    WINDOWS_IP=$(ip route show default | awk '{print $3; exit}')
+fi
 
 # Login via CDP
-nlm login --cdp-url http://$WINDOWS_IP:9222
+nlm login --cdp-url "http://${WINDOWS_IP}:9222"
 
 # Cleanup
 kill $CHROME_PID

@@ -4,6 +4,7 @@
 from typing import Any
 from unittest.mock import MagicMock, patch
 
+import httpx
 import pytest
 
 
@@ -33,6 +34,35 @@ def test_base_client_init_with_csrf():
         client = BaseClient(cookies={"test": "cookie"}, csrf_token="test_token")
         mock_refresh.assert_not_called()
         assert client.csrf_token == "test_token"
+
+
+@pytest.mark.parametrize(
+    "failure",
+    [
+        ValueError("Failed to fetch NotebookLM page: HTTP 503"),
+        httpx.ReadTimeout("The read operation timed out"),
+        OSError("dns lookup failed"),
+    ],
+)
+def test_unreachable_failure_classifies_transport_and_server_errors(failure):
+    """Backend transport and 5xx failures must not be treated as auth expiry."""
+    from notebooklm_tools.core.base import _is_unreachable_failure
+
+    assert _is_unreachable_failure(failure) is True
+
+
+@pytest.mark.parametrize(
+    "failure",
+    [
+        ValueError("Authentication expired. accounts.google.com login redirect"),
+        ValueError("Authentication expired"),
+    ],
+)
+def test_unreachable_failure_rejects_explicit_auth_expiry(failure):
+    """Explicit rejection evidence must continue through auth recovery."""
+    from notebooklm_tools.core.base import _is_unreachable_failure
+
+    assert _is_unreachable_failure(failure) is False
 
 
 def test_build_request_body():
@@ -205,6 +235,35 @@ def test_close():
         client._client = MagicMock()
         client.close()
         assert client._client is None
+
+
+def test_update_cached_tokens_persists_refreshed_cookies():
+    """Rotated cookies must be cached with the refreshed request tokens."""
+    from notebooklm_tools.core.auth import AuthTokens
+    from notebooklm_tools.core.base import BaseClient
+
+    cached = AuthTokens(
+        cookies={"SID": "old"},
+        csrf_token="old-csrf",
+        session_id="old-session",
+    )
+
+    with (
+        patch.object(BaseClient, "_refresh_auth_tokens"),
+        patch("notebooklm_tools.core.auth.load_cached_tokens", return_value=cached),
+        patch("notebooklm_tools.core.auth.save_tokens_to_cache") as mock_save,
+    ):
+        client = BaseClient(
+            cookies={"SID": "rotated"},
+            csrf_token="new-csrf",
+            session_id="new-session",
+        )
+        client._update_cached_tokens()
+
+    saved = mock_save.call_args.args[0]
+    assert saved.cookies == {"SID": "rotated"}
+    assert saved.csrf_token == "new-csrf"
+    assert saved.session_id == "new-session"
 
 
 def test_constants_available():

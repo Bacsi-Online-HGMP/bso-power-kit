@@ -24,7 +24,7 @@ def make_console(**kwargs) -> "Console":
     Rich also auto-detects the terminal encoding on Windows via ``PYTHONIOENCODING``
     or the system locale — but this ensures we never crash even without that override.
 
-    See: https://github.com/jacob-bd/notebooklm-mcp-cli/issues/105
+    See: https://github.com/jacob-bd/gemini-notebook-mcp-cli/issues/105
     """
     kwargs.setdefault("safe_box", True)
     if sys.platform == "win32":
@@ -42,11 +42,12 @@ def get_client(profile: str | None = None) -> NotebookLMClient:
     Args:
         profile: Optional profile name. Uses config default_profile if not specified.
 
-    Tries to load cached tokens first. If unavailable, guides the user to login.
+    An explicit profile takes precedence over environment cookies. Without a
+    profile, tries environment cookies, then the configured default profile.
     """
-    # 1. Try environment variables first (most explicit)
+    # 1. Environment auth applies only when no profile was explicitly selected.
     env_cookies = os.environ.get("NOTEBOOKLM_COOKIES")
-    if env_cookies:
+    if env_cookies and not profile:
         return NotebookLMClient(cookies=extract_cookies_from_string(env_cookies))
 
     # 2. Try loading specified profile, or fall back to config default
@@ -66,6 +67,8 @@ def get_client(profile: str | None = None) -> NotebookLMClient:
             csrf_token=p.csrf_token or "",
             session_id=p.session_id or "",
             build_label=p.build_label or "",
+            base_host=p.base_host or "",
+            profile_name=profile,
         )
     except typer.Exit:
         raise

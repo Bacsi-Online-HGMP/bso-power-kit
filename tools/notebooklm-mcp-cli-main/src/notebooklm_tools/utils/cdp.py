@@ -9,12 +9,14 @@ Usage:
     3. No keychain access required!
 """
 
+import contextlib
 import json
 import os
 import platform
 import re
 import shutil
 import subprocess
+import threading
 import time
 from pathlib import Path
 from typing import Any
@@ -24,7 +26,7 @@ from httpx import Client, HTTPTransport
 
 # Disable proxy for localhost CDP connections — system proxies (Surge, Clash, etc.)
 # can intercept localhost requests and break Chrome DevTools Protocol connections.
-# See: https://github.com/jacob-bd/notebooklm-mcp-cli/issues/119
+# See: https://github.com/jacob-bd/gemini-notebook-mcp-cli/issues/119
 httpx_client = Client(
     trust_env=False,
     mounts={
@@ -36,6 +38,25 @@ import websocket  # noqa: E402
 
 _cached_ws: websocket.WebSocket | None = None
 _cached_ws_url: str | None = None
+_cdp_ws_lock = threading.Lock()
+_cdp_next_command_id = 0
+
+
+def _next_cdp_command_id() -> int:
+    """Return a process-local monotonically increasing CDP command id."""
+    global _cdp_next_command_id
+    _cdp_next_command_id += 1
+    return _cdp_next_command_id
+
+
+def _reset_cached_ws_unlocked() -> None:
+    """Close and clear the cached CDP websocket. Caller must hold _cdp_ws_lock."""
+    global _cached_ws, _cached_ws_url
+    if _cached_ws is not None:
+        with contextlib.suppress(Exception):
+            _cached_ws.close()
+    _cached_ws = None
+    _cached_ws_url = None
 
 
 def _normalize_ws_url(url: str | None) -> str | None:
@@ -46,7 +67,7 @@ def _normalize_ws_url(url: str | None) -> str | None:
     causing WinError 10013.  Using the explicit IPv4 loopback
     address avoids the ambiguity on all platforms.
 
-    See: https://github.com/jacob-bd/notebooklm-mcp-cli/issues/108
+    See: https://github.com/jacob-bd/gemini-notebook-mcp-cli/issues/108
     """
     if url and "://localhost:" in url:
         url = url.replace("://localhost:", "://127.0.0.1:")
@@ -54,7 +75,12 @@ def _normalize_ws_url(url: str | None) -> str | None:
 
 
 from notebooklm_tools.core.exceptions import AuthenticationError  # noqa: E402
-from notebooklm_tools.utils.config import get_base_url  # noqa: E402
+from notebooklm_tools.utils.config import (  # noqa: E402
+    get_base_url,
+    get_enterprise_location,
+    get_enterprise_project_id,
+    get_home_dir,
+)
 
 __all__ = [
     "get_chrome_path",
@@ -62,6 +88,7 @@ __all__ = [
     "get_supported_browsers",
     "extract_cookies_via_cdp",
     "extract_cookies_via_existing_cdp",
+    "close_profile_owned_cdp_browser",
     "run_headless_auth",
     "has_chrome_profile",
     "terminate_chrome",
@@ -69,7 +96,33 @@ __all__ = [
 
 CDP_DEFAULT_PORT = 9222
 CDP_PORT_RANGE = range(9222, 9232)  # Ports to scan for existing/available
-NOTEBOOKLM_URL = f"{get_base_url()}/"
+
+
+def get_notebooklm_url() -> str:
+    """Return the browser URL used to authenticate the configured account."""
+    base_url = get_base_url()
+    host = (urlparse(base_url).hostname or "").lower()
+    enterprise_hosts = {
+        "notebooklm.cloud.google.com",
+        "notebook.cloud.google.com",
+        "vertexaisearch.cloud.google.com",
+    }
+    if host not in enterprise_hosts:
+        return f"{base_url}/"
+
+    project_id = get_enterprise_project_id()
+    if not project_id:
+        raise ValueError(
+            "NOTEBOOKLM_PROJECT_ID is required when authenticating Gemini Notebook Enterprise."
+        )
+    location = get_enterprise_location()
+    prefix = (
+        f"/notebooklm/{location}" if host == "vertexaisearch.cloud.google.com" else f"/{location}"
+    )
+    return f"{base_url}{prefix}/?project={quote(project_id, safe='')}"
+
+
+NOTEBOOKLM_URL = get_notebooklm_url()
 
 import logging as _logging  # noqa: E402
 
@@ -119,14 +172,47 @@ def _get_port_map_file() -> Path:
     return get_storage_dir() / "chrome-port-map.json"
 
 
+def _pid_is_alive(pid: int) -> bool:
+    """Return whether a process is still running on the current platform."""
+    if platform.system() != "Windows":
+        try:
+            os.kill(pid, 0)
+            return True
+        except (OSError, ProcessLookupError):
+            return False
+
+    import ctypes
+    from ctypes import wintypes
+
+    process_query_limited_information = 0x1000
+    still_active = 259
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel32.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+    kernel32.OpenProcess.restype = wintypes.HANDLE
+    kernel32.GetExitCodeProcess.argtypes = [wintypes.HANDLE, ctypes.POINTER(wintypes.DWORD)]
+    kernel32.GetExitCodeProcess.restype = wintypes.BOOL
+    kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+    kernel32.CloseHandle.restype = wintypes.BOOL
+
+    handle = kernel32.OpenProcess(process_query_limited_information, False, pid)
+    if not handle:
+        return False
+
+    try:
+        exit_code = wintypes.DWORD()
+        if not kernel32.GetExitCodeProcess(handle, ctypes.byref(exit_code)):
+            return True
+        return exit_code.value == still_active
+    finally:
+        kernel32.CloseHandle(handle)
+
+
 def _read_port_map() -> dict[str, dict]:
     """Read the port map, pruning entries whose PIDs are no longer alive.
 
     Returns:
         Dict mapping port (as string key) to {"profile": str, "pid": int}.
     """
-    import os
-
     map_file = _get_port_map_file()
     if not map_file.exists():
         return {}
@@ -142,10 +228,9 @@ def _read_port_map() -> dict[str, dict]:
     for port_str, entry in data.items():
         pid = entry.get("pid")
         if pid is not None:
-            try:
-                os.kill(pid, 0)  # signal 0 = check if process exists
+            if _pid_is_alive(pid):
                 alive[port_str] = entry
-            except (OSError, ProcessLookupError):
+            else:
                 changed = True  # PID is dead, skip it
         else:
             alive[port_str] = entry
@@ -257,10 +342,12 @@ def find_available_port(starting_from: int = 9222, max_attempts: int = 10) -> in
 
 # macOS: absolute .app bundle paths, /Applications first then ~/Applications
 def _macos_browser_candidates() -> list[tuple[str, str]]:
-    home_apps = Path.home() / "Applications"
+    home_apps = get_home_dir() / "Applications"
     entries: list[tuple[str, str]] = [
         ("Google Chrome", "Google Chrome.app/Contents/MacOS/Google Chrome"),
         ("Arc", "Arc.app/Contents/MacOS/Arc"),
+        ("Dia", "Dia.app/Contents/MacOS/Dia"),
+        ("Comet", "Comet.app/Contents/MacOS/Comet"),
         ("Brave Browser", "Brave Browser.app/Contents/MacOS/Brave Browser"),
         ("Microsoft Edge", "Microsoft Edge.app/Contents/MacOS/Microsoft Edge"),
         ("Chromium", "Chromium.app/Contents/MacOS/Chromium"),
@@ -292,14 +379,18 @@ _LINUX_BROWSER_CANDIDATES: list[tuple[str, str]] = [
 
 # Windows: absolute paths.  User-local installs live under %LOCALAPPDATA%.
 def _windows_browser_candidates() -> list[tuple[str, str]]:
-    local = Path.home() / "AppData" / "Local"
-    roaming = Path.home() / "AppData" / "Roaming"
+    home_dir = get_home_dir()
+    local = home_dir / "AppData" / "Local"
+    roaming = home_dir / "AppData" / "Roaming"
     pf = Path(r"C:\Program Files")
     pf86 = Path(r"C:\Program Files (x86)")
     return [
         ("Google Chrome", str(pf / r"Google\Chrome\Application\chrome.exe")),
         ("Google Chrome", str(pf86 / r"Google\Chrome\Application\chrome.exe")),
         ("Google Chrome", str(local / r"Google\Chrome\Application\chrome.exe")),
+        ("Chromium", str(pf / r"Chromium\Application\chrome.exe")),
+        ("Chromium", str(pf86 / r"Chromium\Application\chrome.exe")),
+        ("Chromium", str(local / r"Chromium\Application\chrome.exe")),
         ("Microsoft Edge", str(pf86 / r"Microsoft\Edge\Application\msedge.exe")),
         ("Microsoft Edge", str(pf / r"Microsoft\Edge\Application\msedge.exe")),
         ("Microsoft Edge", str(local / r"Microsoft\Edge\Application\msedge.exe")),
@@ -328,6 +419,8 @@ _BROWSER_CONFIG_MAP: dict[str, list[str]] = {
     "chrome": ["Google Chrome"],
     "arc": ["Arc"],
     "brave": ["Brave Browser"],
+    "dia": ["Dia"],
+    "comet": ["Comet"],
     "edge": ["Microsoft Edge"],
     "chromium": ["Chromium"],
     "vivaldi": ["Vivaldi"],
@@ -345,6 +438,16 @@ def _get_preferred_browser() -> str:
         return "auto"
 
 
+def _get_preferred_browser_path() -> str:
+    """Read the optional explicit Chromium executable path."""
+    try:
+        from notebooklm_tools.utils.config import load_config
+
+        return load_config().auth.browser_path.strip()
+    except Exception:
+        return ""
+
+
 def _get_chromium_path(preferred: str | None = None) -> str | None:
     """Return the path/executable for the first available Chromium-based browser.
 
@@ -354,7 +457,7 @@ def _get_chromium_path(preferred: str | None = None) -> str | None:
       falls back to the full priority list if not found.
 
     Set via ``nlm config set auth.browser <name>`` or ``NLM_BROWSER`` env var.
-    Valid names: auto, chrome, arc, brave, edge, chromium, vivaldi, opera.
+    Valid names: auto, chrome, arc, brave, dia, comet, edge, chromium, vivaldi, opera.
     """
     global _detected_browser_name
     if preferred is None:
@@ -377,6 +480,17 @@ def _get_chromium_path(preferred: str | None = None) -> str | None:
         else:
             _logger.info("Using preferred browser: %s", name)
         return path
+
+    explicit_path = _get_preferred_browser_path()
+    if explicit_path:
+        candidate = Path(explicit_path).expanduser()
+        is_executable = candidate.is_file() and (
+            platform.system() == "Windows" or os.access(candidate, os.X_OK)
+        )
+        if is_executable:
+            return _found("Custom Chromium browser", str(candidate))
+        _logger.error("Configured browser path is not an executable file: %s", candidate)
+        return None
 
     system = platform.system()
 
@@ -437,14 +551,17 @@ def _is_snap_browser(browser_path: str) -> bool:
     if not browser_path:
         return False
 
+    browser_text = str(browser_path).replace("\\", "/")
+
     # Direct snap path or snap binary wrapper
-    if "/snap/" in browser_path:
+    if "/snap/" in browser_text or browser_text.startswith("/snap/"):
         return True
 
-    # Check if it's a symlink pointing to a snap path
+    # Check if it's a symlink pointing to a snap path. Normalize the resolved
+    # path text because tests can simulate POSIX paths while running on Windows.
     try:
-        resolved = Path(browser_path).resolve()
-        if "/snap/" in str(resolved):
+        resolved_text = str(Path(browser_path).resolve()).replace("\\", "/")
+        if "/snap/" in resolved_text or resolved_text.startswith("/snap/"):
             return True
     except (OSError, RuntimeError):
         pass
@@ -462,18 +579,25 @@ def get_snap_common_dir(browser_path: str) -> Path | None:
     if not _is_snap_browser(browser_path):
         return None
 
-    # Extract snap name from path (e.g., /snap/chromium/3444/... -> chromium)
+    # Extract snap name from path (e.g., /snap/chromium/3444/... -> chromium).
+    # Normalize to POSIX separators so Linux-path simulations work on Windows.
     try:
-        resolved = Path(browser_path).resolve()
-        for part in resolved.parts:
+        resolved_text = str(Path(browser_path).resolve()).replace("\\", "/")
+        parts = [part for part in resolved_text.split("/") if part]
+        for index, part in enumerate(parts):
+            if part == "snap" and index + 1 < len(parts):
+                snap_name = parts[index + 1]
+                if snap_name in ("chromium", "google-chrome", "firefox"):
+                    return get_home_dir() / "snap" / snap_name / "common"
+        for part in parts:
             if part in ("chromium", "google-chrome", "firefox"):
-                return Path.home() / "snap" / part / "common"
+                return get_home_dir() / "snap" / part / "common"
     except (OSError, RuntimeError):
         pass
 
     # Fallback: try common snap names
     for snap_name in ("chromium", "google-chrome"):
-        snap_common = Path.home() / "snap" / snap_name / "common"
+        snap_common = get_home_dir() / "snap" / snap_name / "common"
         if snap_common.exists():
             return snap_common
 
@@ -502,8 +626,6 @@ def get_supported_browsers() -> list[str]:
 
 
 # Import Chrome profile directory from unified config
-import contextlib  # noqa: E402
-
 from notebooklm_tools.utils.config import get_chrome_profile_dir  # noqa: E402
 
 
@@ -602,18 +724,78 @@ def _mapped_chrome_owns_profile(pid: int | None, profile_name: str, port: int) -
     return user_data_dir == profile_path
 
 
+def _listener_pid(port: int) -> int | None:
+    """Return the PID listening on a local TCP port, if it can be determined."""
+    system = platform.system()
+    try:
+        if system == "Windows":
+            result = subprocess.run(
+                [
+                    "powershell",
+                    "-NoProfile",
+                    "-Command",
+                    (
+                        f"(Get-NetTCPConnection -LocalPort {int(port)} -State Listen "
+                        "-ErrorAction SilentlyContinue | Select-Object -First 1 "
+                        "-ExpandProperty OwningProcess)"
+                    ),
+                ],
+                capture_output=True,
+                text=True,
+                timeout=10,
+                check=False,
+            )
+            if result.returncode == 0:
+                text = result.stdout.strip()
+                return int(text) if text.isdigit() else None
+            return None
+
+        # macOS/Linux: prefer lsof; fall back to fuser on Linux.
+        for cmd in (
+            ["lsof", "-nP", f"-iTCP:{int(port)}", "-sTCP:LISTEN", "-t"],
+            ["fuser", f"{int(port)}/tcp"],
+        ):
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=5,
+                check=False,
+            )
+            if result.returncode not in (0, 1):
+                continue
+            # lsof -t prints one PID per line; fuser may print "12345" or "12345/tcp:"
+            for token in re.findall(r"\d+", (result.stdout or "") + " " + (result.stderr or "")):
+                return int(token)
+    except Exception:
+        return None
+    return None
+
+
+def _profile_owned_cdp_listener(port: int, profile_name: str) -> bool:
+    """Return whether the local CDP listener belongs to the requested profile."""
+    pid = _listener_pid(port)
+    return pid is not None and _mapped_chrome_owns_profile(pid, profile_name, port)
+
+
 def find_existing_nlm_chrome(
-    port_range: range = CDP_PORT_RANGE, profile_name: str = "default"
+    port_range: range = CDP_PORT_RANGE,
+    profile_name: str = "default",
+    include_headless: bool = False,
 ) -> tuple[int | None, str | None]:
     """Find an existing NLM Chrome instance for a specific profile.
 
     Uses the port-to-profile mapping to only reconnect to Chrome instances
     that belong to the requested profile, preventing cross-profile
-    contamination.
+    contamination. When the map is empty or stale, scans the local CDP port
+    range and reuses a listener only after verifying it was launched with this
+    profile's ``--user-data-dir`` (Issue #277).
 
     Args:
         port_range: Range of ports to scan.
         profile_name: Only reuse Chrome instances launched for this profile.
+        include_headless: Reuse profile-owned headless browsers too. Interactive
+            login flows keep this false; browser-backed RPC transport sets it true.
 
     Returns:
         The port number and debugger URL if found, (None, None) otherwise
@@ -633,7 +815,7 @@ def find_existing_nlm_chrome(
             continue
 
         ua = version_info.get("User-Agent", "")
-        if "Headless" in ua:
+        if "Headless" in ua and not include_headless:
             _logger.debug("Skipping headless mapped browser on port %d", port)
             _clear_port_map(port)
             continue
@@ -656,7 +838,39 @@ def find_existing_nlm_chrome(
 
         _clear_port_map(port)
 
-    # No mapped instance found for this profile
+    # Map miss / stale map: scan live CDP listeners and adopt only profile-owned ones.
+    for port in port_range:
+        version_info = _fetch_cdp_version(port, timeout=1)
+        if not version_info:
+            continue
+
+        ua = version_info.get("User-Agent", "")
+        if "Headless" in ua and not include_headless:
+            _logger.debug("Skipping headless unmapped browser on port %d", port)
+            continue
+
+        pid = _listener_pid(port)
+        if pid is None or not _mapped_chrome_owns_profile(pid, profile_name, port):
+            _logger.debug(
+                "Ignoring unmapped CDP on port %d (pid=%s) for profile '%s'",
+                port,
+                pid,
+                profile_name,
+            )
+            continue
+
+        debugger_url = _normalize_ws_url(version_info.get("webSocketDebuggerUrl"))
+        if not debugger_url:
+            continue
+
+        _write_port_map(port, profile_name, pid)
+        _logger.debug(
+            "Reusing unmapped profile-owned Chrome on port %d for profile '%s'",
+            port,
+            profile_name,
+        )
+        return port, debugger_url
+
     return None, None
 
 
@@ -795,18 +1009,17 @@ def terminate_chrome(process: subprocess.Popen | None = None, port: int | None =
         return False
 
     # Attempt graceful shutdown via CDP to prevent "Restore Pages" warnings on next launch
-    ws_to_close = _cached_ws
     try:
-        if port or _cached_ws_url:
-            execute_cdp_command(_cached_ws_url or get_debugger_url(_chrome_port), "Browser.close")
-            if ws_to_close:
-                ws_to_close.close()
+        debugger_url = _cached_ws_url or (get_debugger_url(port) if port else None)
+        if debugger_url:
+            execute_cdp_command(debugger_url, "Browser.close")
         else:
             process.terminate()
     except Exception:
         pass  # Ignore connection drops or failures during close
 
-    _cached_ws = _cached_ws_url = None
+    with _cdp_ws_lock:
+        _reset_cached_ws_unlocked()
 
     try:
         # Wait up to 5 seconds for the graceful shutdown to finish
@@ -829,6 +1042,69 @@ def terminate_chrome(process: subprocess.Popen | None = None, port: int | None =
         _chrome_process = None
         _chrome_port = None
     return True
+
+
+def close_profile_owned_cdp_browser(cdp_url: str, profile_name: str = "default") -> bool:
+    """Close a local CDP browser only after proving profile ownership.
+
+    This is intended for externally managed browsers. It never touches a
+    remote endpoint, and it refuses to clear the port mapping if a different
+    process replaces the managed listener while shutdown is in progress.
+    """
+    try:
+        cdp_http_url = normalize_cdp_http_url(cdp_url)
+        parsed = urlparse(cdp_http_url)
+        host = (parsed.hostname or "").casefold().rstrip(".")
+        if parsed.scheme not in {"http", "https"} or host not in {
+            "127.0.0.1",
+            "localhost",
+            "::1",
+        }:
+            return False
+        if parsed.port is None:
+            return False
+
+        port = parsed.port
+        pid = _listener_pid(port)
+        if pid is None or not _mapped_chrome_owns_profile(pid, profile_name, port):
+            return False
+
+        version = _fetch_cdp_version(port, timeout=1)
+        debugger_url = _normalize_ws_url((version or {}).get("webSocketDebuggerUrl"))
+        if debugger_url:
+            with contextlib.suppress(Exception):
+                execute_cdp_command(debugger_url, "Browser.close")
+            for _ in range(20):
+                time.sleep(0.1)
+                if not _pid_is_alive(pid):
+                    replacement_pid = _listener_pid(port)
+                    if replacement_pid not in (None, pid):
+                        return False
+                    _clear_port_map(port)
+                    return True
+
+        if not _pid_is_alive(pid):
+            replacement_pid = _listener_pid(port)
+            if replacement_pid not in (None, pid):
+                return False
+            _clear_port_map(port)
+            return True
+
+        current_pid = _listener_pid(port)
+        if current_pid != pid or not _mapped_chrome_owns_profile(pid, profile_name, port):
+            return False
+
+        _kill_process(pid)
+        for _ in range(20):
+            time.sleep(0.1)
+            if not _pid_is_alive(pid):
+                if _listener_pid(port) is not None:
+                    return False
+                _clear_port_map(port)
+                return True
+        return False
+    except Exception:
+        return False
 
 
 def _fetch_cdp_version(port: int, *, timeout: int = 5) -> dict | None:
@@ -872,7 +1148,7 @@ def find_or_create_notebooklm_page_by_cdp_url(cdp_http_url: str) -> dict | None:
             return page
 
     try:
-        encoded_url = quote(NOTEBOOKLM_URL, safe="")
+        encoded_url = quote(get_notebooklm_url(), safe="")
         response = httpx_client.put(
             f"{cdp_http_url}/json/new?{encoded_url}",
             timeout=15,
@@ -889,7 +1165,7 @@ def find_or_create_notebooklm_page_by_cdp_url(cdp_http_url: str) -> dict | None:
             page = response.json()
             ws_url = _normalize_ws_url(page.get("webSocketDebuggerUrl"))
             if ws_url:
-                navigate_to_url(ws_url, NOTEBOOKLM_URL)
+                navigate_to_url(ws_url, get_notebooklm_url())
             return page
         _logger.debug(
             "Failed to create blank page via PUT /json/new: HTTP %s", response.status_code
@@ -897,27 +1173,16 @@ def find_or_create_notebooklm_page_by_cdp_url(cdp_http_url: str) -> dict | None:
     except Exception as e:
         _logger.debug("Exception creating blank page via PUT /json/new: %s", e)
 
-    # All creation attempts failed — reuse an existing page
-    _logger.debug("Falling back to reusing an existing page.")
-    any_page: tuple[dict, str] | None = None
+    # All creation attempts failed — reuse only a safe blank/new-tab page.
+    _logger.debug("Falling back to reusing a blank existing page.")
     for page in pages:
         url = page.get("url", "")
         if url in ("about:blank", "chrome://newtab/"):
             ws_url = _normalize_ws_url(page.get("webSocketDebuggerUrl"))
             if ws_url:
                 _logger.debug("Reusing page with url %s", url)
-                navigate_to_url(ws_url, NOTEBOOKLM_URL)
+                navigate_to_url(ws_url, get_notebooklm_url())
                 return page
-        elif page.get("type") == "page" and any_page is None:
-            ws_url = _normalize_ws_url(page.get("webSocketDebuggerUrl"))
-            if ws_url:
-                any_page = (page, ws_url)
-
-    if any_page:
-        page, ws_url = any_page
-        _logger.debug("Reusing arbitrary page with url %s", page.get("url", ""))
-        navigate_to_url(ws_url, NOTEBOOKLM_URL)
-        return page
 
     return None
 
@@ -960,7 +1225,12 @@ def _cdp_websocket_without_proxy_env():
 
 
 def execute_cdp_command(
-    ws_url: str, method: str, params: dict | None = None, *, retry: bool = True
+    ws_url: str,
+    method: str,
+    params: dict | None = None,
+    *,
+    retry: bool = True,
+    response_timeout: float = 30,
 ) -> dict:
     """Execute a CDP command via WebSocket.
 
@@ -975,47 +1245,60 @@ def execute_cdp_command(
     global _cached_ws, _cached_ws_url
 
     if retry:
-        # Retry once in case of stale cached connection
+        # Retry once in case of stale cached connection. Close stale sockets so
+        # the second attempt cannot reuse a broken descriptor.
         try:
-            return execute_cdp_command(ws_url, method, params, retry=False)
+            return execute_cdp_command(
+                ws_url,
+                method,
+                params,
+                retry=False,
+                response_timeout=response_timeout,
+            )
         except Exception:
-            # Try again without the cached connection
-            _cached_ws = _cached_ws_url = None
+            pass  # Fall through to reconnect below
 
-    if ws_url != _cached_ws_url or not _cached_ws:
-        if _cached_ws:
-            _cached_ws.close()
-            _cached_ws = None
+    with _cdp_ws_lock:
+        if ws_url != _cached_ws_url or not _cached_ws:
+            _reset_cached_ws_unlocked()
 
-        # suppress_origin=True is required for some managed Chrome/CDP endpoints
-        # (e.g. OpenClaw browser profile) that reject default Origin headers.
+            # suppress_origin=True is required for some managed Chrome/CDP endpoints
+            # (e.g. OpenClaw browser profile) that reject default Origin headers.
+            try:
+                with _cdp_websocket_without_proxy_env():
+                    ws = websocket.create_connection(ws_url, timeout=30, suppress_origin=True)
+            except TypeError:
+                # Older websocket-client versions may not support suppress_origin.
+                with _cdp_websocket_without_proxy_env():
+                    ws = websocket.create_connection(ws_url, timeout=30)
+            _cached_ws = ws
+            _cached_ws_url = ws_url
+        else:
+            ws = _cached_ws
+
+        command_id = _next_cdp_command_id()
+        command = {"id": command_id, "method": method, "params": params or {}}
+        ws.send(json.dumps(command))
+
+        # Wait for response with matching ID. Long-running in-page fetches, such as
+        # streamed notebook queries, can legitimately exceed the default 30s wait.
+        ws.settimeout(response_timeout)
         try:
-            with _cdp_websocket_without_proxy_env():
-                ws = websocket.create_connection(ws_url, timeout=30, suppress_origin=True)
-        except TypeError:
-            # Older websocket-client versions may not support suppress_origin.
-            with _cdp_websocket_without_proxy_env():
-                ws = websocket.create_connection(ws_url, timeout=30)
-        _cached_ws = ws
-        _cached_ws_url = ws_url
-    else:
-        ws = _cached_ws
-
-    command = {"id": 1, "method": method, "params": params or {}}
-    ws.send(json.dumps(command))
-
-    # Wait for response with matching ID (timeout after 30s to avoid infinite block)
-    ws.settimeout(30)
-    try:
-        while True:
-            response = json.loads(ws.recv())
-            if response.get("id") == 1:
+            while True:
+                response = json.loads(ws.recv())
+                if response.get("id") != command_id:
+                    continue
+                if "error" in response:
+                    raise RuntimeError(f"CDP command '{method}' failed: {response['error']}")
                 return response.get("result", {})
-    except websocket.WebSocketTimeoutException as err:
-        _cached_ws = _cached_ws_url = None
-        raise TimeoutError(
-            f"CDP command '{method}' timed out after 30s waiting for response"
-        ) from err
+        except websocket.WebSocketTimeoutException as err:
+            _reset_cached_ws_unlocked()
+            raise TimeoutError(
+                f"CDP command '{method}' timed out after {response_timeout:g}s waiting for response"
+            ) from err
+        except Exception:
+            _reset_cached_ws_unlocked()
+            raise
 
 
 def get_page_cookies(ws_url: str) -> list[dict]:
@@ -1078,7 +1361,13 @@ def _is_notebooklm_url(url: str) -> bool:
         host = (urlparse(url).hostname or "").lower()
     except Exception:
         return False
-    return host in {"notebooklm.google.com", "notebooklm.cloud.google.com"}
+    return host in {
+        "notebooklm.google.com",
+        "notebook.google.com",
+        "notebooklm.cloud.google.com",
+        "notebook.cloud.google.com",
+        "vertexaisearch.cloud.google.com",
+    }
 
 
 def is_logged_in(url: str) -> bool:
@@ -1267,10 +1556,63 @@ def extract_cookies_via_cdp(
 
         # Snap Chromium and some Chromium forks can take noticeably longer
         # to expose CDP than the browser window itself takes to appear.
-        debugger_url = get_debugger_url(port, tries=30)
+        # If the child already exited (Chrome handoff to an existing profile
+        # lock), stop polling the unbound port immediately (#277).
+        debugger_url = None
+        launcher_exit_attempt: int | None = None
+        for attempt in range(30):
+            launcher_exited = _chrome_process is not None and _chrome_process.poll() is not None
+            if launcher_exited and launcher_exit_attempt is None:
+                launcher_exit_attempt = attempt
+
+            debugger_url = get_debugger_url(port, tries=1, timeout=1)
+            if debugger_url:
+                launcher_exited = _chrome_process is not None and _chrome_process.poll() is not None
+                if launcher_exited and launcher_exit_attempt is None:
+                    launcher_exit_attempt = attempt
+                # On Windows, the launcher can exit after handing off to an
+                # existing Chrome process. Do not accept a late listener
+                # until its PID is proven to own this profile.
+                if (
+                    platform.system() != "Windows"
+                    or not launcher_exited
+                    or _profile_owned_cdp_listener(port, profile_name)
+                ):
+                    break
+                debugger_url = None
+
+            if launcher_exited and (
+                platform.system() != "Windows"
+                or (launcher_exit_attempt is not None and attempt - launcher_exit_attempt >= 5)
+            ):
+                break
+            if attempt < 29:
+                time.sleep(1)
 
     if not debugger_url:
         startup_error = _summarize_browser_startup_failure(_chrome_process)
+        handed_off = (
+            not reused_existing
+            and _chrome_process is not None
+            and _chrome_process.poll() is not None
+        )
+        if handed_off:
+            # Chrome was already running under a different process, so the browser we
+            # launched handed off to it and exited immediately without ever binding the
+            # remote-debugging port.
+            hint = (
+                "Fully quit Chrome (all windows) and run 'nlm login' again. "
+                "If that doesn't help, use 'nlm login --manual' to import cookies from a file."
+            )
+            if startup_error:
+                hint = f"{hint} ({startup_error})"
+            raise AuthenticationError(
+                message=(
+                    "Chrome is already running, so the sign-in browser couldn't start "
+                    "with remote debugging."
+                ),
+                hint=hint,
+            )
         hint = "Use 'nlm login --manual' to import cookies from a file."
         if startup_error:
             hint = f"{hint} Browser startup error: {startup_error}"
@@ -1352,7 +1694,7 @@ def extract_cookies_from_page(
     # Navigate to NotebookLM if needed
     current_url = page.get("url", "")
     if not _is_notebooklm_url(current_url):
-        navigate_to_url(ws_url, NOTEBOOKLM_URL)
+        navigate_to_url(ws_url, get_notebooklm_url())
 
     # Check login status
     current_url = get_current_url(ws_url)
@@ -1400,6 +1742,7 @@ def extract_cookies_from_page(
     session_id = extract_session_id(html)
     email = extract_email(html)
     build_label = extract_build_label(html)
+    base_host = urlparse(current_url).hostname or ""
 
     return {
         "cookies": cookies,
@@ -1407,6 +1750,7 @@ def extract_cookies_from_page(
         "session_id": session_id,
         "email": email,
         "build_label": build_label,
+        "base_host": base_host,
     }
 
 
@@ -1536,14 +1880,23 @@ def run_headless_auth(
     chrome_was_running = False
 
     try:
-        # Try to connect to existing Chrome first
-        debugger_url = get_debugger_url(port)
+        # Try to connect only to a profile-owned existing Chrome first.
+        existing_port, debugger_url = find_existing_nlm_chrome(
+            port_range=range(port, port + 1),
+            profile_name=profile_name,
+            include_headless=True,
+        )
 
-        if debugger_url:
-            # Chrome already running - use existing instance
+        if existing_port is not None and debugger_url:
+            # Chrome already running for this profile - use existing instance
+            port = existing_port
             chrome_was_running = True
         else:
-            # No Chrome running - launch in headless mode
+            # No Chrome running - launch in headless mode. Pick a free port
+            # first so a foreign process already holding the default port can't
+            # make Chrome bind elsewhere (e.g. [::1]) while we probe the wrong
+            # listener (issue #330).
+            port = find_available_port(starting_from=port)
             chrome_process = launch_chrome_process(port, headless=True, profile_name=profile_name)
             if not chrome_process:
                 return None
@@ -1584,26 +1937,27 @@ def run_headless_auth(
         if not ready:
             return None
 
-        # Extract cookies
+        # Keep the raw list so per-domain values survive profile storage.
         cookies_list = get_page_cookies(ws_url)
-        cookies = {c["name"]: c["value"] for c in cookies_list}
 
-        if not validate_cookies(cookies):
+        if not validate_cookies(cookies_list):
             return None
 
         # Get page HTML for CSRF extraction
         # html already fetched by _wait_for_page_ready
         csrf_token = extract_csrf_token(html)
         session_id = extract_session_id(html)
+        base_host = urlparse(current_url).hostname or ""
 
         # Create and save tokens
         tokens = AuthTokens(
-            cookies=cookies,
+            cookies=cookies_list,
             csrf_token=csrf_token or "",
             session_id=session_id or "",
+            base_host=base_host,
             extracted_at=time.time(),
         )
-        save_tokens_to_cache(tokens)
+        save_tokens_to_cache(tokens, profile_name=profile_name)
 
         # Clean up cache to minimize profile size
         cleanup_chrome_profile_cache(profile_name)

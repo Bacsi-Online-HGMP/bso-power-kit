@@ -10,6 +10,7 @@ from notebooklm_tools import __version__
 from notebooklm_tools.cli.commands.alias import app as alias_app
 from notebooklm_tools.cli.commands.batch import app as batch_app
 from notebooklm_tools.cli.commands.chat import app as chat_app
+from notebooklm_tools.cli.commands.chats import chats_app
 from notebooklm_tools.cli.commands.config import app as config_app
 from notebooklm_tools.cli.commands.cross import app as cross_app
 from notebooklm_tools.cli.commands.doctor import app as doctor_app
@@ -39,6 +40,7 @@ from notebooklm_tools.cli.commands.studio import (
     video_app,
 )
 from notebooklm_tools.cli.commands.tag import app as tag_app
+from notebooklm_tools.cli.commands.usage import app as usage_app
 from notebooklm_tools.cli.commands.verbs import (
     add_app,
     configure_app,
@@ -83,6 +85,13 @@ login_app = typer.Typer(
 # Profile management subcommands
 profile_app = typer.Typer(
     help="Manage authentication profiles",
+    rich_markup_mode="rich",
+    no_args_is_help=True,
+)
+
+# Non-interactive session maintenance (for unattended installs / schedulers)
+auth_app = typer.Typer(
+    help="Session auth maintenance (headless refresh for schedulers)",
     rich_markup_mode="rich",
     no_args_is_help=True,
 )
@@ -142,6 +151,8 @@ def _best_effort_notebook_count(profile: Any) -> int | None:
             csrf_token=profile.csrf_token or "",
             session_id=profile.session_id or "",
             build_label=profile.build_label or "",
+            base_host=profile.base_host or "",
+            profile_name=getattr(profile, "name", None),
         ) as client:
             return len(client.list_notebooks())
     except Exception:
@@ -231,7 +242,7 @@ def login_callback(
     clear: bool = typer.Option(
         False,
         "--clear",
-        help="Delete the localized Chrome profile data before logging in, to switch Google accounts",
+        help="Delete the localized browser profile data before logging in, to switch Google accounts",
     ),
     wsl: bool = typer.Option(
         False,
@@ -242,7 +253,7 @@ def login_callback(
     """
     Authenticate with NotebookLM.
 
-    Default: Uses Chrome DevTools Protocol to extract cookies automatically.
+    Default: Uses the configured managed browser to extract cookies automatically.
     Use --manual to import cookies from a file.
     Use --check to validate existing credentials.
     Use --provider openclaw --cdp-url <url> to read auth from an existing
@@ -254,6 +265,7 @@ def login_callback(
     from notebooklm_tools.core.errors import ClientAuthenticationError
     from notebooklm_tools.core.exceptions import AccountMismatchError, NLMError
     from notebooklm_tools.services.auth import AuthManager
+    from notebooklm_tools.utils.auth_browser import extract_cookies_via_browser, select_auth_backend
     from notebooklm_tools.utils.config import get_config
 
     # If a subcommand is invoked, don't run login logic
@@ -312,7 +324,10 @@ def login_callback(
         console.print("[dim]Supported values: builtin, openclaw[/dim]")
         raise typer.Exit(1)
 
-    if not force:
+    # --clear switches accounts, so it must reach the browser even when the
+    # current session still validates; otherwise the early return skips the
+    # profile wipe entirely (issue #330).
+    if not force and not clear:
         try:
             p, notebook_count = _validate_saved_profile(auth)
             _print_auth_valid(p, notebook_count)
@@ -324,11 +339,12 @@ def login_callback(
         from notebooklm_tools.utils.cdp import (
             extract_cookies_via_cdp,
             extract_cookies_via_existing_cdp,
-            get_browser_display_name,
             terminate_chrome,
         )
 
         launched_local_chrome = False
+        managed_browser_backend = ""
+        managed_browser_name = ""
 
         # Default cdp_url for the builtin provider — used to detect when the
         # user explicitly passes their own --cdp-url value.
@@ -337,6 +353,7 @@ def login_callback(
         if wsl:
             # WSL mode: Launch Windows Chrome from WSL to avoid terminal corruption
             from notebooklm_tools.utils.wsl import (
+                MIRRORED_LOOPBACK_IP,
                 check_firewall_rule,
                 get_windows_host_ip,
                 is_wsl,
@@ -349,94 +366,113 @@ def login_callback(
                 console.print(
                     "[yellow]Warning:[/yellow] --wsl flag used but not in WSL environment. Ignoring."
                 )
-            else:
-                from notebooklm_tools.utils.wsl import DEFAULT_WSL_CDP_PORT
+                wsl = False
 
-                wsl_port = DEFAULT_WSL_CDP_PORT
-                # Chrome binds to localhost only (newer Chrome ignores
-                # --remote-debugging-address=0.0.0.0), so we launch it
-                # on a different port and rely on a netsh portproxy rule
-                # (listenport=wsl_port -> connectport=chrome_port) to
-                # bridge WSL traffic to localhost.
-                chrome_port = wsl_port + 1
-                windows_ip = get_windows_host_ip()
+        if wsl:
+            from notebooklm_tools.utils.wsl import DEFAULT_WSL_CDP_PORT, WSL_ADAPTER_ALIAS
 
-                if not windows_ip:
-                    console.print("[red]Error:[/red] Could not determine Windows host IP.")
-                    console.print("[dim]Hint: Check /etc/resolv.conf in WSL[/dim]")
-                    raise typer.Exit(1)
+            wsl_port = DEFAULT_WSL_CDP_PORT
+            # Chrome binds to localhost only (newer Chrome ignores
+            # --remote-debugging-address=0.0.0.0), so we launch it
+            # on a different port and rely on a netsh portproxy rule
+            # (listenport=wsl_port -> connectport=chrome_port) to
+            # bridge WSL traffic to localhost.
+            chrome_port = wsl_port + 1
+            windows_ip = get_windows_host_ip()
 
-                wsl_cdp_url = f"http://{windows_ip}:{wsl_port}"
+            if not windows_ip:
+                console.print("[red]Error:[/red] Could not determine Windows host IP.")
+                console.print("[dim]Hint: Check /etc/resolv.conf in WSL[/dim]")
+                raise typer.Exit(1)
 
-                console.print("[bold]WSL2 detected - launching Windows Chrome[/bold]")
+            is_mirrored = windows_ip == MIRRORED_LOOPBACK_IP
+            wsl_cdp_url = f"http://{windows_ip}:{wsl_port}"
+
+            console.print("[bold]WSL2 detected - launching Windows Chrome[/bold]")
+            console.print(
+                f"[dim]Windows host: {windows_ip}:{wsl_port} (proxy) -> localhost:{chrome_port} (Chrome)[/dim]"
+            )
+            console.print("[dim]Chrome binds to localhost; netsh portproxy bridges WSL[/dim]")
+
+            # Check Windows Firewall (not needed in mirrored mode —
+            # loopback traffic never crosses the Windows Firewall)
+            if is_mirrored:
                 console.print(
-                    f"[dim]Windows host: {windows_ip}:{wsl_port} (proxy) -> localhost:{chrome_port} (Chrome)[/dim]"
+                    "[dim]Mirrored networking: firewall rule not required (loopback)[/dim]"
                 )
-                console.print("[dim]Chrome binds to localhost; netsh portproxy bridges WSL[/dim]")
+            elif not check_firewall_rule(wsl_port):
+                console.print("\n[yellow]Windows Firewall Setup Required[/yellow]")
+                console.print(
+                    f"\nA firewall rule is needed to allow WSL to connect to Windows Chrome on port {wsl_port}."
+                )
+                console.print(
+                    "\n[bold]Step 1:[/bold] Open [cyan]Windows PowerShell as Administrator[/cyan] and run:"
+                )
+                console.print(
+                    f'\n  New-NetFirewallRule -DisplayName "NotebookLM-CDP-{wsl_port}" -Direction Inbound -Action Allow -Protocol TCP -LocalPort {wsl_port} -InterfaceAlias "{WSL_ADAPTER_ALIAS}" -RemoteAddress LocalSubnet\n'
+                )
+                console.print(
+                    "[bold]Step 2:[/bold] After running the command above, press [bold]Enter[/bold] here to continue..."
+                )
 
-                # Check Windows Firewall
+                input()
 
-                if not check_firewall_rule(wsl_port):
-                    console.print("\n[yellow]Windows Firewall Setup Required[/yellow]")
-                    console.print(
-                        f"\nA firewall rule is needed to allow WSL to connect to Windows Chrome on port {wsl_port}."
-                    )
-                    console.print(
-                        "\n[bold]Step 1:[/bold] Open [cyan]Windows PowerShell as Administrator[/cyan] and run:"
-                    )
-                    console.print(
-                        f'\n  New-NetFirewallRule -DisplayName "NotebookLM-CDP-{wsl_port}" -Direction Inbound -Action Allow -Protocol TCP -LocalPort {wsl_port} -RemoteAddress LocalSubnet\n'
-                    )
-                    console.print(
-                        "[bold]Step 2:[/bold] After running the command above, press [bold]Enter[/bold] here to continue..."
-                    )
-
-                    # Simple wait for Enter
-                    input()
-
-                    # Re-check if rule was created
-                    if check_firewall_rule(wsl_port):
-                        console.print("[green]✓[/green] Firewall rule detected!")
-                    else:
-                        console.print(
-                            "[yellow]Warning:[/yellow] Rule not yet detected, but will attempt to continue..."
-                        )
-                    console.print()
+                # Re-check if rule was created
+                if check_firewall_rule(wsl_port):
+                    console.print("[green]✓[/green] Firewall rule detected!")
                 else:
-                    console.print("[dim]Windows Firewall: rule exists[/dim]")
-                console.print()
-
-                try:
-                    chrome_process = launch_windows_chrome(chrome_port)
-                    console.print(f"[dim]Chrome PID: {chrome_process.pid}[/dim]")
-                except RuntimeError as e:
-                    console.print(f"[red]Error:[/red] {e}")
-                    console.print("[dim]Hint: Ensure Chrome is installed on Windows side[/dim]")
-                    raise typer.Exit(1) from e
-
-                console.print("[dim]Waiting for Chrome DevTools Protocol...[/dim]")
-                if not wait_for_cdp(wsl_cdp_url, timeout=30):
-                    console.print("[red]Error:[/red] Chrome did not start within 30 seconds.")
-                    console.print("\n[yellow]Troubleshooting:[/yellow]")
-                    console.print("  1. Ensure the Windows Firewall rule was created (step above)")
-                    console.print("  2. If Chrome is still running, close it and retry")
-                    console.print("  3. Or use manual mode: nlm login --manual --file <path>")
-                    terminate_windows_chrome(chrome_process)
-                    raise typer.Exit(1)
-
-                console.print("[green]✓[/green] Chrome ready, connecting...\n")
-
-                try:
-                    result = extract_cookies_via_existing_cdp(
-                        cdp_url=wsl_cdp_url,
-                        wait_for_login=True,
-                        login_timeout=300,
+                    console.print(
+                        "[yellow]Warning:[/yellow] Rule not yet detected, but will attempt to continue..."
                     )
-                finally:
-                    # Always terminate Windows Chrome
-                    terminate_windows_chrome(chrome_process)
+                console.print()
+            else:
+                console.print("[dim]Windows Firewall: rule exists[/dim]")
+                console.print(
+                    f'[dim]If you created it before v0.11.2 it may not be scoped to "{WSL_ADAPTER_ALIAS}".[/dim]'
+                )
+                console.print(
+                    "[dim]See docs/WSL_SETUP.md (Removing the bridge) to check and replace it.[/dim]"
+                )
+            console.print()
 
-                launched_local_chrome = True
+            try:
+                chrome_process = launch_windows_chrome(chrome_port)
+                console.print(f"[dim]Chrome PID: {chrome_process.pid}[/dim]")
+            except RuntimeError as e:
+                console.print(f"[red]Error:[/red] {e}")
+                console.print("[dim]Hint: Ensure Chrome is installed on Windows side[/dim]")
+                raise typer.Exit(1) from e
+
+            console.print("[dim]Waiting for Chrome DevTools Protocol...[/dim]")
+            if not wait_for_cdp(wsl_cdp_url, timeout=30):
+                console.print(
+                    f"[red]Error:[/red] Could not connect to CDP at {wsl_cdp_url} within 30 seconds."
+                )
+                console.print("\n[yellow]Troubleshooting:[/yellow]")
+                if is_mirrored:
+                    console.print(
+                        "  1. Ensure the netsh portproxy rule is active (netsh interface portproxy show all)"
+                    )
+                else:
+                    console.print("  1. Ensure the Windows Firewall rule was created (step above)")
+                console.print("  2. If Chrome is still running, close it and retry")
+                console.print("  3. Or use manual mode: nlm login --manual --file <path>")
+                terminate_windows_chrome(chrome_process)
+                raise typer.Exit(1)
+
+            console.print("[green]✓[/green] Chrome ready, connecting...\n")
+
+            try:
+                result = extract_cookies_via_existing_cdp(
+                    cdp_url=wsl_cdp_url,
+                    wait_for_login=True,
+                    login_timeout=300,
+                )
+            finally:
+                # Always terminate Windows Chrome
+                terminate_windows_chrome(chrome_process)
+
+            launched_local_chrome = True
 
         elif provider == "openclaw" or (provider == "builtin" and cdp_url != _BUILTIN_CDP_DEFAULT):
             # External CDP path: connect to an already-running browser.
@@ -452,55 +488,66 @@ def login_callback(
                 login_timeout=300,
             )
         else:
-            # Default: builtin CDP mode - managed Chrome profile
-            from notebooklm_tools.utils.cdp import get_browser_display_name, get_chrome_path
+            backend = select_auth_backend()
+            if backend is None:
+                extract_cookies_via_browser(profile_name=profile, clear_profile=clear)
+                raise AssertionError("Authentication backend unexpectedly returned no result")
 
-            # Detect browser early so messages show the correct name
-            get_chrome_path()
-            browser_name = get_browser_display_name()
-            console.print(f"[bold]Launching {browser_name} for authentication...[/bold]")
-            console.print("[dim]Using Chrome DevTools Protocol[/dim]\n")
+            managed_browser_backend = backend["backend"]
+            managed_browser_name = backend["browser"]
+            if managed_browser_backend == "firefox_profile":
+                console.print("[bold]Launching Firefox for authentication...[/bold]")
+                console.print("[dim]Using an isolated Firefox profile[/dim]\n")
+                result, _ = extract_cookies_via_browser(
+                    profile_name=profile,
+                    clear_profile=clear,
+                    preferred="firefox",
+                )
+            else:
+                from notebooklm_tools.utils.cdp import get_chrome_path
+                from notebooklm_tools.utils.config import (
+                    check_migration_sources,
+                    get_storage_dir,
+                    run_migration,
+                )
 
-            from notebooklm_tools.utils.config import (
-                check_migration_sources,
-                get_storage_dir,
-                run_migration,
-            )
+                get_chrome_path()
+                console.print(
+                    f"[bold]Launching {managed_browser_name} for authentication...[/bold]"
+                )
+                console.print("[dim]Using Chrome DevTools Protocol[/dim]\n")
 
-            # Check if we need to migrate from legacy packages
-            # IMPORTANT: Don't use get_chrome_profile_dir() here as it creates the directory,
-            # which would prevent migration from running
-            chrome_profile = get_storage_dir() / "chrome-profile"
-            profile_exists = chrome_profile.exists() and (
-                (chrome_profile / "Default").exists() or (chrome_profile / "Local State").exists()
-            )
+                chrome_profile = get_storage_dir() / "chrome-profile"
+                profile_exists = chrome_profile.exists() and (
+                    (chrome_profile / "Default").exists()
+                    or (chrome_profile / "Local State").exists()
+                )
+                if not profile_exists and not clear:
+                    sources = check_migration_sources()
+                    if sources["chrome_profiles"]:
+                        console.print(
+                            "[yellow]Found Chrome profile from legacy installation![/yellow]"
+                        )
+                        for src in sources["chrome_profiles"]:
+                            console.print(f"  [dim]{src}[/dim]")
+                        console.print("[dim]Migrating to new location...[/dim]")
+                        for action in run_migration(dry_run=False):
+                            console.print(f"  [green]✓[/green] {action}")
+                        console.print()
 
-            if not profile_exists and not clear:
-                sources = check_migration_sources()
-                if sources["chrome_profiles"]:
-                    console.print("[yellow]Found Chrome profile from legacy installation![/yellow]")
-                    for src in sources["chrome_profiles"]:
-                        console.print(f"  [dim]{src}[/dim]")
-                    console.print("[dim]Migrating to new location...[/dim]")
-
-                    actions = run_migration(dry_run=False)
-                    for action in actions:
-                        console.print(f"  [green]✓[/green] {action}")
-                    console.print()
-
-            console.print(f"Starting {browser_name}...")
-            result = extract_cookies_via_cdp(
-                auto_launch=True,
-                wait_for_login=True,
-                login_timeout=300,
-                profile_name=profile,
-                clear_profile=clear,
-            )
-            launched_local_chrome = True
+                console.print(f"Starting {managed_browser_name}...")
+                result = extract_cookies_via_cdp(
+                    auto_launch=True,
+                    wait_for_login=True,
+                    login_timeout=300,
+                    profile_name=profile,
+                    clear_profile=clear,
+                )
+                launched_local_chrome = True
 
         if result.get("reused_existing"):
             console.print(
-                f"[yellow]Warning:[/yellow] Connected to an already-running {get_browser_display_name()} instance. "
+                f"[yellow]Warning:[/yellow] Connected to an already-running {managed_browser_name} instance. "
                 "Profile isolation may not apply — verify the account is correct."
             )
 
@@ -509,6 +556,7 @@ def login_callback(
         session_id = result.get("session_id", "")
         email = result.get("email", "")
         build_label = result.get("build_label", "")
+        base_host = result.get("base_host", "")
 
         # Save to profile
         auth.save_profile(
@@ -518,11 +566,13 @@ def login_callback(
             email=email,
             force=force,
             build_label=build_label,
+            base_host=base_host,
+            browser_backend=managed_browser_backend or None,
         )
 
         # Close builtin auth Chrome to release profile lock (enables headless auth later)
         if launched_local_chrome:
-            console.print(f"[dim]Closing {get_browser_display_name()}...[/dim]")
+            console.print(f"[dim]Closing {managed_browser_name}...[/dim]")
             terminate_chrome()
 
         console.print("\n[green]✓[/green] Successfully authenticated!")
@@ -545,29 +595,37 @@ def login_callback(
                 f"[bold]{e.stored_email}[/bold])."
             )
             console.print(
-                f"[dim]Clearing stale browser session and relaunching {get_browser_display_name()}...[/dim]\n"
+                f"[dim]Clearing stale browser session and relaunching {managed_browser_name}...[/dim]\n"
             )
 
-            # Close the mismatch Chrome
-            with contextlib.suppress(Exception):
-                terminate_chrome()
+            if launched_local_chrome:
+                with contextlib.suppress(Exception):
+                    terminate_chrome()
 
             # Retry with cleared Chrome profile
             try:
-                result = extract_cookies_via_cdp(
-                    auto_launch=True,
-                    wait_for_login=True,
-                    login_timeout=300,
-                    profile_name=profile,
-                    clear_profile=True,
-                )
-                launched_local_chrome = True
+                if managed_browser_backend == "firefox_profile":
+                    result, _ = extract_cookies_via_browser(
+                        profile_name=profile,
+                        clear_profile=True,
+                        preferred="firefox",
+                    )
+                else:
+                    result = extract_cookies_via_cdp(
+                        auto_launch=True,
+                        wait_for_login=True,
+                        login_timeout=300,
+                        profile_name=profile,
+                        clear_profile=True,
+                    )
+                    launched_local_chrome = True
 
                 cookies = result["cookies"]
                 csrf_token = result.get("csrf_token", "")
                 session_id = result.get("session_id", "")
                 email = result.get("email", "")
                 build_label = result.get("build_label", "")
+                base_host = result.get("base_host", "")
 
                 auth.save_profile(
                     cookies=cookies,
@@ -576,10 +634,12 @@ def login_callback(
                     email=email,
                     force=True,  # Allow overwrite on retry
                     build_label=build_label,
+                    base_host=base_host,
+                    browser_backend=managed_browser_backend or None,
                 )
 
                 if launched_local_chrome:
-                    console.print(f"[dim]Closing {get_browser_display_name()}...[/dim]")
+                    console.print(f"[dim]Closing {managed_browser_name}...[/dim]")
                     terminate_chrome()
 
                 console.print("\n[green]✓[/green] Successfully authenticated!")
@@ -693,6 +753,7 @@ def profile_rename(
             session_id=profile_data.session_id,
             email=profile_data.email,
             build_label=profile_data.build_label,
+            base_host=profile_data.base_host,
         )
 
         # Delete old profile
@@ -741,17 +802,79 @@ def login_switch(
         console.print(f"[green]✓[/green] Switched default profile to [cyan]{profile}[/cyan]")
 
 
+@auth_app.command("refresh")
+def auth_refresh(
+    profile: str = typer.Option(
+        None,
+        "--profile",
+        "-p",
+        help="Profile to refresh (default: the configured default profile).",
+    ),
+) -> None:
+    """Refresh a session non-interactively so Google reissues its cookies.
+
+    Runs a headless-browser pass against the saved Chrome profile, which makes
+    Google reissue the short-lived cookies (``*PSIDTS``) that keep a session
+    alive. Unlike ``nlm login``, this needs no user interaction, so schedulers
+    (cron/launchd) can keep an unattended session alive without an interactive
+    re-login. Exits non-zero if the refresh fails, so scripts can react.
+    """
+    import os
+
+    from notebooklm_tools.utils.config import get_config
+
+    if os.environ.get("NOTEBOOKLM_COOKIES"):
+        console.print(
+            "[yellow]![/yellow] NOTEBOOKLM_COOKIES is set and overrides saved "
+            "credentials, so a refresh won't take effect. Update that value "
+            "(e.g. in your MCP config) instead."
+        )
+        raise typer.Exit(1)
+
+    if os.environ.get("NOTEBOOKLM_DISABLE_HEADLESS_REFRESH") == "1":
+        console.print(
+            "[yellow]![/yellow] Headless refresh is disabled via "
+            "NOTEBOOKLM_DISABLE_HEADLESS_REFRESH. Unset it to run a refresh."
+        )
+        raise typer.Exit(1)
+
+    profile_name = profile or get_config().auth.default_profile
+
+    from notebooklm_tools.utils.auth_browser import run_headless_auth
+
+    with console.status(f"Refreshing session for profile '{profile_name}'..."):
+        try:
+            tokens = run_headless_auth(profile_name=profile_name)
+        except Exception as exc:
+            console.print(f"[red]✗[/red] Refresh failed: {exc}")
+            raise typer.Exit(1) from exc
+
+    if not tokens:
+        console.print(
+            f"[red]✗[/red] Could not refresh profile '{profile_name}'. The saved "
+            "Chrome profile may be missing or its login expired — run 'nlm login' "
+            "to re-authenticate."
+        )
+        raise typer.Exit(1)
+
+    console.print(f"[green]✓[/green] Session refreshed for profile '{profile_name}'.")
+
+
 # Register profile commands under login
 login_app.add_typer(profile_app, name="profile")
 
 # Register login app with nested profile commands
 app.add_typer(login_app, name="login")
 
+# Register non-interactive session maintenance commands
+app.add_typer(auth_app, name="auth", help="Session auth maintenance")
+
 # Register noun-first subcommands (existing structure)
 app.add_typer(notebook_app, name="notebook", help="Manage notebooks")
 app.add_typer(label_app, name="label", help="Manage source labels")
 app.add_typer(note_app, name="note", help="Manage notes")
 app.add_typer(source_app, name="source", help="Manage sources")
+app.add_typer(chats_app, name="chats", help="Manage chat sessions")
 app.add_typer(chat_app, name="chat", help="Configure chat settings")
 app.add_typer(studio_app, name="studio", help="Manage studio artifacts")
 app.add_typer(research_app, name="research", help="Research and discover sources")
@@ -767,6 +890,7 @@ app.add_typer(batch_app, name="batch", help="Batch operations across notebooks")
 app.add_typer(cross_app, name="cross", help="Cross-notebook queries")
 app.add_typer(pipeline_app, name="pipeline", help="Run multi-step pipelines")
 app.add_typer(tag_app, name="tag", help="Manage notebook tags")
+app.add_typer(usage_app, name="usage", help="Show remaining plan usage and reset times")
 
 # Generation commands as top-level
 app.add_typer(audio_app, name="audio", help="Create audio overviews")

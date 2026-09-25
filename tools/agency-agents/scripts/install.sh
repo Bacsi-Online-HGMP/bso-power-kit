@@ -18,7 +18,7 @@
 #   gemini-cli   -- Install agents to ~/.gemini/agents/
 #   opencode     -- Copy agents to .opencode/agents/ in current directory
 #   cursor       -- Copy rules to .cursor/rules/ in current directory
-#   aider        -- Copy CONVENTIONS.md to current directory
+#   aider        -- Copy the CONVENTIONS.md roster index to current directory
 #   windsurf     -- Copy .windsurfrules to current directory
 #   openclaw     -- Copy workspaces to ~/.openclaw/agency-agents/
 #   qwen         -- Copy SubAgents to ~/.qwen/agents/ (user-wide) or .qwen/agents/ (project)
@@ -176,6 +176,19 @@ division_files() {
 # division_count <division> — number of agents in a division.
 division_count() { division_files "$1" | grep -c . ; }
 
+# agent_slug_exists <slug> — verify a requested agent against the source roster.
+# Selection filters should fail before installation when they name nothing that
+# can be installed; otherwise dry-run counts and completion messages lie.
+agent_slug_exists() {
+  local target="$1" div f
+  for div in "${ALL_DIVISIONS[@]}"; do
+    while IFS= read -r f; do
+      [[ "$(agent_slug "$f")" == "$target" ]] && return 0
+    done < <(division_files "$div")
+  done
+  return 1
+}
+
 # build_selection — compute the allowed slug set from --division/--agent/--agents-file.
 # With no filter flags, SELECTION_ACTIVE stays false (install everything).
 build_selection() {
@@ -184,20 +197,32 @@ build_selection() {
     return
   fi
   SELECTION_ACTIVE=true
-  local slugs="" div f s line
+  local slugs="" div f s line requested
   for div in ${FILTER_DIVISIONS[@]+"${FILTER_DIVISIONS[@]}"}; do
     while IFS= read -r f; do
       s="$(agent_slug "$f")"; [[ -n "$s" ]] && slugs+="$s"$'\n'
     done < <(division_files "$div")
   done
-  for s in ${FILTER_AGENTS[@]+"${FILTER_AGENTS[@]}"}; do slugs+="$(slugify "$s")"$'\n'; done
+  for s in ${FILTER_AGENTS[@]+"${FILTER_AGENTS[@]}"}; do
+    requested="$(slugify "$s")"
+    if ! agent_slug_exists "$requested"; then
+      err "Unknown agent '$s'. Use --list agents to see the available roster."
+      exit 1
+    fi
+    slugs+="$requested"$'\n'
+  done
   if [[ -n "$AGENTS_FILE" ]]; then
     [[ -f "$AGENTS_FILE" ]] || { err "agents-file not found: $AGENTS_FILE"; exit 1; }
     while IFS= read -r line || [[ -n "$line" ]]; do
       line="${line%%#*}"                              # strip trailing comment
       line="$(printf '%s' "$line" | xargs 2>/dev/null)" # trim
       [[ -z "$line" ]] && continue
-      slugs+="$(slugify "$line")"$'\n'
+      requested="$(slugify "$line")"
+      if ! agent_slug_exists "$requested"; then
+        err "Unknown agent '$line' in agents-file '$AGENTS_FILE'."
+        exit 1
+      fi
+      slugs+="$requested"$'\n'
     done < "$AGENTS_FILE"
   fi
   _ALLOWED_SLUGS="$(printf '%s' "$slugs" | sort -u | sed '/^$/d')"
@@ -258,6 +283,20 @@ install_file() {
 }
 
 # resolve_dest <tool> <default> — --path > $ENV_VAR > default.
+# path_collision_group <tool> — tools in the same group write identical
+# filenames into a shared --path and would overwrite each other; empty means
+# the tool's output is distinct and may share a path with anything. Derived by
+# installing one agent with every tool into a sandbox and comparing what
+# landed; re-measure if a converter's output naming changes.
+path_collision_group() {
+  case "$1" in
+    claude-code|copilot)             printf 'raw-source-md' ;;  # <division>-<slug>.md
+    gemini-cli|opencode|qwen|zcode)  printf 'slug-md' ;;        # <slug>.md
+    antigravity|osaurus)             printf 'agency-skill' ;;   # agency-<slug>/SKILL.md
+    *)                               printf '' ;;
+  esac
+}
+
 resolve_dest() {
   local tool="$1" def="$2" var=""
   [[ -n "$OVERRIDE_PATH" ]] && { printf '%s' "$OVERRIDE_PATH"; return; }
@@ -275,7 +314,20 @@ resolve_dest() {
     hermes)      var="HERMES_PLUGIN_DIR" ;;
     vibe)        var="VIBE_HOME" ;;
   esac
-  if [[ -n "$var" && -n "${!var:-}" ]]; then printf '%s' "${!var}"; else printf '%s' "$def"; fi
+  if [[ -n "$var" && -n "${!var:-}" ]]; then
+    if [[ "$tool" == "claude-code" ]]; then
+      # CLAUDE_CONFIG_DIR is the config root (it replaces ~/.claude);
+      # agents live in its agents/ subdirectory (fixes #578). Strip one
+      # trailing slash; a value already ending in /agents is used verbatim
+      # so users who worked around the old bug are not double-nested.
+      local cfg="${!var}"; cfg="${cfg%/}"
+      if [[ "$cfg" == */agents ]]; then printf '%s' "$cfg"; else printf '%s' "$cfg/agents"; fi
+    else
+      printf '%s' "${!var}"
+    fi
+  else
+    printf '%s' "$def"
+  fi
 }
 
 # resolve_tool_path <tool> — best-effort binary path for the detection UI.
@@ -299,7 +351,11 @@ ensure_converted() {
   $AUTO_CONVERT || return 0
   case "$tool" in claude-code|copilot) return 0 ;; esac
   local d="$INTEGRATIONS/$tool"
-  if [[ ! -d "$d" ]] || [[ -z "$(find "$d" -type f 2>/dev/null | head -1)" ]]; then
+  # Every integrations/<tool>/ ships a committed README.md, so "any file
+  # present" mistook the README for generated output and never converted in a
+  # fresh checkout (the installer then hard-failed "<tool> missing"). Only files
+  # other than the README count as output.
+  if [[ ! -d "$d" ]] || [[ -z "$(find "$d" -type f ! -name 'README.md' 2>/dev/null | head -1)" ]]; then
     warn "$tool: integration files missing — running convert.sh --tool $tool"
     "$SCRIPT_DIR/convert.sh" --tool "$tool" >/dev/null 2>&1 \
       && ok "$tool: generated integration files" \
@@ -372,7 +428,7 @@ check_integrations() {
 # ---------------------------------------------------------------------------
 # Tool detection
 # ---------------------------------------------------------------------------
-detect_claude_code() { [[ -d "${HOME}/.claude" ]]; }
+detect_claude_code() { [[ -d "${CLAUDE_CONFIG_DIR:-${HOME}/.claude}" ]]; }
 detect_copilot()      { command -v code >/dev/null 2>&1 || [[ -d "${HOME}/.github" || -d "${HOME}/.copilot" ]]; }
 detect_antigravity()  { [[ -d "${HOME}/.gemini/config/skills" ]]; }
 detect_gemini_cli()   { command -v gemini >/dev/null 2>&1 || [[ -d "${HOME}/.gemini" ]]; }
@@ -453,7 +509,7 @@ division_emoji() {
     academic) printf '📚';; design) printf '🎨';; engineering) printf '💻';;
     finance) printf '💵';; game-development) printf '🎮';; gis) printf '🌍';; marketing) printf '📢';;
     paid-media) printf '💰';; product) printf '📊';; project-management) printf '🎬';;
-    sales) printf '💼';; security) printf '🔒';; spatial-computing) printf '🥽';;
+    research) printf '🔍';; sales) printf '💼';; security) printf '🔒';; spatial-computing) printf '🥽';;
     specialized) printf '🎯';; support) printf '🛟';; testing) printf '🧪';; *) printf '•';;
   esac
 }
@@ -865,11 +921,28 @@ install_aider() {
   local dest="${PWD}/CONVENTIONS.md"
   [[ -f "$src" ]] || { err "integrations/aider/CONVENTIONS.md missing. Run convert.sh first."; return 1; }
   if [[ -f "$dest" ]]; then
-    warn "Aider: CONVENTIONS.md already exists at $dest (remove to reinstall)."
+    # Never overwrite: CONVENTIONS.md is aider's own user-authored file, and the
+    # one sitting here may well be the reader's rather than ours. But the guard
+    # used to strand the very users this integration was fixed for — anyone
+    # holding the pre-index roster (3.8M characters, far past what aider can keep
+    # in context for a session) re-ran the installer, read "already exists", and
+    # kept the broken file. Our generated file has always opened with the same
+    # marker, so tell our stale copy apart from someone else's conventions.
+    if head -n 1 "$dest" | grep -q 'The Agency'; then
+      local bytes; bytes="$(wc -c < "$dest" | tr -d ' ')"
+      warn "Aider: $dest is an Agency roster index from an earlier install ($bytes bytes)."
+      dim  "       The roster is an index now, not the agents themselves. Delete it and"
+      dim  "       re-run this installer to pick up the smaller file."
+    else
+      warn "Aider: CONVENTIONS.md already exists at $dest — leaving your file alone."
+      dim  "       Remove it and re-run to install the Agency roster index instead."
+    fi
     return 0
   fi
   install_file "$src" "$dest"
   ok "Aider: installed -> $dest"
+  dim  "       CONVENTIONS.md is the roster index. Load one agent's full instructions with"
+  dim  "       /read-only $REPO_ROOT/<path shown in the index>"
   $SELECTION_ACTIVE && warn "Aider: single-file format — team/agent filtering N/A (installs the full roster)."
   warn "Aider: project-scoped. Run from your project root to install there."
 }
@@ -1015,79 +1088,155 @@ ensure_hermes_plugin_enabled() {
   python3 - "$config" "$plugin" <<'PY'
 from pathlib import Path
 import sys
+import re
 
 path = Path(sys.argv[1])
 plugin = sys.argv[2]
 text = path.read_text() if path.exists() else ""
 lines = text.splitlines()
+plugin_strip = plugin.strip()
 
-# Already enabled?
-in_plugins = False
-in_enabled = False
-for line in lines:
+# Locate the plugins block boundaries, the indent of the enabled: key, and
+# the indent of any existing list items beneath it. Tracking these explicitly
+# avoids the previous bug where the script hardcoded "  " and broke any
+# config that used a different list-item indent (Hermes' default is 4 spaces).
+plugin_start = None
+end_line = None
+enabled_indent = ""
+item_indent = ""
+has_enabled = False
+enabled_empty = False
+for i, line in enumerate(lines):
     if line.startswith("plugins:"):
-        in_plugins = True
-        in_enabled = False
-        continue
-    if in_plugins and line and not line.startswith((" ", "\t")):
-        in_plugins = False
-        in_enabled = False
-    stripped_line = line.strip()
-    if in_plugins and stripped_line == "enabled:":
-        in_enabled = True
-        continue
-    if in_plugins and stripped_line.startswith("enabled:") and "[]" in stripped_line:
-        in_enabled = False
-        continue
-    if in_enabled:
-        stripped = line.strip()
-        if stripped.startswith("-"):
-            value = stripped[1:].strip().strip('"\'')
-            if value == plugin:
-                sys.exit(0)
-        elif line.startswith("  ") and stripped.endswith(":"):
-            in_enabled = False
+        plugin_start = i
+        j = i + 1
+        broke = False
+        while j < len(lines):
+            jl = lines[j]
+            if jl and not jl.startswith((" ", "\t")):
+                broke = True
+                break
+            stripped = jl.strip()
+            if stripped.startswith("enabled:") and not enabled_indent:
+                has_enabled = True
+                enabled_indent = jl[: len(jl) - len(stripped)]
+                if "[]" in stripped:
+                    enabled_empty = True
+            elif stripped.startswith("-") and has_enabled and not item_indent:
+                item_indent = jl[: len(jl) - len(stripped)]
+            j += 1
+        # If the inner loop ran off the end of the file (no sibling key to
+        # break on), end_line must still point one past the last scanned line
+        # so subsequent inserts land at the right place.
+        end_line = j if broke else len(lines)
+        break
 
-if not lines:
-    lines = ["plugins:", "  enabled:", f"  - {plugin}"]
-elif not any(line.startswith("plugins:") for line in lines):
+# Detect both "plugin already enabled" and the corrupted-scalar failure mode.
+# The previous bug emitted a 2-space-indent entry under a 4-space-indented
+# list, which PyYAML parses as a plain scalar string:
+#   plugins.enabled: ['agency-agents-router - basic - chronos - ponytail']
+# The file on disk still has literal "- " markers glued together — we repair
+# it by splitting the line back into one item per line.
+corrupted_lines = []
+has_plugin_already = False
+if has_enabled and not enabled_empty:
+    for idx in range(plugin_start + 1, end_line):
+        l = lines[idx]
+        stripped = l.strip()
+        if not stripped.startswith("-"):
+            continue
+        # Count "- " occurrences in the full stripped line. A healthy item
+        # has exactly one (the leading "- " marker); a corrupted glued line
+        # has more. We can't use whitespace-strict matching because words
+        # like "agency-agents-router" contain dashes.
+        if stripped.count("- ") > 1:
+            corrupted_lines.append(idx)
+        else:
+            value = stripped[1:].strip().strip('"\'')
+            if value == plugin_strip:
+                has_plugin_already = True
+
+# Repair corrupted lines (reverse order so indices stay valid as we splice).
+for idx in sorted(corrupted_lines, reverse=True):
+    l = lines[idx]
+    stripped = l.strip()
+    if not item_indent:
+        item_indent = l[: len(l) - len(stripped)] or (enabled_indent + "  ")
+    content = stripped[1:].strip()
+    parts = re.split(r"\s+-\s+", content)
+    new_lines = [f"{item_indent}- {parts[0]}"]
+    for p in parts[1:]:
+        new_lines.append(f"{item_indent}- {p}")
+    lines[idx : idx + 1] = new_lines
+    end_line += len(new_lines) - 1
+    # Re-evaluate plugin presence after the rewrite.
+    has_plugin_already = False
+    for nl in lines[plugin_start + 1 : end_line]:
+        if nl.strip().startswith("-") and nl[len(item_indent):].strip() == f"- {plugin_strip}":
+            has_plugin_already = True
+            break
+
+# Idempotent fast path.
+if has_plugin_already:
+    path.write_text("\n".join(lines) + "\n")
+    sys.exit(0)
+
+new_item_line = f"{item_indent or (enabled_indent + '  ')}- {plugin}"
+
+# Case 1: no plugins: block at all.
+if plugin_start is None:
     if lines and lines[-1].strip():
         lines.append("")
-    lines.extend(["plugins:", "  enabled:", f"  - {plugin}"])
-else:
-    out = []
-    in_plugins = False
-    inserted = False
-    saw_enabled = False
-    for idx, line in enumerate(lines):
-        if line.startswith("plugins:"):
-            in_plugins = True
-            out.append(line)
-            continue
-        if in_plugins and line and not line.startswith((" ", "\t")):
-            if not saw_enabled and not inserted:
-                out.extend(["  enabled:", f"  - {plugin}"])
-                inserted = True
-            in_plugins = False
-            out.append(line)
-            continue
-        if in_plugins and line.strip().startswith("enabled:") and "[]" in line:
-            saw_enabled = True
-            out.extend(["  enabled:", f"  - {plugin}"])
-            inserted = True
-            continue
-        if in_plugins and line.strip() == "enabled:":
-            saw_enabled = True
-            out.append(line)
-            # Insert before the next sibling key or top-level key; if the list is
-            # empty this still creates a valid block.
-            out.append(f"  - {plugin}")
-            inserted = True
-            continue
-        out.append(line)
-    if in_plugins and not saw_enabled and not inserted:
-        out.extend(["  enabled:", f"  - {plugin}"])
-    lines = out
+    lines.append("plugins:")
+    lines.append(f"{enabled_indent or '  '}enabled:")
+    lines.append(new_item_line)
+    path.write_text("\n".join(lines) + "\n")
+    sys.exit(0)
+
+# Case 2: enabled: [] (inline empty) — replace with a block-style list.
+if enabled_empty:
+    new_block = [
+        f"{enabled_indent}enabled:",
+        new_item_line,
+    ]
+    lines[plugin_start + 1 : plugin_start + 2] = new_block
+    path.write_text("\n".join(lines) + "\n")
+    sys.exit(0)
+
+# Case 3: enabled: block exists but has no items yet.
+if has_enabled and not item_indent and not enabled_empty:
+    for idx in range(plugin_start + 1, end_line):
+        if lines[idx].strip() == "enabled:":
+            lines.insert(idx + 1, new_item_line)
+            break
+    path.write_text("\n".join(lines) + "\n")
+    sys.exit(0)
+
+# Case 4: enabled: block with existing items — append at the end of the list
+# at the matching indent. Also normalize any sibling items whose indent
+# doesn't match (e.g. the original 2-space bug entry) so the file is left
+# consistent.
+insert_at = None
+for idx in range(end_line - 1, plugin_start, -1):
+    l = lines[idx]
+    stripped = l.strip()
+    if stripped.startswith("-"):
+        if l != item_indent + stripped:
+            lines[idx] = item_indent + stripped
+        insert_at = idx + 1
+        break
+# Fallback: no item line found in the scan (shouldn't happen if has_enabled
+# is True, but stay correct). Insert directly under the enabled: key.
+if insert_at is None and has_enabled:
+    for idx in range(plugin_start + 1, end_line):
+        if lines[idx].strip() == "enabled:":
+            insert_at = idx + 1
+            break
+if insert_at is None:
+    # Couldn't locate a sensible insertion point; bail without writing to
+    # avoid corrupting the file further.
+    sys.exit(1)
+lines.insert(insert_at, new_item_line)
 path.write_text("\n".join(lines) + "\n")
 PY
   if [[ -f "$backup" ]]; then
@@ -1222,9 +1371,34 @@ main() {
       local valid=false _vt
       for _vt in "${ALL_TOOLS[@]}"; do [[ "$_vt" == "$_t" ]] && valid=true && break; done
       $valid || { err "Unknown tool '$_t'. Valid: ${ALL_TOOLS[*]}"; exit 1; }
-      _cleaned+=("$_t")
+      # A repeated --tool value would otherwise launch duplicate workers in
+      # --parallel mode and make the reported install count misleading.
+      local duplicate=false _selected
+      if [[ ${#_cleaned[@]} -gt 0 ]]; then
+        for _selected in "${_cleaned[@]}"; do
+          [[ "$_selected" == "$_t" ]] && { duplicate=true; break; }
+        done
+      fi
+      $duplicate || _cleaned+=("$_t")
     done
     _tool_list=("${_cleaned[@]}")
+    # --path is one shared directory. Tools that write the same filenames into
+    # it silently overwrite each other; tools with distinct outputs coexist.
+    # Refuse only the colliding combinations (see path_collision_group).
+    if [[ -n "$OVERRIDE_PATH" && ${#_tool_list[@]} -gt 1 ]]; then
+      local _ta _tb _ga _gb
+      for _ta in "${_tool_list[@]}"; do
+        _ga="$(path_collision_group "$_ta")"; [[ -z "$_ga" ]] && continue
+        for _tb in "${_tool_list[@]}"; do
+          [[ "$_tb" == "$_ta" ]] && continue
+          _gb="$(path_collision_group "$_tb")"
+          if [[ "$_ga" == "$_gb" ]]; then
+            err "--path is one shared directory, and $_ta and $_tb write the same filenames into it — they would overwrite each other. Use one of them per --path (tools with distinct outputs may share one)."
+            exit 1
+          fi
+        done
+      done
+    fi
   fi
 
   # Decide whether to show interactive UI

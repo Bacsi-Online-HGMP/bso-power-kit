@@ -35,12 +35,26 @@ VALID_ARTIFACT_TYPES = frozenset(
         "infographic",
         "slide_deck",
         "report",
+        "interactive_report",
         "flashcards",
         "quiz",
         "data_table",
         "mind_map",
     ]
 )
+
+# Type-2 report formats the API accepts for classic (text) reports. Interactive
+# reports are selected with report_format="Interactive" (or artifact_type=
+# "interactive_report") and additionally take a template argument.
+_CLASSIC_REPORT_FORMATS = frozenset(
+    {
+        constants.REPORT_FORMAT_BRIEFING_DOC,
+        constants.REPORT_FORMAT_STUDY_GUIDE,
+        constants.REPORT_FORMAT_BLOG_POST,
+        constants.REPORT_FORMAT_CUSTOM,
+    }
+)
+_INTERACTIVE_REPORT_FORMAT = constants.REPORT_FORMAT_INTERACTIVE.lower()
 
 _CINEMATIC_FOCUS_HINT = (
     "Use --focus to pass creative direction (visual style, narrative, audience)."
@@ -83,6 +97,8 @@ class ArtifactInfo(TypedDict, total=False):
     status: str
     error_reason: str | None
     created_at: str | None
+    download_filename: str | None
+    mime_type: str | None
     url: str | None
     custom_instructions: str | None
     visual_style_prompt: str | None
@@ -92,6 +108,9 @@ class ArtifactInfo(TypedDict, total=False):
     infographic_url: str | None
     slide_deck_url: str | None
     report_content: str | None
+    report_prompt: str | None
+    report_language: str | None
+    element_count: int | None
     flashcard_count: int | None
     duration_seconds: int | None
 
@@ -103,6 +122,10 @@ class StatusResult(TypedDict):
     total: int
     completed: int
     in_progress: int
+    returned: int
+    offset: int
+    limit: int | None
+    has_more: bool
 
 
 class RenameResult(TypedDict):
@@ -142,6 +165,26 @@ def validate_artifact_type(artifact_type: str) -> None:
         raise ValidationError(
             f"Unknown artifact type '{artifact_type}'. "
             f"Valid types: {', '.join(sorted(VALID_ARTIFACT_TYPES))}",
+        )
+
+
+def _validate_report_options(report_format: str, report_template: str) -> None:
+    """Validate the report format/template combination.
+
+    Classic (type 2) formats take no template; "Interactive" (type 11) is the
+    only format that accepts one (currently ``learning_overview``).
+    """
+    if report_format.strip().lower() == _INTERACTIVE_REPORT_FORMAT:
+        try:
+            constants.INTERACTIVE_REPORT_TEMPLATES.get_code(report_template)
+        except ValueError as e:
+            raise ValidationError(f"Invalid report_template: {e}") from e
+        return
+
+    if report_format not in _CLASSIC_REPORT_FORMATS:
+        valid = ", ".join(sorted(_CLASSIC_REPORT_FORMATS) + [constants.REPORT_FORMAT_INTERACTIVE])
+        raise ValidationError(
+            f"Invalid report_format: '{report_format}'. Must be one of: {valid}",
         )
 
 
@@ -277,6 +320,7 @@ def create_artifact(
     slide_length: str = "default",
     # Report
     report_format: str = "Briefing Doc",
+    report_template: str = constants.DEFAULT_INTERACTIVE_REPORT_TEMPLATE,
     custom_prompt: str = "",
     # Quiz
     question_count: int = 2,
@@ -303,6 +347,14 @@ def create_artifact(
     """
     validate_artifact_type(artifact_type)
 
+    # "interactive_report" is sugar for a report with the Interactive format.
+    if artifact_type == "interactive_report":
+        artifact_type = "report"
+        report_format = constants.REPORT_FORMAT_INTERACTIVE
+
+    if artifact_type == "report":
+        _validate_report_options(report_format, report_template)
+
     if artifact_type == "video":
         # Cinematic/Short formats: --style-prompt maps to custom_instructions (same as
         # --focus), not visual_style_prompt. Remap before validation so the user can use either flag.
@@ -312,6 +364,22 @@ def create_artifact(
             else:
                 focus_prompt = video_style_prompt
             video_style_prompt = ""
+
+        language_code = language.strip()
+        if (
+            video_format == "short"
+            and language_code
+            and language_code.split("-", 1)[0].lower() != "en"
+        ):
+            language_requirement = (
+                f"Language requirement: Generate the entire Short in {language_code}, including "
+                "narration, subtitles, and all on-screen text."
+            )
+            focus_prompt = (
+                f"{language_requirement}\n\n{focus_prompt}"
+                if focus_prompt
+                else language_requirement
+            )
 
         _normalize_video_style(
             video_format=video_format,
@@ -341,6 +409,7 @@ def create_artifact(
             slide_format=slide_format,
             slide_length=slide_length,
             report_format=report_format,
+            report_template=report_template,
             custom_prompt=custom_prompt,
             question_count=question_count,
             difficulty=difficulty,
@@ -472,6 +541,15 @@ def _dispatch_create(
         )
 
     elif artifact_type == "report":
+        if kwargs["report_format"].strip().lower() == _INTERACTIVE_REPORT_FORMAT:
+            return client.create_interactive_report(
+                notebook_id,
+                source_ids=source_ids,
+                template=kwargs.get("report_template")
+                or constants.DEFAULT_INTERACTIVE_REPORT_TEMPLATE,
+                custom_prompt=kwargs["custom_prompt"],
+                language=kwargs["language"],
+            )
         return client.create_report(
             notebook_id,
             source_ids=source_ids,
@@ -602,6 +680,11 @@ def _derive_error_reason(raw_artifact: dict[str, Any]) -> str | None:
 def get_studio_status(
     client: NotebookLMClient,
     notebook_id: str,
+    *,
+    artifact_id: str | None = None,
+    include_details: bool = True,
+    limit: int | None = None,
+    offset: int = 0,
 ) -> StatusResult:
     """Get status of all studio artifacts including mind maps.
 
@@ -611,6 +694,11 @@ def get_studio_status(
     Raises:
         ServiceError: If polling fails
     """
+    if limit is not None and not 1 <= limit <= 100:
+        raise ValidationError("limit must be between 1 and 100")
+    if offset < 0:
+        raise ValidationError("offset must be 0 or greater")
+
     try:
         raw_artifacts = client.poll_studio_status(notebook_id)
     except Exception as e:
@@ -631,6 +719,12 @@ def get_studio_status(
             "status": raw_artifact.get("status")
             if isinstance(raw_artifact.get("status"), str)
             else "unknown",
+            "download_filename": raw_artifact.get("download_filename")
+            if isinstance(raw_artifact.get("download_filename"), str)
+            else None,
+            "mime_type": raw_artifact.get("mime_type")
+            if isinstance(raw_artifact.get("mime_type"), str)
+            else None,
             # Surface a failure signal so callers stop polling and act. The raw
             # gRPC payload carries no error string, so prefer any real key if a
             # future API exposes one, else synthesize a reason for failed
@@ -668,6 +762,17 @@ def get_studio_status(
             if isinstance(raw_artifact.get("report_content"), str)
             or raw_artifact.get("report_content") is None
             else None,
+            "report_prompt": raw_artifact.get("report_prompt")
+            if isinstance(raw_artifact.get("report_prompt"), str)
+            or raw_artifact.get("report_prompt") is None
+            else None,
+            "report_language": raw_artifact.get("report_language")
+            if isinstance(raw_artifact.get("report_language"), str)
+            or raw_artifact.get("report_language") is None
+            else None,
+            "element_count": len(raw_artifact.get("report_elements"))
+            if isinstance(raw_artifact.get("report_elements"), list)
+            else None,
             "flashcard_count": raw_artifact.get("flashcard_count")
             if isinstance(raw_artifact.get("flashcard_count"), int)
             or raw_artifact.get("flashcard_count") is None
@@ -680,17 +785,22 @@ def get_studio_status(
                 sid for sid in (raw_artifact.get("source_ids") or []) if isinstance(sid, str)
             ],
         }
-        artifact_id = raw_artifact.get("artifact_id")
-        if isinstance(artifact_id, str):
-            artifact["artifact_id"] = artifact_id
+        raw_artifact_id = raw_artifact.get("artifact_id")
+        if isinstance(raw_artifact_id, str):
+            artifact["artifact_id"] = raw_artifact_id
         artifacts.append(artifact)
 
     # Also fetch mind maps
     try:
         mind_maps = client.list_mind_maps(notebook_id)
+        known_artifact_ids = {
+            known_id
+            for artifact in artifacts
+            if isinstance((known_id := artifact.get("artifact_id")), str)
+        }
         for mm in mind_maps:
             mind_map_id = mm.get("mind_map_id")
-            if not isinstance(mind_map_id, str):
+            if not isinstance(mind_map_id, str) or mind_map_id in known_artifact_ids:
                 continue
             mind_map_title = mm.get("title")
             mind_map_created_at = mm.get("created_at")
@@ -705,17 +815,45 @@ def get_studio_status(
                     else str(mind_map_created_at),
                 }
             )
+            known_artifact_ids.add(mind_map_id)
     except Exception:
         pass  # Mind maps are optional
 
     completed = [a for a in artifacts if a.get("status") == "completed"]
     in_progress = [a for a in artifacts if a.get("status") == "in_progress"]
 
+    selected = artifacts
+    if artifact_id:
+        selected = [a for a in artifacts if a.get("artifact_id") == artifact_id]
+        offset = 0
+        limit = 1
+
+    page = selected[offset : offset + limit if limit is not None else None]
+    has_more = offset + len(page) < len(selected)
+
+    if not include_details:
+        lean_fields = {
+            "artifact_id",
+            "type",
+            "title",
+            "status",
+            "created_at",
+            "error_reason",
+        }
+        page = [
+            {key: value for key, value in artifact.items() if key in lean_fields}
+            for artifact in page
+        ]
+
     return StatusResult(
-        artifacts=artifacts,
+        artifacts=page,
         total=len(artifacts),
         completed=len(completed),
         in_progress=len(in_progress),
+        returned=len(page),
+        offset=offset,
+        limit=limit,
+        has_more=has_more,
     )
 
 
@@ -886,3 +1024,22 @@ def revise_artifact(
         status=result.get("status", "in_progress"),
         message="Slide deck revision started. A new artifact will be created.",
     )
+
+
+# Interactive report services live in their own module; re-exported for callers.
+from .interactive_reports import (  # noqa: E402, F401
+    REVIEW_LABEL,
+    BatchResult,
+    ElementListResult,
+    ElementOutcome,
+    ReportElementInfo,
+    ReportElementResult,
+    ReportInfo,
+    describe_element_settings,
+    generate_report_element,
+    generate_report_elements,
+    get_report,
+    list_report_elements,
+    parse_element_plan,
+    prepare_element_plan,
+)

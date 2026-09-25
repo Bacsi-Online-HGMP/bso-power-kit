@@ -23,6 +23,8 @@ from .errors import (
 from .errors import (
     ClientAuthenticationError as AuthenticationError,
 )
+from .studio import render_interactive_report_markdown
+from .utils import is_mind_map_json
 
 
 class DownloadMixin(BaseClient):
@@ -41,7 +43,11 @@ class DownloadMixin(BaseClient):
     """
 
     _AUDIO_DOWNLOAD_RETRY_DELAYS = (5, 10, 20, 30, 45, 60, 60)
-    _GOOGLE_MEDIA_DOWNLOAD_HOSTS = {"lh3.googleusercontent.com", "lh3.google.com"}
+    _GOOGLE_MEDIA_DOWNLOAD_HOSTS = {
+        "drum.usercontent.google.com",
+        "lh3.googleusercontent.com",
+        "lh3.google.com",
+    }
 
     # =========================================================================
     # Core Download Infrastructure
@@ -245,6 +251,58 @@ class DownloadMixin(BaseClient):
                 temp_file.unlink()
             raise ArtifactDownloadError(
                 "file", details=f"Failed to download from {url[:50]}...: {str(e)}"
+            ) from e
+
+    def _download_url_sync(self, url: str, output_path: str) -> str:
+        """Stream a binary artifact URL synchronously to a local file."""
+        output_file = Path(output_path)
+        output_file.parent.mkdir(parents=True, exist_ok=True)
+        temp_file = output_file.with_suffix(output_file.suffix + ".tmp")
+
+        base_headers = getattr(
+            self,
+            "_PAGE_FETCH_HEADERS",
+            {"User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36"},
+        )
+        headers = {
+            **base_headers,
+            "Referer": f"{self._get_base_url()}/",
+            "Sec-Fetch-Site": "cross-site",
+            "Sec-Fetch-Dest": "document",
+            "Sec-Fetch-Mode": "navigate",
+            "Sec-Fetch-User": "?1",
+        }
+        cookies = self._get_httpx_cookies()
+        for domain in (".google.com", ".googleusercontent.com"):
+            cookies.delete("OSID", domain=domain)
+            cookies.delete("__Secure-OSID", domain=domain)
+
+        timeout = httpx.Timeout(connect=10.0, read=30.0, write=30.0, pool=30.0)
+        try:
+            with (
+                httpx.Client(
+                    cookies=cookies, headers=headers, follow_redirects=True, timeout=timeout
+                ) as client,
+                client.stream("GET", url) as response,
+            ):
+                response.raise_for_status()
+                with open(temp_file, "wb") as output:
+                    for chunk in response.iter_bytes(chunk_size=65536):
+                        output.write(chunk)
+
+            temp_file.rename(output_file)
+            return str(output_file)
+        except httpx.HTTPError as e:
+            if temp_file.exists():
+                temp_file.unlink()
+            raise ArtifactDownloadError(
+                "file", details=f"HTTP error downloading from {url[:50]}...: {e}"
+            ) from e
+        except Exception as e:
+            if temp_file.exists():
+                temp_file.unlink()
+            raise ArtifactDownloadError(
+                "file", details=f"Failed to download from {url[:50]}...: {e}"
             ) from e
 
     def _list_raw(self, notebook_id: str) -> list[Any]:
@@ -604,11 +662,14 @@ class DownloadMixin(BaseClient):
         """
         artifacts = self._list_raw(notebook_id)
 
-        # Filter for completed reports (Type 6, Status 3)
+        # Filter for completed reports (classic type 2 and interactive type 11)
         candidates = []
         for a in artifacts:
             if isinstance(a, list) and len(a) > 7:  # noqa: SIM102
-                if a[2] == self.STUDIO_TYPE_REPORT and a[4] == 3:
+                if (
+                    a[2] in (self.STUDIO_TYPE_REPORT, self.STUDIO_TYPE_INTERACTIVE_REPORT)
+                    and a[4] == 3
+                ):
                     candidates.append(a)
 
         if not candidates:
@@ -623,6 +684,24 @@ class DownloadMixin(BaseClient):
             target = candidates[0]
 
         try:
+            if target[2] == self.STUDIO_TYPE_INTERACTIVE_REPORT:
+                # Interactive reports render from their structured document
+                # (index 34). Prepend the artifact title as a Markdown H1; the
+                # document itself starts at H2 level.
+                markdown_content = render_interactive_report_markdown(target)
+                if not markdown_content:
+                    raise ArtifactParseError(
+                        "report", details="Interactive report has no document yet"
+                    )
+                title = target[1] if len(target) > 1 and isinstance(target[1], str) else ""
+                if title:
+                    markdown_content = f"# {title}\n\n{markdown_content}"
+
+                output = Path(output_path)
+                output.parent.mkdir(parents=True, exist_ok=True)
+                output.write_text(markdown_content, encoding="utf-8")
+                return str(output)
+
             # Report content is in index 7
             content_wrapper = target[7]
             markdown_content = ""
@@ -670,18 +749,31 @@ class DownloadMixin(BaseClient):
             if isinstance(result[0], list):
                 mind_maps = result[0]
 
-        if not mind_maps:
-            raise ArtifactNotReadyError("mind_map")
+        # The notes store holds both regular notes (prose content) and mind
+        # maps (JSON content) — keep only real mind maps so an unqualified
+        # download can't pick a note and a note ID reports "not found".
+        mind_maps = [
+            mm
+            for mm in mind_maps
+            if isinstance(mm, list)
+            and len(mm) > 1
+            and isinstance(mm[1], list)
+            and len(mm[1]) > 1
+            and is_mind_map_json(mm[1][1])
+        ]
 
         target = None
         if artifact_id:
             target = next(
                 (mm for mm in mind_maps if isinstance(mm, list) and mm[0] == artifact_id), None
             )
-            if not target:
-                raise ArtifactNotFoundError(artifact_id, artifact_type="mind_map")
-        else:
+        elif mind_maps:
             target = mind_maps[0]
+
+        if target is None:
+            # Newer mind maps are stored as type-4 studio artifacts (format
+            # code 4) rather than in the notes store — fall back to those.
+            return self._download_studio_mind_map(notebook_id, output_path, artifact_id)
 
         try:
             # Mind map JSON is stringified in target[1][1]
@@ -701,6 +793,55 @@ class DownloadMixin(BaseClient):
 
         except (IndexError, TypeError, json.JSONDecodeError, AttributeError) as e:
             raise ArtifactParseError("mind_map", details=str(e)) from e
+
+    def _download_studio_mind_map(
+        self,
+        notebook_id: str,
+        output_path: str,
+        artifact_id: str | None = None,
+    ) -> str:
+        """Download a studio-side mind map (type-4 artifact, format code 4).
+
+        The mind map JSON ({"name": ..., "children": [...]}) is embedded in
+        the artifact's interactive HTML as data-app-data.
+        """
+        artifacts = self._list_raw(notebook_id)
+        candidates = [
+            a
+            for a in artifacts
+            if isinstance(a, list)
+            and len(a) > 4
+            and a[2] == self.STUDIO_TYPE_FLASHCARDS
+            and a[4] == 3
+            and self._interactive_format_code(a) == 4
+        ]
+
+        if artifact_id:
+            target = next((a for a in candidates if a[0] == artifact_id), None)
+            if target is None:
+                raise ArtifactNotFoundError(artifact_id, artifact_type="mind_map")
+        else:
+            if not candidates:
+                raise ArtifactNotReadyError("mind_map")
+            target = candidates[0]
+
+        html_content = self._get_artifact_content(notebook_id, target[0])
+        if not html_content:
+            raise ArtifactDownloadError("mind_map", details="Failed to fetch HTML content from API")
+
+        try:
+            app_data = self._extract_app_data(html_content)
+        except ArtifactParseError:
+            raise
+        except (ValueError, json.JSONDecodeError) as e:
+            raise ArtifactParseError("mind_map", details=str(e)) from e
+
+        output = Path(output_path)
+        output.parent.mkdir(parents=True, exist_ok=True)
+        output.write_text(json.dumps(app_data, indent=2, ensure_ascii=False), encoding="utf-8")
+
+        logger.info(f"Downloaded mind map to {output}")
+        return str(output)
 
     @staticmethod
     def _extract_cell_text(cell: Any, _depth: int = 0) -> str:
@@ -906,11 +1047,11 @@ class DownloadMixin(BaseClient):
         output_path: str,
         artifact_id: str | None = None,
     ) -> str:
-        """Download a data table as CSV.
+        """Download a data table as CSV or an XLSX export.
 
         Args:
             notebook_id: The notebook ID.
-            output_path: Path to save the CSV file.
+            output_path: Path to save the CSV or XLSX file.
             artifact_id: Specific artifact ID, or uses first completed data table.
 
         Returns:
@@ -918,11 +1059,14 @@ class DownloadMixin(BaseClient):
         """
         artifacts = self._list_raw(notebook_id)
 
-        # Filter for completed data tables (Type 9, Status 3)
+        # Filter for completed data tables (Type 9) and XLSX exports (Type 10).
         candidates = []
         for a in artifacts:
-            if isinstance(a, list) and len(a) > 18:  # noqa: SIM102
-                if a[2] == self.STUDIO_TYPE_DATA_TABLE and a[4] == 3:
+            if isinstance(a, list) and len(a) > 4:  # noqa: SIM102
+                if (
+                    a[2] in (self.STUDIO_TYPE_DATA_TABLE, self.STUDIO_TYPE_DATA_TABLE_XLSX)
+                    and a[4] == 3
+                ):
                     candidates.append(a)
 
         if not candidates:
@@ -937,6 +1081,22 @@ class DownloadMixin(BaseClient):
             target = candidates[0]
 
         try:
+            if target[2] == self.STUDIO_TYPE_DATA_TABLE_XLSX:
+                # XLSX exports are already serialized binary files. The URL is
+                # carried in [24] as [filename, mime, viewer_url, download_url].
+                file_metadata = target[24]
+                if (
+                    not isinstance(file_metadata, list)
+                    or len(file_metadata) <= 3
+                    or not isinstance(file_metadata[3], str)
+                    or not file_metadata[3]
+                ):
+                    raise ArtifactParseError(
+                        "data_table",
+                        details="Invalid XLSX download metadata at artifact[24]",
+                    )
+                return self._download_url_sync(file_metadata[3], output_path)
+
             # Data is at index 18
             raw_data = target[18]
             headers, rows = self._parse_data_table(raw_data)
@@ -955,9 +1115,129 @@ class DownloadMixin(BaseClient):
         except (IndexError, TypeError, AttributeError) as e:
             raise ArtifactParseError("data_table", details=str(e)) from e
 
+    @staticmethod
+    def _is_trusted_file_export_url(url: str) -> bool:
+        """Return whether a Studio file URL is an HTTPS Google endpoint."""
+        parsed = urlparse(url)
+        host = (parsed.hostname or "").lower()
+        return parsed.scheme == "https" and (
+            host == "google.com"
+            or host.endswith(".google.com")
+            or host == "googleusercontent.com"
+            or host.endswith(".googleusercontent.com")
+            or host == "usercontent.google"
+            or host.endswith(".usercontent.google")
+        )
+
+    def _resolve_file_viewer_url(self, viewer_url: str) -> tuple[str, str | None]:
+        """Resolve a Drive viewer JSON envelope to its downloadable target."""
+        if not self._is_trusted_file_export_url(viewer_url):
+            raise ArtifactParseError(
+                "file", details="Viewer URL must use HTTPS on a trusted Google host"
+            )
+
+        base_headers = getattr(
+            self,
+            "_PAGE_FETCH_HEADERS",
+            {"User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36"},
+        )
+        timeout = httpx.Timeout(connect=10.0, read=30.0, write=30.0, pool=30.0)
+        try:
+            with httpx.Client(
+                cookies=self._get_httpx_cookies(),
+                headers=base_headers,
+                follow_redirects=True,
+                timeout=timeout,
+            ) as client:
+                response = client.get(viewer_url)
+                response.raise_for_status()
+                payload = response.json()
+        except (httpx.HTTPError, ValueError, TypeError) as e:
+            raise ArtifactParseError("file", details=f"Invalid viewer response: {e}") from e
+
+        if not isinstance(payload, dict):
+            raise ArtifactParseError("file", details="Viewer response is not a JSON object")
+
+        for format_name in ("pdf", "url", "downloadUrl", "download_url"):
+            target_url = payload.get(format_name)
+            if isinstance(target_url, str) and target_url:
+                if not self._is_trusted_file_export_url(target_url):
+                    raise ArtifactParseError(
+                        "file",
+                        details="Viewer target must use HTTPS on a trusted Google host",
+                    )
+                return target_url, "pdf" if format_name == "pdf" else None
+
+        raise ArtifactParseError("file", details="Viewer response has no downloadable URL")
+
+    def download_file(
+        self,
+        notebook_id: str,
+        output_path: str,
+        artifact_id: str | None = None,
+    ) -> str:
+        """Download a generic type-10 Studio file export."""
+        candidates = [
+            artifact
+            for artifact in self._list_raw(notebook_id)
+            if isinstance(artifact, list)
+            and len(artifact) > 24
+            and artifact[2] == self.STUDIO_TYPE_DATA_TABLE_XLSX
+            and artifact[4] == 3
+        ]
+        if not candidates:
+            raise ArtifactNotReadyError("file")
+
+        target = (
+            next((artifact for artifact in candidates if artifact[0] == artifact_id), None)
+            if artifact_id
+            else candidates[0]
+        )
+        if target is None:
+            raise ArtifactNotReadyError("file", artifact_id)
+
+        metadata = target[24]
+        if not isinstance(metadata, list) or len(metadata) < 3:
+            raise ArtifactParseError("file", details="Invalid file metadata at artifact[24]")
+
+        filename = metadata[0] if isinstance(metadata[0], str) else None
+        direct_url = metadata[3] if len(metadata) > 3 else None
+        resolved_format = None
+        if isinstance(direct_url, str) and direct_url:
+            target_url = direct_url
+            if not self._is_trusted_file_export_url(target_url):
+                raise ArtifactParseError(
+                    "file", details="Download URL must use HTTPS on a trusted Google host"
+                )
+        else:
+            viewer_url = metadata[2]
+            if not isinstance(viewer_url, str) or not viewer_url:
+                raise ArtifactParseError("file", details="File metadata has no viewer URL")
+            target_url, resolved_format = self._resolve_file_viewer_url(viewer_url)
+
+        output = Path(output_path)
+        if resolved_format == "pdf" and (
+            (filename and output.name == filename) or output.suffix.lower() == ".bin"
+        ):
+            output = output.with_suffix(".pdf")
+        return self._download_url_sync(target_url, str(output))
+
     # =========================================================================
     # Interactive Artifact Downloads (Quiz, Flashcards)
     # =========================================================================
+
+    @staticmethod
+    def _interactive_format_code(artifact: Any) -> int | None:
+        """Read the interactive subtype of a type-4 studio artifact.
+
+        Type 4 (STUDIO_TYPE_FLASHCARDS) covers flashcards (1), quizzes (2),
+        and mind maps (4); the code lives at artifact[9][1][0].
+        """
+        try:
+            code = artifact[9][1][0]
+        except (IndexError, TypeError):
+            return None
+        return code if isinstance(code, int) else None
 
     def _get_artifact_content(self, notebook_id: str, artifact_id: str) -> str | None:
         """Fetch artifact HTML content for quiz/flashcard types.
@@ -1015,6 +1295,17 @@ class DownloadMixin(BaseClient):
             raise ArtifactDownloadError(
                 "interactive", details=f"Unexpected API response structure: {e}"
             ) from e
+
+    def get_interactive_app_data(self, notebook_id: str, artifact_id: str) -> dict[str, Any] | None:
+        """Return the structured app data of a quiz, flashcard deck or mind map.
+
+        Reuses the download path's HTML fetch and ``data-app-data`` extraction
+        so review content matches what ``download_artifact`` saves.
+        """
+        html_content = self._get_artifact_content(notebook_id, artifact_id)
+        if not html_content:
+            return None
+        return self._extract_app_data(html_content)
 
     def _extract_app_data(self, html_content: str) -> dict:
         """Extract JSON app data from interactive HTML.
@@ -1227,8 +1518,17 @@ class DownloadMixin(BaseClient):
         # Get all artifacts and filter for completed interactive artifacts
         artifacts = self._list_raw(notebook_id)
 
-        # Type 4 (STUDIO_TYPE_FLASHCARDS) covers both quizzes and flashcards
-        # Status 3 = completed
+        # Type 4 (STUDIO_TYPE_FLASHCARDS) covers quizzes, flashcards, AND mind
+        # maps — distinguished by the format code at [9][1][0] (1=flashcards,
+        # 2=quiz, 4=mind map). Status 3 = completed.
+        def _matches_subtype(a: Any) -> bool:
+            code = self._interactive_format_code(a)
+            if is_quiz:
+                return code == 2
+            # Flashcards: accept legacy entries without a readable code, but
+            # never quizzes or mind maps.
+            return code not in (2, 4)
+
         candidates = [
             a
             for a in artifacts
@@ -1236,6 +1536,7 @@ class DownloadMixin(BaseClient):
             and len(a) > 4
             and a[2] == self.STUDIO_TYPE_FLASHCARDS
             and a[4] == 3
+            and _matches_subtype(a)
         ]
 
         if not candidates:

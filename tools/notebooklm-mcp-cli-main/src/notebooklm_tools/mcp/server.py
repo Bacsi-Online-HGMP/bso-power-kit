@@ -1,4 +1,4 @@
-"""NotebookLM MCP Server - Modular Architecture.
+"""Gemini Notebook MCP Server - Modular Architecture.
 
 This is the main server facade that initializes FastMCP and registers all tools
 from the modular tools package. Tools are organized into domain-specific modules
@@ -40,8 +40,8 @@ def _env_bool(name: str, default: bool = False) -> bool:
 
 # Initialize MCP server
 mcp = FastMCP(
-    name="notebooklm",
-    instructions="""NotebookLM MCP - Access NotebookLM (notebooklm.google.com).
+    name="gemini-notebook-mcp",
+    instructions="""Gemini Notebook MCP - Access Gemini Notebook (notebook.google.com).
 
 **Auth:** If you get authentication errors, run `nlm login` via your Bash/terminal tool. This is the automated authentication method that handles everything. Only use save_auth_tokens as a fallback if the CLI fails.
 **Account Switching:** To switch Google Accounts for the MCP server, run `nlm login switch <profile>` in Bash. The MCP server instantly uses the active default profile.
@@ -52,7 +52,12 @@ Consolidated tools:
 - source_add(source_type=url|text|drive|file, url=..., document_id=..., text=..., file_path=...): Add any source type
 - studio_create(artifact_type=audio|video|...): Create any artifact type
 - studio_revise: Revise individual slides in an existing slide deck
+- Interactive reports: studio_create(artifact_type="report", report_format="Interactive") to create;
+  report(action=get|elements|generate) to read it and generate its embedded audio / video /
+  slide deck / infographic / flashcards / quiz / mind map elements (generate validates a plan
+  first; confirm=True only after user approval or explicit delegation)
 - download_artifact(artifact_type=audio|video|...): Download any artifact type
+- download_all_artifacts: Download every completed artifact of a notebook into a per-notebook folder
 - note(action=create|list|update|delete): Manage notes in notebooks
 - label(action=auto|list|reorganize|create|rename|set_emoji|move_source|delete): Manage source labels""",
 )
@@ -68,7 +73,7 @@ async def health_check(request: Request) -> JSONResponse:
     return JSONResponse(
         {
             "status": "healthy",
-            "service": "notebooklm-mcp",
+            "service": "gemini-notebook-mcp",
             "version": __version__,
         }
     )
@@ -81,6 +86,8 @@ def _register_tools() -> None:
         auth,
         batch,
         chat,
+        chats,
+        collections,
         cross_notebook,
         downloads,
         exports,
@@ -94,11 +101,17 @@ def _register_tools() -> None:
         sources,
         studio,
         studio_advanced,
+        usage,
     )
     from .tools._utils import register_all_tools
 
     # Register collected tools with mcp
     register_all_tools(mcp)
+
+    # Optionally hide tool groups/tools via environment variables (opt-in).
+    from . import tool_groups
+
+    tool_groups.apply(mcp)
 
 
 # Register tools on import
@@ -118,18 +131,19 @@ def main() -> None:
     configure_stdio_utf8_on_windows()
 
     parser = argparse.ArgumentParser(
-        description="NotebookLM MCP Server",
+        description="Gemini Notebook MCP Server",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Environment Variables:
-  NOTEBOOKLM_MCP_TRANSPORT     Transport type (stdio, http, sse)
-  NOTEBOOKLM_MCP_HOST          Host to bind (default: 127.0.0.1)
-  NOTEBOOKLM_MCP_PORT          Port to listen on (default: 8000)
-  NOTEBOOKLM_MCP_PATH          MCP endpoint path (default: /mcp)
-  NOTEBOOKLM_MCP_STATELESS     Stateless HTTP sessions (default: true, set false to disable)
-  NOTEBOOKLM_MCP_DEBUG         Debug logging (default: false)
-  NOTEBOOKLM_HL                Interface language and default artifact language (default: en)
-  NOTEBOOKLM_QUERY_TIMEOUT     Query timeout in seconds (default: 120.0)
+  NOTEBOOKLM_MCP_TRANSPORT          Transport type (stdio, http, sse)
+  NOTEBOOKLM_MCP_HOST               Host to bind (default: 127.0.0.1)
+  NOTEBOOKLM_MCP_PORT               Port to listen on (default: 8000)
+  NOTEBOOKLM_MCP_PATH               MCP endpoint path (default: /mcp)
+  NOTEBOOKLM_MCP_STATELESS          Stateless HTTP sessions (default: true, set false to disable)
+  NOTEBOOKLM_MCP_DEBUG              Debug logging (default: false)
+  NOTEBOOKLM_HL                     Interface language and default artifact language (default: en)
+  NOTEBOOKLM_QUERY_TIMEOUT          Query timeout in seconds (default: 120.0)
+  NOTEBOOKLM_RATE_LIMIT_MAX_RETRIES Retry count for HTTP 429/RPC resource limits (default: 3; 0 disables)
 
 Examples:
   notebooklm-mcp                              # Default stdio transport

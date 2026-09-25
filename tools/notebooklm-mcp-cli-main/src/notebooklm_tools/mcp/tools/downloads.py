@@ -4,7 +4,7 @@ import asyncio
 
 from ...services import ServiceError, ValidationError
 from ...services import downloads as downloads_service
-from ._utils import ResultDict, error_result, get_client, logged_tool
+from ._utils import ResultDict, coerce_list, error_result, get_client, logged_tool
 
 
 @logged_tool()
@@ -15,12 +15,15 @@ def download_artifact(
     artifact_id: str | None = None,
     output_format: str = "json",
     slide_deck_format: str = "pdf",
+    wait: bool = False,
+    wait_timeout: float = 180.0,
+    poll_interval: float = 5.0,
 ) -> ResultDict:
     """Download any NotebookLM artifact to a file.
 
     Unified download tool replacing 9 separate download tools.
     Supports all artifact types: audio, video, report, mind_map, slide_deck,
-    infographic, data_table, quiz, flashcards.
+    infographic, data_table, file, quiz, flashcards.
 
     Args:
         notebook_id: Notebook UUID
@@ -32,18 +35,28 @@ def download_artifact(
             - slide_deck: Slide Deck (PDF or PPTX)
             - infographic: Infographic (PNG)
             - data_table: Data Table (CSV)
+            - data_table_xlsx: Data Table Excel export (XLSX)
+            - file: Generic Studio file export
             - quiz: Quiz (json|markdown|html)
             - flashcards: Flashcards (json|markdown|html)
-        output_path: Path to save the file
+        output_path: Where to save the file, relative to the download
+            directory (e.g. "podcast.m4a" or "My Notebook/report.md").
+            Downloads are confined to that directory; a path outside it is
+            refused. It defaults to ~/Downloads/gemini-notebook and the
+            operator can move it with NOTEBOOKLM_DOWNLOAD_DIR. The saved
+            absolute path comes back in the result.
         artifact_id: Optional specific artifact ID (uses latest if not provided)
         output_format: For quiz/flashcards only: json|markdown|html (default: json)
         slide_deck_format: For slide_deck only: pdf (default) or pptx
+        wait: Poll while the artifact download is still propagating
+        wait_timeout: Maximum seconds to wait when ``wait`` is enabled
+        poll_interval: Seconds between readiness checks
 
     Returns:
         dict with status and saved file path
 
     Example:
-        download_artifact(notebook_id="abc123", artifact_type="audio", output_path="podcast.mp3")
+        download_artifact(notebook_id="abc123", artifact_type="audio", output_path="podcast.m4a")
         download_artifact(notebook_id="abc123", artifact_type="quiz", output_path="quiz.html", output_format="html")
         download_artifact(notebook_id="abc123", artifact_type="slide_deck", output_path="slides.pptx", slide_deck_format="pptx")
     """
@@ -58,6 +71,10 @@ def download_artifact(
                 artifact_id=artifact_id,
                 output_format=output_format,
                 slide_deck_format=slide_deck_format,
+                wait=wait,
+                wait_timeout=wait_timeout,
+                poll_interval=poll_interval,
+                enforce_root=True,
             )
         )
         return {"status": "success", **download_result}
@@ -66,6 +83,91 @@ def download_artifact(
         if message.startswith("Unknown artifact type "):
             message = message.replace("Unknown artifact type", "Unknown artifact_type", 1)
         return error_result(message)
+    except ServiceError as e:
+        return error_result(e.user_message, hint=e.hint)
+    except Exception as e:
+        return error_result(str(e))
+
+
+@logged_tool()
+def download_all_artifacts(
+    notebook_id: str | None = None,
+    output_dir: str = ".",
+    artifact_types: list[str] | str | None = None,
+    output_format: str = "json",
+    slide_deck_format: str = "pdf",
+    all_notebooks: bool = False,
+    skip_existing: bool = False,
+) -> ResultDict:
+    """Download all completed studio artifacts of one notebook — or every notebook.
+
+    Creates a subdirectory of output_dir named after each notebook title and
+    saves every completed artifact there, named after its title with the
+    type's default extension (report → .md, mind_map → .json, video → .mp4,
+    slide_deck → .pdf/.pptx, ...). Artifacts that are still generating or
+    failed are skipped and listed in the result. A failure on one artifact
+    (or one notebook in a sweep) does not stop the others.
+
+    Args:
+        notebook_id: Notebook UUID (omit when all_notebooks=True)
+        output_dir: Base directory for the per-notebook folders, relative to
+            the download directory (default: the download directory itself).
+            Paths outside it are refused; see download_artifact.
+        artifact_types: Restrict to these types, e.g. ["video", "slide_deck",
+            "mind_map", "report"]. Default: all types.
+        output_format: For quiz/flashcards only: json|markdown|html
+        slide_deck_format: For slide decks only: pdf (default) or pptx
+        all_notebooks: Sweep every notebook in the account instead of one
+        skip_existing: Skip artifacts whose target file already exists —
+            makes repeated runs incremental
+
+    Returns:
+        dict with status, output_dir, and per-artifact items (single notebook)
+        or per-notebook outcomes (sweep), plus downloaded/failed counts
+
+    Example:
+        download_all_artifacts(notebook_id="abc123", output_dir="exports")
+        download_all_artifacts(all_notebooks=True, output_dir="exports", skip_existing=True)
+    """
+    if all_notebooks == (notebook_id is not None):
+        return error_result("Provide either notebook_id or all_notebooks=True (not both).")
+    try:
+        client = get_client()
+        if all_notebooks:
+            result = asyncio.run(
+                downloads_service.download_all_notebooks(
+                    client,
+                    output_dir,
+                    artifact_types=coerce_list(artifact_types),
+                    output_format=output_format,
+                    slide_deck_format=slide_deck_format,
+                    skip_existing=skip_existing,
+                    enforce_root=True,
+                )
+            )
+        else:
+            result = asyncio.run(
+                downloads_service.download_all(
+                    client,
+                    notebook_id,
+                    output_dir,
+                    artifact_types=coerce_list(artifact_types),
+                    output_format=output_format,
+                    slide_deck_format=slide_deck_format,
+                    skip_existing=skip_existing,
+                    enforce_root=True,
+                )
+            )
+        problems = result["failed"] + result.get("errored_notebooks", 0)
+        if problems == 0:
+            status = "success"
+        elif result["downloaded"] > 0:
+            status = "partial"
+        else:
+            status = "error"
+        return {"status": status, **result}
+    except ValidationError as e:
+        return error_result(str(e))
     except ServiceError as e:
         return error_result(e.user_message, hint=e.hint)
     except Exception as e:

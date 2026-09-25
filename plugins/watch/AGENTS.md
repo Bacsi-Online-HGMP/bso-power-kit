@@ -1,12 +1,12 @@
 # claude-video / watch skill
 
-Agent Skills package that gives an agent a video input. Installable across Claude Code (most common host), Codex, Cursor, GitHub Copilot, and 50+ other [Agent Skills](https://agentskills.io) hosts. Pure-stdlib Python that orchestrates `yt-dlp` + `ffmpeg` and an optional Whisper API.
+Agent Skills package that gives an agent a video input. Installable across Claude Code (most common host), Codex, Cursor, GitHub Copilot, and 50+ other [Agent Skills](https://agentskills.io) hosts. Pure-stdlib Python that orchestrates `yt-dlp` + `ffmpeg` and an optional Whisper API or separately managed local WhisperX process.
 
 ## Structure
 
 - `skills/watch/SKILL.md` — canonical skill contract the model reads when `/watch` fires. Source of truth for behavior across every host.
 - `skills/watch/scripts/watch.py` — entry point; orchestrates download → frames → transcript.
-- `skills/watch/scripts/{download,frames,transcribe,whisper,setup,config}.py` — yt-dlp wrapper, ffmpeg frame extraction + auto-fps, caption/Whisper transcription, preflight/installer, shared config.
+- `skills/watch/scripts/{download,frames,transcribe,whisper,local_whisperx,setup,config,runtime}.py` — yt-dlp wrapper, ffmpeg frame extraction + auto-fps, caption/Whisper transcription, preflight/installer, shared config.
 - `skills/watch/scripts/build-skill.sh` — builds `dist/watch.skill` for claude.ai upload (dev-only).
 - `hooks/` — Claude Code SessionStart setup-status hook (Claude Code only).
 - `.claude-plugin/` — `plugin.json` + `marketplace.json` (Claude Code plugin + local marketplace).
@@ -20,7 +20,8 @@ Agent Skills package that gives an agent a video input. Installable across Claud
 - The product is the slash-command-invoked skill (`/watch <url-or-path> [question]`), not a CLI. `scripts/watch.py` is implementation. Features must work across every harness the skill installs into, not just Claude Code.
 - **The skill is one self-contained folder: `skills/watch/`.** SKILL.md and `scripts/` are siblings inside it. This is what lets `npx skills add` copy a working skill as a unit — do NOT move SKILL.md or `scripts/` back to the repo root, or non-Claude installers will copy SKILL.md without the scripts.
 - **Path resolution is harness-agnostic.** SKILL.md resolves `SKILL_DIR` as the directory of the SKILL.md the model just Read, then runs `${SKILL_DIR}/scripts/...`. Do NOT reintroduce `${CLAUDE_SKILL_DIR}` (Claude-Code-only) — it is unset on Codex/Cursor/agents and breaks every script call there.
-- **No `commands/` wrapper.** `/watch` is derived from SKILL.md frontmatter (`name: watch` + `user-invocable: true`). A separate command file creates a duplicate slash command.
+- **No `commands/` wrapper.** `/watch` comes from `name: watch` (skills are user-invocable by default). A separate command file creates a duplicate slash command.
+- **SKILL.md frontmatter uses only Agent Skills keys:** `name`, `description`, `license`, `allowed-tools`, `metadata`, `compatibility`. Claude's skill upload rejects anything else; the version lives in `metadata.version`.
 
 ## Install surfaces
 
@@ -45,6 +46,6 @@ bash skills/watch/scripts/build-skill.sh   # → dist/watch.skill
 
 ## Rules
 
-- Keep the version in sync across `skills/watch/SKILL.md` (frontmatter), `.claude-plugin/plugin.json`, and `.codex-plugin/plugin.json` when cutting a release.
+- Keep the version in sync across `skills/watch/SKILL.md` (`metadata.version`), `.claude-plugin/plugin.json`, and `.codex-plugin/plugin.json` when cutting a release.
 - Releasing: tag `vX.Y.Z` and push the tag; `.github/workflows/release.yml` builds `dist/watch.skill` and attaches it to the GitHub release.
 - Never commit real API keys or `.env` contents; keys live in `~/.config/watch/.env` (mode `0600`) at runtime.

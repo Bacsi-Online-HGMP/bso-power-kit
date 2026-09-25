@@ -45,3 +45,33 @@ Useful flags: `--detail brief|standard|detailed` (brief = metadata + transcript 
 - The tool never fails on partial results: the `warnings` array carries actionable hints (yt-dlp install, `YTDLP_COOKIES_FROM_BROWSER` for Instagram/age-restricted, missing Whisper backend). Relay relevant warnings to the user instead of treating them as errors.
 - An empty transcript alongside a "silent audio" warning means the video genuinely has no speech (common for muted Reels/Stories) — that is content, not a failure.
 - Only `http(s)` URLs to **public** addresses are accepted. A URL on `localhost`, a private/LAN range, a `.local` name, a UNC share, or a non-HTTP scheme is rejected up front with a message saying so — that is a deliberate refusal, not a transient error, so do not retry it or try to work around it. When the user really does want a video from their own network, tell them to restart the server with `MCP_ALLOW_PRIVATE_URLS=1`. Cloud metadata endpoints stay blocked even then.
+
+## Gemini native-YouTube fallback (downstream addition, not upstream)
+
+Route A and Route B reach YouTube through `yt-dlp`. When that path fails — a
+region lock, login wall, age gate, or throttling in `warnings`, **or** a long
+video that comes back with an empty `transcript` and a "no Whisper backend"
+warning — Gemini can read the **public YouTube URL natively**, without any
+download. Use it only as a last resort, and only for YouTube.
+
+Trigger it when **all** of these hold:
+
+- the source is a public YouTube URL (`youtube.com/watch`, `youtu.be/…`, `/shorts/`, `/live/`); and
+- the normal tool returned `transcript: []` (or the `warnings` name a yt-dlp download/caption failure); and
+- a Gemini key is available — `GEMINI_API_KEY` in the environment, or `GEMINI_API_KEY=...` in `~/.config/video-analyzer/.env` (chmod 600). The script resolves both; if neither is present it exits with that hint and you skip the fallback.
+
+```bash
+python3 "${CLAUDE_PLUGIN_ROOT}/scripts/gemini_youtube_fallback.py" "<youtube-url>"
+# or, when frames are also unavailable (download fully blocked), ask directly:
+python3 "${CLAUDE_PLUGIN_ROOT}/scripts/gemini_youtube_fallback.py" "<youtube-url>" --ask "<the user's question>"
+```
+
+Without `--ask` it prints a timestamped transcript (`M:SS\ttext`); with `--ask` it
+prints Gemini's answer. Exit non-zero with a reason on stderr means Gemini could
+not help (no key, not a YouTube URL, blocked, or API error) — relay that and fall
+back to whatever the normal tools did return.
+
+**What this is not:** the text comes from *Gemini's* reading of the video, not
+from frames you can re-inspect. Prefer the MCP/CLI frames+transcript whenever
+they succeed; reach for this only to fill the gap they leave. Free-tier Gemini
+caps daily YouTube minutes and rejects private/unlisted videos.

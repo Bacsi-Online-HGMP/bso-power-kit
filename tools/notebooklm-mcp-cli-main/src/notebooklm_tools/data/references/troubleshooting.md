@@ -1,19 +1,19 @@
-# NotebookLM CLI - Troubleshooting Guide
+# Gemini Notebook (formerly Google NotebookLM) CLI - Troubleshooting Guide
 
 This document provides detailed solutions for common issues when using the `nlm` CLI.
 
 ## Quick Diagnosis
 
-| Symptom | Likely Cause | Quick Fix |
-|---------|--------------|-----------|
-| "Cookies have expired" / auth status `stale` | Credentials rejected | `nlm login` |
-| Auth status `unverified` | Network/proxy probe failure | Check connectivity or try an API call |
-| "Notebook not found" | Invalid/stale ID | `nlm notebook list` |
-| "Source not found" | Invalid source ID | `nlm source list <nb-id>` |
-| Browser doesn't open | Port conflict | Close existing browser, retry |
-| "Research already in progress" | Pending task | `--force` or import existing |
-| "nodename nor servname" | Network blocked | See [Sandbox Users](#sandbox-environments) |
-| Commands hang forever | Network/auth issue | Ctrl+C, `nlm login` |
+| Symptom                                      | Likely Cause                | Quick Fix                                  |
+| -------------------------------------------- | --------------------------- | ------------------------------------------ |
+| "Cookies have expired" / auth status `stale` | Credentials rejected        | `nlm login`                                |
+| Auth status `unverified`                     | Network/proxy probe failure | Check connectivity or try an API call      |
+| "Notebook not found"                         | Invalid/stale ID            | `nlm notebook list`                        |
+| "Source not found"                           | Invalid source ID           | `nlm source list <nb-id>`                  |
+| Browser doesn't open                         | Port conflict               | Close existing browser, retry              |
+| "Research already in progress"               | Pending task                | `--force` or import existing               |
+| "nodename nor servname"                      | Network blocked             | See [Sandbox Users](#sandbox-environments) |
+| Commands hang forever                        | Network/auth issue          | Ctrl+C, `nlm login`                        |
 
 ---
 
@@ -22,40 +22,63 @@ This document provides detailed solutions for common issues when using the `nlm`
 ### Session Expired
 
 **Symptoms:**
+
 ```
 Error: Cookies have expired. Please run 'nlm login' to re-authenticate.
 Error: authentication may have expired
 ```
 
-**Cause:** NotebookLM rejected the stored credentials. Cookies often remain
+**Cause:** Gemini Notebook rejected the stored credentials. Cookies often remain
 usable for weeks, so do not re-authenticate solely because time has passed.
 
 **Solution:**
+
 ```bash
 nlm login
 ```
 
 **Prevention:** For long-running scripts, implement periodic re-authentication:
+
 ```bash
 # Check auth before critical operations
 nlm login --check || nlm login
 ```
 
+**Unattended machines:** A live session self-heals — when the short-lived
+cookies age out, the client runs a headless refresh automatically. To refresh
+proactively from a scheduler (so a session never lapses between jobs), use:
+
+```bash
+nlm auth refresh          # Headless, no interaction; exits non-zero on failure
+```
+
+Run it on a timer (e.g. cron/launchd every 30 min). It needs a saved Chrome
+profile from a prior `nlm login`, and does not apply when `NOTEBOOKLM_COOKIES`
+is set as an environment variable (that value overrides saved credentials).
+
+Some Google Workspace accounts have their session revoked when the saved browser
+profile is relaunched. On those accounts, set
+`NOTEBOOKLM_DISABLE_HEADLESS_REFRESH=1` to turn off the automatic self-heal and
+`nlm auth refresh`.
+
 ### Browser Doesn't Launch
 
 **Symptoms:**
+
 - `nlm login` hangs with no browser window
 - Error about no supported browser found
 
 **Solutions:**
 
 1. **Ensure a supported Chromium-based browser is installed:**
-   Supported browsers (in priority order): Google Chrome, Arc (macOS), Brave, Microsoft Edge, Chromium, Vivaldi, Opera.
+   Supported browsers (in priority order): Google Chrome, Arc (macOS), Dia (macOS) Brave, Microsoft Edge, Chromium, Vivaldi, Opera.
+
    ```bash
    which google-chrome || which brave-browser || which chromium
    ```
 
 2. **Close existing browser instances:**
+
    ```bash
    pkill -f "Chrome\|Brave\|Arc\|Edge"
    # Wait a moment, then retry
@@ -77,22 +100,26 @@ nlm login --check || nlm login
 **Solutions:**
 
 1. **List existing profiles:**
+
    ```bash
    nlm login profile list
    ```
 
 2. **Create a new profile:**
+
    ```bash
    nlm login --profile work
    ```
 
 3. **Delete corrupted profile:**
+
    ```bash
    nlm login profile delete <profile-name>
    nlm login --profile <profile-name>
    ```
 
 4. **Switch default profile:**
+
    ```bash
    nlm login switch <profile-name>
    ```
@@ -116,7 +143,7 @@ preserved.
 
 ### RPC Method-ID Drift
 
-NotebookLM can rotate internal RPC method IDs without notice. When
+Gemini Notebook can rotate internal RPC method IDs without notice. When
 `RPCDriftError` identifies a replacement:
 
 1. Run the failing command with `--debug` and inspect the returned RPC IDs.
@@ -133,6 +160,7 @@ without a drift diagnosis.
 ### Sandbox Environments
 
 **Symptom:**
+
 ```
 Error: Request failed: [Errno 8] nodename nor servname provided, or not known
 Hint: Check your internet connection.
@@ -143,44 +171,67 @@ Hint: Check your internet connection.
 **Solution for OpenAI Codex:**
 
 Add to `~/.codex/config.toml`:
+
 ```toml
 [sandbox_workspace_write]
 network_access = true
 ```
 
 Or run with full network access:
+
 ```bash
 codex exec --sandbox danger-full-access "nlm notebook list"
 ```
 
 **Solution for Docker/Containers:**
-Ensure the container has network access and can reach `notebooklm.google.com`.
+Ensure the container has network access and can reach `notebook.google.com`.
 
 ### Rate Limiting
 
 **Symptom:**
+
 ```
 Error: Rate limit exceeded
 ```
 
-**Cause:** Too many API calls in a short period. Free tier: ~50 queries/day.
+**Cause:** Too many API calls in a short period, or an exhausted compute
+allowance window. Chat and Studio usage is measured against a rolling window
+(about five hours) and a weekly cap; the reset time is account-specific.
 
 **Solutions:**
 
 1. **Wait and retry:**
+
    ```bash
-   sleep 30
+   sleep 120  # Studio/video generation; shorter waits may be enough for queries
    # Retry command
    ```
 
-2. **Implement throttling in scripts:**
+   Built-in retries use a short 1/2/4-second backoff for transient failures.
+   They do not wait through a minute-scale Studio quota window.
+
+2. **Check the measured allowance:**
+
    ```bash
-   # Wait 2 seconds between operations
+   nlm usage
+   nlm usage --json
+   ```
+
+   The MCP equivalent is `usage_get`. Inspect both windows and wait until the
+   reported reset time when the relevant window is exhausted. If the usage
+   request returns an authentication error, run `nlm auth refresh` or
+   `nlm login`; do not treat that error as an exhausted allowance.
+
+3. **Implement throttling in scripts:**
+
+   ```bash
+   # Run Studio/video creation sequentially; avoid parallel generation batches.
+   # Wait 2 seconds between lightweight source operations.
    nlm source add $ID --url "..." && sleep 2
    nlm source add $ID --url "..." && sleep 2
    ```
 
-3. **Use batch operations where possible:**
+4. **Use batch operations where possible:**
    - Use `nlm research import` to import multiple sources at once
    - Use `nlm source sync` to sync all stale sources at once
 
@@ -198,6 +249,7 @@ path. Errors include the underlying file reason and the received path.
 ### Source Not Found
 
 **Symptom:**
+
 ```
 Error: Source not found
 ```
@@ -205,6 +257,7 @@ Error: Source not found
 **Solutions:**
 
 1. **Verify source exists:**
+
    ```bash
    nlm source list <notebook-id>
    ```
@@ -225,6 +278,7 @@ Error: Source not found
    Extract from URL: `https://docs.google.com/document/d/[DOC_ID]/edit`
 
 2. **Specify correct type:**
+
    ```bash
    nlm source add <nb-id> --drive <doc-id> --type slides  # for Slides
    nlm source add <nb-id> --drive <doc-id> --type sheets  # for Sheets
@@ -242,6 +296,7 @@ Error: Source not found
 **Symptom:** Drive source content is outdated.
 
 **Solution:**
+
 ```bash
 # Check which sources are stale
 nlm source stale <notebook-id>
@@ -263,6 +318,7 @@ checked. It does not mean the source is fresh.
 ### Research Already in Progress
 
 **Symptom:**
+
 ```
 Error: Research already in progress
 ```
@@ -270,11 +326,13 @@ Error: Research already in progress
 **Solutions:**
 
 1. **Wait for completion:**
+
    ```bash
    nlm research status <notebook-id>
    ```
 
 2. **Import existing results:**
+
    ```bash
    nlm research status <notebook-id> --full  # Get task ID
    nlm research import <notebook-id> <task-id>
@@ -288,12 +346,14 @@ Error: Research already in progress
 ### Research Takes Too Long
 
 **Expected durations:**
+
 - Fast mode: ~30 seconds
 - Deep mode: ~5 minutes
 
 **If exceeding these times:**
 
 1. **Check status without waiting:**
+
    ```bash
    nlm research status <notebook-id> --max-wait 0
    ```
@@ -310,6 +370,7 @@ Error: Research already in progress
 **Symptom:** `nlm studio status` shows "in_progress" for extended time.
 
 **Expected generation times:**
+
 - Reports, quizzes, flashcards: 30-60 seconds
 - Audio podcasts: 2-5 minutes
 - Videos: 3-7 minutes
@@ -319,6 +380,7 @@ Deep research can take longer. MCP `research_status` and CLI auto-import wait
 up to 15 minutes by default.
 
 **Solution:** Keep polling:
+
 ```bash
 nlm studio status <notebook-id>
 ```
@@ -330,6 +392,7 @@ nlm studio status <notebook-id>
 **Possible causes and solutions:**
 
 1. **No sources in notebook:**
+
    ```bash
    nlm source list <notebook-id>
    # If empty, add sources first
@@ -349,6 +412,7 @@ nlm studio status <notebook-id>
 ### Missing --confirm Flag
 
 **Symptom:**
+
 ```
 Error: Missing required flag: --confirm
 ```
@@ -356,6 +420,7 @@ Error: Missing required flag: --confirm
 **Cause:** All generation and delete commands require explicit confirmation.
 
 **Solution:** Add `--confirm` or `-y`:
+
 ```bash
 nlm audio create <notebook-id> --confirm
 # or
@@ -363,6 +428,41 @@ nlm audio create <notebook-id> -y
 ```
 
 ---
+
+## Download Issues
+
+### "Refusing to write outside the download directory"
+
+MCP downloads are confined to one directory: `~/Downloads/gemini-notebook` by
+default, or `NOTEBOOKLM_DOWNLOAD_DIR` when the operator set it. The boundary
+stops a download from landing on shell startup files, agent instruction files,
+or git hooks, which matters because notebook source content is untrusted and
+can carry instructions.
+
+```python
+# WRONG: absolute path outside the download directory
+download_artifact(notebook_id="...", artifact_type="report", output_path="/Users/me/notes/report.md")
+
+# CORRECT: relative to the download directory
+download_artifact(notebook_id="...", artifact_type="report", output_path="report.md")
+```
+
+The response carries the absolute path the file was written to. Read the
+destination from there rather than assuming it.
+
+To save elsewhere, either move the file afterwards, run the `nlm` CLI (which
+writes wherever the user points it), or have the operator set
+`NOTEBOOKLM_DOWNLOAD_DIR` and restart the MCP server.
+
+### "NotebookLM delivers AAC audio in an MP4 container"
+
+Audio arrives as AAC inside MP4. Use a `.m4a` or `.mp4` suffix, not `.mp3`.
+Transcode afterwards if MP3 is required:
+
+```bash
+nlm download audio <nb-id> --output raw.m4a
+ffmpeg -i raw.m4a -acodec libmp3lame -q:a 2 podcast.mp3
+```
 
 ## Command Syntax Issues
 
@@ -389,11 +489,13 @@ nlm data-table create <notebook-id> "Extract all dates" --confirm
 ### Custom Chat Prompt Without --goal
 
 **Symptom:**
+
 ```
 Error: --prompt is required when goal is 'custom'
 ```
 
 **Solution:**
+
 ```bash
 # CORRECT: specify both --goal custom AND --prompt
 nlm chat configure <id> --goal custom --prompt "Act as a tutor..."
@@ -404,16 +506,19 @@ nlm chat configure <id> --goal custom --prompt "Act as a tutor..."
 ## Getting More Help
 
 1. **Check command help:**
+
    ```bash
    nlm <command> --help
    ```
 
 2. **Get full AI documentation:**
+
    ```bash
    nlm --ai
    ```
 
 3. **Check version:**
+
    ```bash
    nlm --version
    ```

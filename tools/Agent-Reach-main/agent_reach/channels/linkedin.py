@@ -1,43 +1,69 @@
 # -*- coding: utf-8 -*-
-"""LinkedIn — check if linkedin-scraper-mcp is available."""
+"""LinkedIn — check if mcp-server-linkedin is configured."""
 
-from agent_reach.probe import probe_command
+import shutil
 
 from .base import Channel
+from .mcporter import McporterConfigError, inspect_mcporter_config
 
-#: mcporter 是 npm 包，断链处方与默认的 pipx/uv 不同
-_MCPORTER_BROKEN_HINT = "mcporter 无法执行（node 环境损坏），重装：\n  npm install -g mcporter"
+_LINKEDIN_SERVER_NAMES = {
+    "linkedin",
+    "linkedin-scraper",
+    "linkedin-scraper-mcp",
+    "mcp-server-linkedin",
+}
+_LOGIN_COMMAND = "uvx mcp-server-linkedin@latest --login"
+_UV_INSTALL_URL = "https://docs.astral.sh/uv/getting-started/installation/"
+_CONFIG_COMMAND = (
+    "mcporter config add linkedin --command uvx "
+    "--arg mcp-server-linkedin@latest --env UV_HTTP_TIMEOUT=300 --scope home"
+)
 
 
 class LinkedInChannel(Channel):
     name = "linkedin"
     description = "LinkedIn 职业社交"
-    backends = ["linkedin-scraper-mcp", "Jina Reader"]
+    backends = ["mcp-server-linkedin", "Jina Reader"]
     tier = 2
 
     def can_handle(self, url: str) -> bool:
-        from urllib.parse import urlparse
-        return "linkedin.com" in urlparse(url).netloc.lower()
+        from agent_reach.utils.url import host_matches
+
+        return host_matches(url, "linkedin.com")
 
     def check(self, config=None):
         self.active_backend = None
-        probe = probe_command("mcporter", ["config", "list"], timeout=10, package="mcporter")
-        if probe.status == "missing":
+        if not shutil.which("mcporter"):
             return "off", (
                 "基本内容可通过 Jina Reader 读取。完整功能需要：\n"
-                "  pip install linkedin-scraper-mcp\n"
-                "  mcporter config add linkedin http://localhost:3000/mcp\n"
+                f"  先安装 uv/uvx：{_UV_INSTALL_URL}\n"
+                f"  {_LOGIN_COMMAND}\n"
+                f"  {_CONFIG_COMMAND}\n"
                 "  详见 https://github.com/stickerdaniel/linkedin-mcp-server"
             )
-        if probe.status == "broken":
-            return "error", _MCPORTER_BROKEN_HINT
-        if not probe.ok:  # timeout / error
-            return "error", f"mcporter 执行异常：{probe.hint or probe.output or probe.status}"
-        if "linkedin" in probe.output.lower():
-            self.active_backend = "linkedin-scraper-mcp"
-            return "ok", "完整可用（Profile、公司、职位搜索）"
+        try:
+            inspection = inspect_mcporter_config()
+        except McporterConfigError as exc:
+            return "error", f"mcporter 配置检查失败：{exc}"
+        if inspection.server_names & _LINKEDIN_SERVER_NAMES:
+            if not shutil.which("uvx"):
+                return "warn", (
+                    "LinkedIn MCP 已写入 mcporter 配置，但 uvx 未安装，"
+                    "当前无法启动服务。安装：\n"
+                    f"  {_UV_INSTALL_URL}"
+                )
+            return "warn", (
+                "LinkedIn MCP 已写入 mcporter 配置，但 Doctor 未启动本地"
+                "服务做连通验证，不能仅凭配置宣称完整可用。"
+            )
+        if inspection.imports_unchecked:
+            return "warn", (
+                "mcporter 本地配置未发现 LinkedIn MCP；配置还启用了 editor "
+                "imports，Doctor 为避免扩大凭据读取范围没有展开，当前未验证。"
+            )
         return "off", (
             "mcporter 已装但 LinkedIn MCP 未配置。运行：\n"
-            "  pip install linkedin-scraper-mcp\n"
-            "  mcporter config add linkedin http://localhost:3000/mcp"
+            f"  先安装 uv/uvx：{_UV_INSTALL_URL}\n"
+            f"  {_LOGIN_COMMAND}\n"
+            f"  {_CONFIG_COMMAND}"
         )

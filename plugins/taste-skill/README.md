@@ -27,7 +27,7 @@
 <table align="center">
   <tr>
     <td align="center" width="104"><a href="https://fluxionai.world/register?source=github&amp;campaign=tasteskill&amp;promo=TASTESKILL"><img src="assets/sponsors/fluxion-ai.png" alt="Fluxion AI" width="80" height="80" /></a></td>
-    <td><sub><a href="https://fluxionai.world/register?source=github&amp;campaign=tasteskill&amp;promo=TASTESKILL"><strong>Fluxion AI</strong></a> provides reliable, cost-efficient access to GPT, Claude, and other leading AI models through one unified API.<br />Save up to 70% compared with official API pricing and get $1 in API credits when you sign up through this link.</sub></td>
+    <td><sub><a href="https://fluxionai.world/register?source=github&amp;campaign=tasteskill&amp;promo=TASTESKILL"><strong>Fluxion AI</strong></a> provides reliable, cost-efficient access to GPT, Claude, and other leading AI models through one unified API.<br />Save up to 70% compared with official API pricing and get $3 in API credits when you sign up through this link.</sub></td>
   </tr>
   <tr>
     <td align="center" width="104">
@@ -47,10 +47,6 @@
       </a>
     </td>
     <td><sub><a href="https://reactbits.dev"><strong>React Bits</strong></a> · animated React components for creative interfaces</sub></td>
-  </tr>
-  <tr>
-    <td align="center" width="104"><a href="https://animations.dev"><img src="assets/sponsors/animations-dev.webp" alt="animations.dev" width="52" height="52" /></a></td>
-    <td><sub><a href="https://github.com/emilkowalski"><strong>Emil Kowalski</strong></a> · <a href="https://animations.dev">animations.dev</a></sub></td>
   </tr>
   <tr>
     <td align="center" width="104"><a href="https://img.ly/"><img src="assets/sponsors/imgly-logo.svg" alt="IMG.LY" width="52" height="52" /></a></td>
@@ -229,6 +225,7 @@ If Taste Skill helps you, consider sponsoring:
 <a href="https://github.com/denvit"><img src="https://github.com/denvit.png" width="40" height="40" style="border-radius:50%" alt="denvit" title="denvit" /></a>
 <a href="https://github.com/onedollarstock"><img src="https://github.com/onedollarstock.png" width="40" height="40" style="border-radius:50%" alt="onedollarstock" title="onedollarstock" /></a>
 <a href="https://github.com/KANA-33"><img src="https://github.com/KANA-33.png" width="40" height="40" style="border-radius:50%" alt="KANA-33" title="KANA-33" /></a>
+<a href="https://github.com/emilkowalski"><img src="https://github.com/emilkowalski.png" width="40" height="40" style="border-radius:50%" alt="emilkowalski" title="emilkowalski" /></a>
 
 <p align="center">
  <a href="https://www.star-history.com/leonxlnx/taste-skill">

@@ -8,9 +8,10 @@ check here first. They are deliberate.
 
 Three things keep this honest:
 
-- `build-standalone.sh --force` runs every `patches/*.sh` after re-vendoring,
-  then runs the checker — so pulling an upstream update cannot silently
-  reintroduce the bug.
+- `revendor.sh --apply` (and the weekly `revendor` workflow that calls it) runs
+  every `patches/*.sh` after re-vendoring, then runs the checker — so pulling an
+  upstream update cannot silently reintroduce the bug, or silently delete a local
+  addition. `build-standalone.sh --force` does the same.
 - `.github/workflows/check-skill-refs.yml` runs the checker on every push and
   pull request. Plugins get added to this repo by hand, not only through
   `build-standalone.sh`, and that is exactly how `claude-blog` and `claude-ads`
@@ -126,6 +127,28 @@ Validation now passes. Eight advisory warnings remain — upstream plugins missi
 `version`, `description` or `author`, plus a few fields Claude Code ignores at
 load time. Those are upstream's to fill in; inventing values for someone else's
 manifest would be worse than leaving them blank.
+
+---
+
+## Local additions: `add-gemini-youtube-fallback.sh`, `add-verification-attribution.sh`
+
+**Fixes:** re-vendoring deletes anything this repository added to a vendored plugin
+**Applies to:** `mcp-video-analyzer` and `verification-before-completion`
+
+`revendor.sh` replaces a vendored directory with upstream's tree, so an edit made
+by hand lasts only until the next pull. The weekly job of 2026-09-21 proved it: it
+deleted both additions below without a word. Each now lives here and is re-applied
+after every pull.
+
+| Script | Plugin | What it restores |
+|---|---|---|
+| `add-gemini-youtube-fallback.sh` | `mcp-video-analyzer` | `scripts/gemini_youtube_fallback.py`, a section appended to `skills/video/SKILL.md`, and a note after the transcription table in `README.md`. Source files are in `patches/mcp-video-analyzer/`. Design: `bootstrap-device/scoring-layer-2.md`. |
+| `add-verification-attribution.sh` | `verification-before-completion` | `license`, `source`, `author` and a do-not-edit `note` in the skill's frontmatter — the only lines added to the verbatim copy. |
+
+The Gemini patch exits 1 when the README row it anchors to is gone, because
+guessing a new spot would bury the note. That stops the weekly job, and a person
+chooses the new spot. **Any new local edit to vendored code belongs here too**, or
+the next re-vendor will delete it.
 
 ---
 
