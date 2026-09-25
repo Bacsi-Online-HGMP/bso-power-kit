@@ -1,26 +1,33 @@
-andrej-karpathy-skills-main	multica-ai/andrej-karpathy-skills	main	2026-09-21
-anti-slop	AgriciDaniel/anti-slop	main	2026-09-21
-brooks-lint-main	hyhmrright/brooks-lint	v1.7.0	2026-09-21
-caveman-main	JuliusBrussee/caveman	v2.7.0	2026-09-21
-claude-ads	AgriciDaniel/claude-ads	v2.0.2	2026-09-21
-claude-blog	AgriciDaniel/claude-blog	v2.2.0	2026-09-21
-claude-repurpose	AgriciDaniel/claude-repurpose	v1.0.0	2026-09-21
-claude-seo	AgriciDaniel/claude-seo	v2.3.1	2026-09-21
-claude-shorts	AgriciDaniel/claude-shorts	v1.0.0	2026-09-21
-claude-youtube	AgriciDaniel/claude-youtube	main	2026-09-21
-idea-validation-agents	MaxKmet/idea-validation-agents	main	2026-09-21
-impeccable-main	pbakaus/impeccable	skill-v4.3.1	2026-09-21
-last30days-skill-main	mvanhorn/last30days-skill	v3.25.0	2026-09-21
-marketingskills	coreyhaines31/marketingskills	v2.11.1	2026-09-21
-mattpocock-skills-main	mattpocock/skills	v1.2.3	2026-09-21
-mcp-video-analyzer	guimatheus92/mcp-video-analyzer	v0.10.1	2026-09-21
-modern-web-guidance-main	GoogleChrome/modern-web-guidance	v0.0.189	2026-09-21
-ponytail-main	DietrichGebert/ponytail	v4.10.0	2026-09-21
-taste-skill	Leonxlnx/taste-skill	main	2026-09-21
-threads-carousel-claude-skill	itchernetski/threads-carousel-claude-skill	v1.2.0	2026-09-21
-ui-ux-pro-max-skill	nextlevelbuilder/ui-ux-pro-max-skill	v2.15.0	2026-09-21
-verification-before-completion	obra/superpowers	v6.4.1	2026-09-21
-watch	bradautomates/claude-video	v0.2.0	2026-09-21
-worktrunk-main	max-sixty/worktrunk	v0.79.0	2026-09-21
-youtube-shorts-pipeline	rushindrasinha/youtube-shorts-pipeline	v3.1.0	2026-09-21
-youtuber	AgriciDaniel/youtuber	main	2026-09-21
+andrej-karpathy-skills-main	multica-ai/andrej-karpathy-skills	main	2026-09-25	2c606141936f1eeef17fa3043a72095b4765b9c2
+anti-slop	AgriciDaniel/anti-slop	main	2026-09-25	7b2b0f4b1835d0a102878e5b9f70ae22f69b47c1
+brooks-lint-main	hyhmrright/brooks-lint	v1.7.0	2026-09-25	b8a5ceca5469031d8c517cbe508a36bebfb08f88
+caveman-main	JuliusBrussee/caveman	v2.7.0	2026-09-25	8b0c1d3699b8d83e87fe4605b378da20c41555e0
+claude-ads	AgriciDaniel/claude-ads	v2.0.2	2026-09-25	e38b53059829aef092f186dd2c9803615e18f25f
+claude-blog	AgriciDaniel/claude-blog	v2.2.0	2026-09-25	7b6ca107adb40b7c59030568420c117e2ea61301
+claude-repurpose	AgriciDaniel/claude-repurpose	v1.0.0	2026-09-25	8cc8180a59989f7c7ffaf1f2b3585c7b29122331
+claude-seo	AgriciDaniel/claude-seo	v2.4.0	2026-09-25	e77e783e38eeb738424eb72117abbd2dacdd88af
+claude-shorts	AgriciDaniel/claude-shorts	v1.0.0	2026-09-25	575fe5f6b96d5e9a3f5eb270fc50e428264b82a2
+claude-youtube	AgriciDaniel/claude-youtube	main	2026-09-25	84c3fa6805200632fadb4fe2795ef265511271c7
+idea-validation-agents	MaxKmet/idea-validation-agents	main	2026-09-25	3a4c800a3022e73e9997533b603c79b60ee7597a
+impeccable-main	pbakaus/impeccable	skill-v4.3.1	2026-09-25	cd12f8660e2dde57b9615c8a6b8ea674101f9cfc
+last30days-skill-main	mvanhorn/last30days-skill	v3.25.0	2026-09-25	beb7ed1868f034f198842174bfe2694e44b78363
+marketingskills	coreyhaines31/marketingskills	v2.11.1	2026-09-25	5b2c0007766c6a1cf1d53fd8fc73e979e0821022
+mattpocock-skills-main	mattpocock/skills	v1.2.3	2026-09-25	6acc160e4e0cd062dbbbd7a1b26ae92855edf07e
+mcp-video-analyzer	guimatheus92/mcp-video-analyzer	v0.10.1	2026-09-25	e684edf16a2860e73d138653c0c3cf7a4cf2d6fd
+modern-web-guidance-main	GoogleChrome/modern-web-guidance	v0.0.190	2026-09-25	22ab18dfb50a5d7e3bdcf471c14076a5534eae4e
+ponytail-main	DietrichGebert/ponytail	v4.10.0	2026-09-25	1d95ff7d39de12d87014ea40d4e22201bddc501b
+taste-skill	Leonxlnx/taste-skill	main	2026-09-25	c184364c58658b2f131b4ae8bd3d206cabb3deee
+threads-carousel-claude-skill	itchernetski/threads-carousel-claude-skill	v1.2.0	2026-09-25	234b4f363d01d9ea8d129de67bf5824156d8e6c8
+tools/Agent-Reach-main	Panniantong/Agent-Reach	main	2026-09-25	a19a171fa980a0785849596492e0af4db800c82f
+tools/agency-agents	msitarzewski/agency-agents	main	2026-09-25	053ddbbf392a1688fc7043d81529f47ef2cf86c8
+tools/agentskills	agentskills/agentskills	main	2026-09-25	69ef37e9424c0a7ea9dd2293b559e43ec8176379
+tools/ai-website-cloner-template-master	JCodesMore/ai-website-cloner-template	v0.5.0	2026-09-25	d35c3aa93b9edbcb450f2a44500f763bc4de524c
+tools/design.md	google-labs-code/design.md	0.4.0	2026-09-25	9bf8eae67128b6cc55ad9bf86665767deb4c11cd
+tools/notebooklm-mcp-cli-main	jacob-bd/notebooklm-mcp-cli	v0.12.0	2026-09-25	1daf8e291569cf8a21761f5ae3ce8a1c0ceacf19
+tools/vercel-labs-skills-main	vercel-labs/skills	v1.7.0	2026-09-25	7407f3893ad4dceab546ac002c3ef806e4000c73
+ui-ux-pro-max-skill	nextlevelbuilder/ui-ux-pro-max-skill	v2.15.0	2026-09-25	a38d04c3d5c298c851dbe5e6ee1965ee3de42cb5
+verification-before-completion	obra/superpowers	v6.4.1	2026-09-25	5bf4e78011075bcfc0dc295f0724994cd123ee71
+watch	bradautomates/claude-video	v0.3.2	2026-09-25	03ceb42f7fa2c4439aca01752118044baabffb8f
+worktrunk-main	max-sixty/worktrunk	v0.79.0	2026-09-25	5ba6f148e8505c20794f2d8bc706aa4f26335c95
+youtube-shorts-pipeline	rushindrasinha/youtube-shorts-pipeline	v3.1.0	2026-09-25	48835dea9c0cc9d119e19ad9365717006d6f59a6
+youtuber	AgriciDaniel/youtuber	main	2026-09-25	842afb7a547596bdd7fa0b2d9b33bc6d18bac17b

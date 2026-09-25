@@ -1,92 +1,70 @@
 #!/bin/bash
-# Agent Reach 一键完整测试
-# 用法: bash test-agent-reach.sh
-# 在任何有 Python 3.10+ 的机器上跑就行
+# Agent Reach clean-environment integration test.
+# Creates an isolated venv, installs this checkout, runs a read-only doctor,
+# then executes the repository test suite.
 
-set -e
+set -euo pipefail
 
-echo "╔════════════════════════════════════════════╗"
-echo "║    👁️  Agent Reach 完整测试                ║"
-echo "╚════════════════════════════════════════════╝"
-echo ""
+REPO_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+TEST_DIR=$(mktemp -d "${TMPDIR:-/tmp}/agent-reach-test.XXXXXX")
+TEST_DIR=$(cd "$TEST_DIR" && pwd -P)
+export HOME="$TEST_DIR/home"
+export XDG_CONFIG_HOME="$HOME/.config"
+export PYTHONDONTWRITEBYTECODE=1
+mkdir -p "$HOME" "$XDG_CONFIG_HOME"
 
-# ── 1. 准备干净环境 ──
-echo "📦 创建测试环境..."
-TEST_DIR=$(mktemp -d)
-python3 -m venv "$TEST_DIR/venv"
-source "$TEST_DIR/venv/bin/activate"
-
-# ── 2. 安装 ──
-echo "📥 从 GitHub 安装..."
-pip install -q https://github.com/Panniantong/agent-reach/archive/main.zip 2>&1 | tail -1
-echo ""
-
-# ── 3. 自动配置 ──
-echo "⚙️  运行 install..."
-agent-reach install --env=auto 2>&1
-echo ""
-
-# ── 4. 诊断 ──
-echo "🩺 运行 doctor..."
-agent-reach doctor 2>&1
-echo ""
-
-# ── 5. 逐个测试 ──
-PASS=0
-FAIL=0
-SKIP=0
-
-test_it() {
-    local name="$1"
-    shift
-    echo -n "  $name ... "
-    output=$(eval "$@" 2>&1) || true
-    if echo "$output" | grep -q "📖\|🔗\|http"; then
-        echo "✅"
-        PASS=$((PASS+1))
-    elif echo "$output" | grep -q "⚠️\|not installed\|not configured"; then
-        echo "⏭️  (跳过 — 缺依赖)"
-        SKIP=$((SKIP+1))
-    else
-        echo "❌"
-        echo "    $(echo "$output" | head -2)"
-        FAIL=$((FAIL+1))
-    fi
+cleanup() {
+    rm -rf -- "$TEST_DIR"
 }
+trap cleanup EXIT INT TERM
 
-echo "📖 阅读测试"
-test_it "网页" "agent-reach read 'https://example.com'"
-test_it "GitHub" "agent-reach read 'https://github.com/Panniantong/agent-reach'"
-test_it "YouTube" "agent-reach read 'https://www.youtube.com/watch?v=dQw4w9WgXcQ'"
-test_it "B站" "agent-reach read 'https://www.bilibili.com/video/BV1d4411N7zD'"
-test_it "RSS" "agent-reach read 'https://hnrss.org/frontpage'"
-test_it "Twitter" "agent-reach read 'https://x.com/elonmusk/status/1893797839927353448'"
-test_it "Reddit" "agent-reach read 'https://www.reddit.com/r/LocalLLaMA/hot'"
-
-echo ""
-echo "🔍 搜索测试"
-test_it "全网搜索" "agent-reach search 'best AI agent framework' -n 2"
-test_it "GitHub搜索" "agent-reach search-github 'yt-dlp' -n 2"
-test_it "Twitter搜索" "agent-reach search-twitter 'AI agent' -n 2"
-test_it "Reddit搜索" "agent-reach search-reddit 'machine learning' -n 2"
-test_it "YouTube搜索" "agent-reach search-youtube 'AI tutorial' -n 2"
-test_it "B站搜索" "agent-reach search-bilibili 'AI' -n 2"
-test_it "小红书搜索" "agent-reach search-xhs 'AI' -n 2"
-
-echo ""
-echo "════════════════════════════════════════════"
-echo "  ✅ 通过: $PASS   ❌ 失败: $FAIL   ⏭️  跳过: $SKIP"
-echo "════════════════════════════════════════════"
-
-# ── 6. 清理 ──
-deactivate 2>/dev/null || true
-rm -rf "$TEST_DIR"
-
-if [ $FAIL -eq 0 ]; then
-    echo ""
-    echo "🎉 全部通过！"
+PYTHON_CMD=()
+if command -v python3 >/dev/null 2>&1 && \
+   python3 -c 'import sys; raise SystemExit(0 if sys.version_info >= (3, 10) else 1)'; then
+    PYTHON_CMD=(python3)
+elif command -v python >/dev/null 2>&1 && \
+     python -c 'import sys; raise SystemExit(0 if sys.version_info >= (3, 10) else 1)'; then
+    PYTHON_CMD=(python)
+elif command -v py >/dev/null 2>&1 && \
+     py -3 -c 'import sys; raise SystemExit(0 if sys.version_info >= (3, 10) else 1)'; then
+    PYTHON_CMD=(py -3)
+elif [ -x "$REPO_ROOT/.venv/bin/python" ] && \
+     "$REPO_ROOT/.venv/bin/python" -c 'import sys; raise SystemExit(0 if sys.version_info >= (3, 10) else 1)'; then
+    PYTHON_CMD=("$REPO_ROOT/.venv/bin/python")
+elif [ -x "$REPO_ROOT/.venv/Scripts/python.exe" ] && \
+     "$REPO_ROOT/.venv/Scripts/python.exe" -c 'import sys; raise SystemExit(0 if sys.version_info >= (3, 10) else 1)'; then
+    PYTHON_CMD=("$REPO_ROOT/.venv/Scripts/python.exe")
 else
-    echo ""
-    echo "⚠️  有 $FAIL 个测试失败，请检查上面的输出"
+    echo "Python 3.10+ is required" >&2
     exit 1
 fi
+
+echo "[1/5] Creating isolated environment"
+"${PYTHON_CMD[@]}" -m venv "$TEST_DIR/venv"
+# shellcheck disable=SC1091
+if [ -f "$TEST_DIR/venv/bin/activate" ]; then
+    source "$TEST_DIR/venv/bin/activate"
+elif [ -f "$TEST_DIR/venv/Scripts/activate" ]; then
+    source "$TEST_DIR/venv/Scripts/activate"
+else
+    echo "Could not find the virtual environment activation script" >&2
+    exit 1
+fi
+
+echo "[2/5] Installing this checkout and test dependencies"
+python -m pip install --quiet --upgrade pip
+python -m pip install --quiet -c "$REPO_ROOT/constraints.txt" -e "$REPO_ROOT[dev]"
+
+echo "[3/5] Verifying the installed CLI"
+agent-reach version
+
+echo "[4/5] Running read-only install check and doctor"
+agent-reach install --env=auto --safe
+agent-reach install --env=auto --system --dry-run
+agent-reach doctor --json > "$TEST_DIR/doctor.json"
+python -c 'import json,sys; data=json.load(open(sys.argv[1], encoding="utf-8")); assert isinstance(data, dict) and data, "doctor returned no channels"; print(f"doctor OK: {len(data)} channels")' "$TEST_DIR/doctor.json"
+
+echo "[5/5] Running repository tests"
+pytest "$REPO_ROOT/tests" -q
+
+echo "Agent Reach integration test passed"

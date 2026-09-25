@@ -1,20 +1,23 @@
 <!-- nlm-skill-start -->
-<!-- nlm-version: 0.8.1 -->
-## NLM - NotebookLM CLI Expert
+<!-- nlm-version: 0.12.0 -->
+## NLM - Gemini Notebook (formerly Google NotebookLM) CLI Expert
 
-**Triggers:** "nlm", "notebooklm", "notebook lm", "podcast", "audio overview", "research"
+**Triggers:** "nlm", "notebooklm", "Gemini Notebook", "plan usage", "quota", "podcast", "audio overview", "research"
 
-Expert assistant for Google NotebookLM automation via CLI. Use when users want to create/manage notebooks, add sources (URLs, YouTube, text, Google Drive), generate AI content (podcasts, reports, quizzes, flashcards, mind maps, slides, infographics, videos, data tables), conduct research, or chat with sources.
+Expert assistant for Gemini Notebook automation via CLI. Use when users want to create/manage notebooks, check plan usage and quota windows, add sources (URLs, YouTube, text, Google Drive), generate AI content (podcasts, reports, interactive reports, quizzes, flashcards, mind maps, slides, infographics, videos, data tables), conduct research, or chat with sources.
 
 ### Quick Reference
 
 ```bash
 nlm login                    # Authenticate with NotebookLM
+nlm auth refresh             # Non-interactive refresh (unattended/schedulers)
 nlm notebook create "Title"  # Create notebook
 nlm source add <id> --url "https://..."  # Add web source
 nlm audio create <id> --confirm          # Generate podcast
 nlm research start "query" --notebook-id <id>  # Discover sources
 nlm research start "query" --title "New Research"  # Create destination notebook
+nlm usage                    # Check rolling + weekly plan usage and reset times
+nlm usage --json             # Machine-readable usage percentages and timestamps
 ```
 
 ### Critical Rules
@@ -26,6 +29,9 @@ nlm research start "query" --title "New Research"  # Create destination notebook
 5. **Use `nlm alias set`** to simplify UUIDs
 6. **⚠️ NEVER auto-delete**: Always ask user before `nlm delete`
 7. **⚠️ NEVER use `nlm chat start`**: It's an interactive REPL. Use `nlm notebook query` instead
+8. **Use the configured MCP name**: Register this server as `gemini-notebook-mcp`; the executable remains `notebooklm-mcp` for compatibility.
+9. **Never configure blindly**: `nlm setup` verifies the MCP executable and detected client profile before writing. User-level skills require the target tool to be detected; use `--level project` for an intentional project-local install.
+10. **Check plan usage before quota-limited work**: Run `nlm usage` or call `usage_get` to inspect rolling and weekly percentages and reset times. Authentication failures should be refreshed with `nlm auth refresh`, not treated as exhausted quota.
 
 ### Common Workflows
 
@@ -40,6 +46,16 @@ nlm audio create ai --confirm
 nlm studio status ai
 ```
 
+**Plan Usage Check:**
+```bash
+nlm usage
+nlm usage --json
+```
+The report is read-only and shows rolling and weekly compute windows, the
+remaining percentage, reset timestamps in UTC (JSON) or local time (table),
+and the subscription tier when available. Use `usage_get` for the same report
+through MCP.
+
 **Quick Content Ingestion:**
 ```bash
 nlm source add <id> --url "https://example.com"
@@ -50,6 +66,9 @@ nlm source add <id> --drive <doc-id>
 **Study Materials:**
 ```bash
 nlm report create <id> --format "Study Guide" --confirm
+nlm report create <id> --format Interactive --prompt "Lesson goal" --confirm  # lesson report; embeds elements
+nlm report get <id> <report-id>          # read the lesson markdown
+nlm report elements <id> <report-id>     # embedded elements + status
 nlm quiz create <id> --count 10 --focus "Key Concepts" --confirm
 nlm flashcards create <id> --focus "Vocabulary" --confirm
 ```

@@ -1,10 +1,14 @@
 """Sources service — shared validation and logic for source management."""
 
+import os
+import time
 import urllib.parse
 from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
 from typing import Any
 
 from ..core.client import NotebookLMClient
+from ..core.exceptions import SourceProcessingError
 from ._compat import TypedDict
 from .errors import ServiceError, ValidationError
 
@@ -25,6 +29,26 @@ DRIVE_MIME_TYPES = {
 }
 
 
+def _validate_file_path_allowlist(file_path: str) -> None:
+    configured_dirs = os.environ.get("NOTEBOOKLM_ALLOWED_FILE_DIRS", "")
+    if not configured_dirs:
+        return
+
+    resolved_path = Path(file_path).expanduser().resolve()
+    allowed_dirs = [
+        Path(directory).expanduser().resolve()
+        for directory in configured_dirs.split(os.pathsep)
+        if directory
+    ]
+    if any(resolved_path.is_relative_to(directory) for directory in allowed_dirs):
+        return
+
+    raise ValidationError(
+        f"File path '{resolved_path}' is outside allowed directories configured by "
+        "NOTEBOOKLM_ALLOWED_FILE_DIRS."
+    )
+
+
 class AddSourceResult(TypedDict):
     """Result of adding a source."""
 
@@ -41,6 +65,7 @@ class DriveSourceInfo(TypedDict, total=False):
     type: str
     stale: bool | None
     drive_doc_id: str | None
+    status: int | None
 
 
 class SyncResult(TypedDict):
@@ -190,6 +215,7 @@ def add_source(
         elif source_type == "file":
             if not file_path:
                 raise ValidationError("file_path is required for source_type='file'")
+            _validate_file_path_allowlist(file_path)
             # If a custom title was supplied we must wait for the source to be
             # registered server-side before renaming — the NotebookLM rename
             # RPC accepts the call and returns success data for a source that
@@ -221,6 +247,12 @@ def add_source(
 
     except (ValidationError, ServiceError):
         raise
+    except SourceProcessingError as e:
+        raise ServiceError(
+            e.message,
+            user_message=e.message,
+            hint=e.hint,
+        ) from e
     except Exception as e:
         if source_type == "file" and file_path:
             user_message = f"Could not add file source: {e}"
@@ -416,6 +448,7 @@ def list_drive_sources(
             "id": source.get("id"),
             "title": source.get("title"),
             "type": source.get("source_type_name"),
+            "status": source.get("status"),
         }
 
         if source.get("can_sync"):
@@ -431,6 +464,7 @@ def list_drive_sources(
                 "type": source_type_name if isinstance(source_type_name, str) else "unknown",
                 "stale": (not is_fresh) if is_fresh is not None else None,
                 "drive_doc_id": source.get("drive_doc_id"),
+                "status": source.get("status"),
             }
             drive_sources.append(drive_info)
         else:
@@ -631,37 +665,64 @@ def describe_source(
 def get_source_content(
     client: NotebookLMClient,
     source_id: str,
+    *,
+    wait: bool = False,
+    wait_timeout: float = 120.0,
+    poll_interval: float = 3.0,
 ) -> SourceContentResult:
     """Get raw text content of a source (no AI processing).
 
     Args:
         client: Authenticated NotebookLM client
         source_id: Source UUID
+        wait: Poll until indexed content is available
+        wait_timeout: Maximum seconds to wait when ``wait`` is enabled
+        poll_interval: Seconds between readiness checks
 
     Returns:
         SourceContentResult with content, title, type, and char_count
 
     Raises:
-        ServiceError: If content retrieval fails
+        ValidationError: If polling options are invalid
+        ServiceError: If content retrieval fails or readiness times out
     """
-    try:
-        result = client.get_source_fulltext(source_id)
-        if not result:
+    if wait and wait_timeout < 0:
+        raise ValidationError("wait_timeout must be greater than or equal to 0.")
+    if wait and poll_interval <= 0:
+        raise ValidationError("poll_interval must be greater than 0.")
+
+    deadline = time.monotonic() + wait_timeout
+    while True:
+        try:
+            result = client.get_source_fulltext(source_id)
+        except Exception as e:
+            raise ServiceError(
+                f"Failed to get content for source {source_id}: {e}",
+                user_message="Failed to get source content.",
+            ) from e
+
+        content = result.get("content", "") if result else ""
+        if result and (content or not wait):
+            return {
+                "content": content,
+                "title": result.get("title", ""),
+                "source_type": result.get("type", "unknown"),
+                "char_count": len(content),
+            }
+
+        if not wait:
             raise ServiceError(
                 f"No content returned for source {source_id}",
                 user_message="Failed to get source content.",
+                debug_code="source_not_ready",
             )
-        content = result.get("content", "")
-        return {
-            "content": content,
-            "title": result.get("title", ""),
-            "source_type": result.get("type", "unknown"),
-            "char_count": len(content),
-        }
-    except ServiceError:
-        raise
-    except Exception as e:
-        raise ServiceError(
-            f"Failed to get content for source {source_id}: {e}",
-            user_message="Failed to get source content.",
-        ) from e
+
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise ServiceError(
+                f"Source {source_id} content was not ready after {wait_timeout}s",
+                user_message="Source content is not ready yet.",
+                hint="NotebookLM may still be indexing this source. Retry shortly or increase wait_timeout.",
+                debug_code="source_not_ready",
+            )
+        time.sleep(min(poll_interval, remaining))

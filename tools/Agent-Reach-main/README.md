@@ -10,6 +10,7 @@
 
 <p align="center">
   <a href="https://trendshift.io/repositories/24387"><img src="https://trendshift.io/api/badge/repositories/24387" alt="Trendshift GitHub Trending #1 Repository of the Day"></a>
+  <a href="https://star-history.com/#Panniantong/Agent-Reach&Date"><img src="https://api.star-history.com/badge?repo=Panniantong/Agent-Reach" alt="Star History Rank" width="196" height="55"></a>
 </p>
 
 <p align="center">
@@ -21,6 +22,36 @@
 <p align="center">
   <a href="#快速上手">快速开始</a> · <a href="docs/README_en.md">English</a> · <a href="docs/README_ja.md">日本語</a> · <a href="docs/README_ko.md">한국어</a> · <a href="#支持的平台">支持平台</a> · <a href="#设计理念">设计理念</a>
 </p>
+
+---
+
+## ❤️赞助商
+
+> [想出现在这里？](mailto:pnt01@foxmail.com)
+
+<details open>
+<summary>点击折叠</summary>
+
+<table>
+<tr>
+<td width="180" align="center"><a href="https://www.browseract.ai/Agent"><img src="docs/assets/sponsors/browseract.png" alt="BrowserAct" width="150"></a></td>
+<td><a href="https://www.browseract.ai/Agent">BrowserAct</a> 支持从 Amazon、LinkedIn、X、Google Maps 等复杂网站提取你需要的任意数据。你只需用自然语言描述抓取需求，Agent 就会基于真实浏览器自动探索并测试页面流程，生成可靠、可复用的数据采集 Bot，并返回结构化结果。无需手动构建爬虫，无需编写代码。BrowserAct 内置隐身浏览、验证码处理和高质量住宅代理，帮助你更稳定地完成复杂网页数据采集。新用户注册即送 1000 积分，<a href="https://www.browseract.ai/Agent">立即免费试用</a>。</td>
+</tr>
+<tr>
+<td width="180" align="center"><a href="https://www.tencentcloud.com/act/pro/intl-openclaw?referral_code=G76Y819A&amp;lang=zh&amp;pg="><img src="docs/assets/sponsors/tencent-cloud.svg" alt="腾讯云 OpenClaw" width="150"></a></td>
+<td>在腾讯云 Lighthouse 秒级部署 OpenClaw 全能助手，可通过对话丝滑接入 Agent Reach，给你的 OpenClaw 一键装上互联网能力。</td>
+</tr>
+<tr>
+<td width="180" align="center"><a href="https://www.coreclaw.com/?utm_source=github&amp;utm_medium=referral&amp;utm_campaign=Reach&amp;utm_term=Reach&amp;utm_id=Reach"><img src="docs/assets/sponsors/coreclaw.png" alt="CoreClaw" width="150"></a></td>
+<td><a href="https://www.coreclaw.com/?utm_source=github&amp;utm_medium=referral&amp;utm_campaign=Reach&amp;utm_term=Reach&amp;utm_id=Reach">CoreClaw</a> | 网页抓取平台与现成数据采集工具，CoreClaw 提供 100+ 现成数据采集工具，支持 Amazon、TikTok、Google Maps、Instagram、Facebook、YouTube 等平台，无需代码，支持 JSON/CSV 导出，仅对成功结果计费。<a href="https://www.coreclaw.com/?utm_source=github&amp;utm_medium=referral&amp;utm_campaign=Reach&amp;utm_term=Reach&amp;utm_id=Reach">免费$3测试！</a></td>
+</tr>
+<tr>
+<td width="180" align="center"><a href="https://www.ucloud.cn/site/active/astraflow?ytag=geo_waituo_Agent"><img src="docs/assets/sponsors/astraflow.png" alt="星图 AstraFlow" width="150"></a></td>
+<td><a href="https://www.ucloud.cn/site/active/astraflow?ytag=geo_waituo_Agent">优刻得星图astraflow大模型</a>，支持200+模型一键调用：内置 Kimi K3、DeepSeek V4/V3、Qwen 3、GLM5.2、happyhorse等全球领先开源大模型，无需自训，开箱即用</td>
+</tr>
+</table>
+
+</details>
 
 ---
 
@@ -84,15 +115,18 @@ AI Agent 已经能帮你写代码、改文档、管项目——但你让它去�
 | 📖 **Reddit** | —（没有零配置路径：匿名接口已被封） | 搜索 + 读帖子和评论 | 桌面装 OpenCLI 用浏览器登录态；或 rdt-cli + Cookie |
 | 📘 **Facebook** | — | 搜索、主页、Feed、群组列表 | 桌面装 OpenCLI（复用 Chrome 登录态） |
 | 📷 **Instagram** | — | 用户搜索、Profile、用户最近帖子、Explore | 桌面装 OpenCLI（复用 Chrome 登录态） |
-| 📕 **小红书** | — | 搜索、阅读、评论 | 桌面装 OpenCLI（刷过小红书即可用）；服务器用 xiaohongshu-mcp 扫码 |
+| 📕 **小红书** | — | 搜索、阅读、评论 | OpenCLI 只用用户已有 Chrome 会话；MCP/存量工具用 Cookie-Editor |
 | 💼 **LinkedIn** | Jina Reader 读公开页面 | Profile 详情、公司页面、职位搜索 | 告诉 Agent「帮我配 LinkedIn」 |
+| 🎯 **Boss直聘** | CDP 链路体检 | 搜索岗位 + JD 全文（专用真 Chrome） | 告诉 Agent「帮我配 Boss直聘」；Agent 打开专用 Chrome，你手动登录 |
 | 💻 **V2EX** | 热门帖子、节点帖子、帖子详情+回复、用户信息 | — | 无需配置 |
 | 📈 **雪球** | 股票行情、搜索股票、热门帖子、热门股票排行 | — | 告诉 Agent「帮我配雪球」 |
 | 🎙️ **小宇宙播客** | — | 播客音频转文字（Whisper 转录，免费 Key） | 告诉 Agent「帮我配小宇宙播客」 |
 
 > **不知道怎么配？不用查文档。** 直接告诉 Agent「帮我配 XXX」，它知道需要什么、会一步一步引导你。
 >
-> 🍪 需要 Cookie/登录态的平台（Twitter、小红书、Reddit、Facebook、Instagram 等），优先让用户在自己的浏览器里登录。OpenCLI 复用 Chrome 登录态；传统 CLI 才需要 Cookie-Editor 导出 Cookie。
+> 🍪 Twitter 只接受用户通过 Cookie-Editor 手工导出的内容。Agent Reach 不替用户执行小红书登录，也不读取小红书浏览器 Cookie；OpenCLI 只使用用户已经存在且明确控制的 Chrome 会话。`agent-reach configure xhs-cookies` 不会把 Cookie 注入 OpenCLI / Chrome；没有现成会话时，改用 Cookie-Editor 导出后配置 xiaohongshu-mcp / 存量工具。
+>
+> Twitter Cookie 保存后仅供 `agent-reach doctor` 检查配置是否齐全；直接运行上游 `twitter` 命令前，仍需在当前进程环境中显式设置 `TWITTER_AUTH_TOKEN` 和 `TWITTER_CT0`。
 >
 > 🔒 Cookie 只存在你本地，不上传不外传。代码完全开源，随时可审查。
 > 💻 本地电脑不需要代理。代理只有部署在服务器上才需要（~$1/月）。
@@ -124,20 +158,20 @@ AI Agent 已经能帮你写代码、改文档、管项目——但你让它去�
 > 帮我更新 Agent Reach：https://raw.githubusercontent.com/Panniantong/agent-reach/main/docs/update.md
 > ```
 
-> 🛡️ **担心安全？** 可以用安全模式——不会自动装系统包，只告诉你需要什么：
+> 🛡️ **默认安全：** `agent-reach install` 默认只检查环境，不会自动装系统包或写入配置：
 > ```
-> 帮我安装 Agent Reach（安全模式）：https://raw.githubusercontent.com/Panniantong/agent-reach/main/docs/install.md
-> 安装时使用 --safe 参数
+> 帮我安全检查并安装 Agent Reach：https://raw.githubusercontent.com/Panniantong/agent-reach/main/docs/install.md
 > ```
+> 只有在你明确允许修改系统后，才使用 `agent-reach install --system`。
 
 <details>
 <summary>它会做什么？（点击展开）</summary>
 
-1. **安装 CLI 工具** — `pip install` 装好 `agent-reach` 命令行（自带 yt-dlp、feedparser）
-2. **安装系统基建** — 自动检测并安装 Node.js、gh CLI、mcporter
-3. **配置搜索引擎** — 通过 MCP 接入 Exa（免费，无需 API Key）
+1. **安装 CLI 工具** — 从本仓库安装 `agent-reach` 命令行（自带 yt-dlp、feedparser；不要从 PyPI 安装同名包，它不是本项目）
+2. **检查系统基建** — 检查 Node.js、gh CLI、mcporter，并给出缺失项的安装方式
+3. **按授权安装与配置** — 仅在显式传入 `--system` 时安装依赖并通过 MCP 接入 Exa
 4. **检测环境** — 判断是本地电脑还是服务器，给出对应的配置建议
-5. **注册 SKILL.md** — 在 Agent 的 skills 目录安装使用指南，以后 Agent 遇到"全网调研"、"搜推特"、"看视频"这类需求，会自动知道该调哪个上游工具
+5. **按授权注册 SKILL.md** — 仅在显式 `--system` 时写入 Agent 的 skills 目录；默认检查不改文件
 6. **问你要不要更多** — 默认只激活 6 个零配置渠道；小红书、Twitter、Reddit、Facebook、Instagram 这些需要登录态的，Agent 会列菜单问你要哪些，点名才装
 
 安装完之后，`agent-reach doctor` 一条命令告诉你每个渠道的状态、当前走哪条路。
@@ -157,12 +191,6 @@ AI Agent 已经能帮你写代码、改文档、管项目——但你让它去�
 - "订阅这个 RSS" → `feedparser` 解析
 
 **不需要记命令。** Agent 读了 SKILL.md 之后自己知道该调什么。需要登录的平台（小红书、Twitter、Reddit、Facebook、Instagram），告诉 Agent「帮我配 XXX」即可解锁。
-
----
-
-## 能力边界：读内容 vs 操作网页
-
-有些任务超出"读"的范围：登录后的网页操作、表单提交、多账号隔离、并行浏览器会话、自动化流程中的登录、验证、风控提示等高摩擦环节的人工接手。这类"动手"场景，可以配合 [BrowserAct](https://www.browseract.com/?co-from=Agent&redirect=https://github.com/browser-act/skills/tree/main) 这类浏览器自动化工具——30+ 预制平台技能，支持 Claude Code / OpenClaw / Cursor 等主流 Agent。
 
 ---
 
@@ -189,7 +217,7 @@ channels/
 ├── facebook.py     → OpenCLI（桌面浏览器登录态）
 ├── instagram.py    → OpenCLI（桌面浏览器登录态）
 ├── xiaohongshu.py  → OpenCLI ▸ xiaohongshu-mcp ▸ xhs-cli
-├── linkedin.py     → linkedin-mcp ▸ Jina Reader
+├── linkedin.py     → mcp-server-linkedin ▸ Jina Reader
 ├── rss.py          → feedparser
 ├── exa_search.py   → Exa via mcporter
 └── __init__.py     → 渠道注册（doctor 检测用）
@@ -211,8 +239,8 @@ channels/
 | 搜全网 | [Exa](https://exa.ai) via [mcporter](https://github.com/nicobailon/mcporter) | — | AI 语义搜索，MCP 接入免 Key |
 | GitHub | [gh CLI](https://cli.github.com) | — | 官方工具，认证后完整 API 能力 |
 | 读 RSS | [feedparser](https://github.com/kurtmckee/feedparser) | — | Python 生态标准选择 |
-| 小红书 | [OpenCLI](https://github.com/jackwener/opencli)（桌面） | [xiaohongshu-mcp](https://github.com/xpzouying/xiaohongshu-mcp)（服务器）▸ xhs-cli | xhs-cli 作者已转投 OpenCLI（24K Star）；浏览器登录态零摩擦 |
-| LinkedIn | [linkedin-scraper-mcp](https://github.com/stickerdaniel/linkedin-mcp-server) | Jina Reader | MCP 服务，浏览器自动化 |
+| 小红书 | [OpenCLI](https://github.com/jackwener/opencli)（桌面） | [xiaohongshu-mcp](https://github.com/xpzouying/xiaohongshu-mcp)（服务器）▸ xhs-cli | OpenCLI 只用用户已有会话；其余后端用 Cookie-Editor 手工导出 |
+| LinkedIn | [mcp-server-linkedin](https://github.com/stickerdaniel/linkedin-mcp-server) | Jina Reader | MCP 服务，浏览器自动化 |
 
 > 📌 这些都是「当前选型」，基于真机实测定期复核。某条路失效了我们换下一条——`agent-reach doctor` 永远告诉你现在走的是哪条。
 
@@ -225,7 +253,7 @@ Agent Reach 在设计上重视安全：
 | 措施 | 说明 |
 |------|------|
 | 🔒 **凭据本地存储** | Cookie、Token 只存在你本机 `~/.agent-reach/config.yaml`，文件权限 600（仅所有者可读写），不上传不外传 |
-| 🛡️ **安全模式** | `agent-reach install --safe` 不会自动修改系统，只列出需要什么，由你决定装不装 |
+| 🛡️ **默认安全** | `agent-reach install` 默认不修改系统；只有显式 `--system` 才安装外部工具和写入配置 |
 | 👀 **完全开源** | 代码透明，随时可审查。所有依赖工具也是开源项目 |
 | 🔍 **Dry Run** | `agent-reach install --dry-run` 预览所有操作，不做任何改动 |
 | 🧩 **可插拔架构** | 不信任某个组件？换掉对应的 channel 文件即可，不影响其他 |
@@ -242,8 +270,9 @@ Agent Reach 在设计上重视安全：
 
 | 方式 | 命令 | 适合场景 |
 |------|------|---------|
-| 一键全自动（默认） | `agent-reach install --env=auto` | 个人电脑、开发环境 |
-| 安全模式 | `agent-reach install --env=auto --safe` | 生产服务器、多人共用机器 |
+| 默认安全检查 | `agent-reach install --env=auto` | 所有环境；只读检查并列出缺失项 |
+| 显式安装系统依赖 | `agent-reach install --env=auto --system` | 你明确允许修改当前机器时 |
+| 兼容安全参数 | `agent-reach install --env=auto --safe` | 与默认行为相同 |
 | 仅预览 | `agent-reach install --env=auto --dry-run` | 先看看会做什么 |
 
 ### 🗑️ 卸载
@@ -282,7 +311,7 @@ Star 一下，下次需要的时候能找到。⭐
 
 ## 致谢
 
-[OpenCLI](https://github.com/jackwener/opencli) · [twitter-cli](https://github.com/public-clis/twitter-cli) · [rdt-cli](https://github.com/public-clis/rdt-cli) · [xiaohongshu-mcp](https://github.com/xpzouying/xiaohongshu-mcp) · [xhs-cli](https://github.com/jackwener/xiaohongshu-cli) · [bili-cli](https://github.com/public-clis/bilibili-cli) · [yt-dlp](https://github.com/yt-dlp/yt-dlp) · [Jina Reader](https://github.com/jina-ai/reader) · [Exa](https://exa.ai) · [mcporter](https://github.com/nicobailon/mcporter) · [feedparser](https://github.com/kurtmckee/feedparser) · [linkedin-scraper-mcp](https://github.com/stickerdaniel/linkedin-mcp-server)
+[OpenCLI](https://github.com/jackwener/opencli) · [twitter-cli](https://github.com/public-clis/twitter-cli) · [rdt-cli](https://github.com/public-clis/rdt-cli) · [xiaohongshu-mcp](https://github.com/xpzouying/xiaohongshu-mcp) · [xhs-cli](https://github.com/jackwener/xiaohongshu-cli) · [bili-cli](https://github.com/public-clis/bilibili-cli) · [yt-dlp](https://github.com/yt-dlp/yt-dlp) · [Jina Reader](https://github.com/jina-ai/reader) · [Exa](https://exa.ai) · [mcporter](https://github.com/nicobailon/mcporter) · [feedparser](https://github.com/kurtmckee/feedparser) · [mcp-server-linkedin](https://github.com/stickerdaniel/linkedin-mcp-server)
 
 ## 联系
 
@@ -315,12 +344,10 @@ Builder 也欢迎备注：`Builder + 你在做什么`
 
 ## 友情链接
 
-[方舟 Agent Plan 模型订阅套餐](https://dis.chatdesks.cn/chatdesk/hsyqAgent-Reach.html) — 集成了包含 Doubao-Seed、Doubao-Seedance、Doubao-Seedream 等在内的字节跳动自研 SOTA 级模型，覆盖文本、代码、图像、视频等多模态任务。最新支持 MiniMax-M3、DeepSeek-V4 系列、GLM-5.2、Doubao-Seed-2.0 系列、Kimi-K2.6 等模型，工具不限。超全模态模型与 Harness 升级一步到位，深度支持 Agent 框架与 AI 编程工具。一次订阅，可以为不同任务切换合适的 AI 引擎。
-
-[腾讯云 OpenClaw](https://www.tencentcloud.com/act/pro/intl-openclaw?referral_code=G76Y819A&lang=zh&pg=) — 在腾讯云Lighthouse秒级部署OpenClaw全能助手，可通过对话丝滑接入Agent Reach，给你的OpenClaw一键装上互联网能力。
+[Agent Skills Hub](https://agentskillshub.top/) — 找 Claude 技能和 MCP 服务器，不用猜哪个安全：133,000+ 个条目全部安全分级、质量评分，每 8 小时刷新。
 
 [AtomGit 镜像](https://atomgit.com/qq_51337814/Agent-Reach) — Agent Reach 的 AtomGit 同步镜像，便于国内访问与克隆。
 
 ## Star History
 
-[![Star History Chart](https://api.star-history.com/svg?repos=Panniantong/Agent-Reach&type=Date&v=20260309)](https://star-history.com/#Panniantong/Agent-Reach&Date)
+<a href="https://www.star-history.com/?type=date&repos=Panniantong%2FAgent-Reach"><picture><source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=Panniantong/Agent-Reach&type=date&theme=dark&legend=top-left&sealed_token=K3_u-LJQTVURYu-38Tqa_VWJOSqMf_HbAw-QKSdGwEq6seqznugdIpXdSeztEdOutT40IBXwVxTmg8wS_OSygb5UWf1x8e-Fai6aygrjq6QH8vU09EcqQCN7atp-76HmxX-j9fnZ9NiSrLDNzK98TnXBFJ_Wb_y80I0nWr3O8DdGnLXFhAJgoNK3Jz8D" /><source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=Panniantong/Agent-Reach&type=date&legend=top-left&sealed_token=P2746KOq7grpS8Q-nrqEzci1-Z0-dOw-M3KEqju-l3TyF24NMyRDR7TnxdReJWlXyomoT4mjjqC28-2-c2G6CnzmS1hgYdEDiGPmLkmEqKP5tgjORXshdrUFxoSxTqmIKEMFFmGZUX1v3ec-q_XMyftTVWzluiQH7CvKoZ1uDKU3PJN05mO22u7qlLeG" /><img alt="Star History Chart" src="https://api.star-history.com/chart?repos=Panniantong/Agent-Reach&type=date&legend=top-left&sealed_token=P2746KOq7grpS8Q-nrqEzci1-Z0-dOw-M3KEqju-l3TyF24NMyRDR7TnxdReJWlXyomoT4mjjqC28-2-c2G6CnzmS1hgYdEDiGPmLkmEqKP5tgjORXshdrUFxoSxTqmIKEMFFmGZUX1v3ec-q_XMyftTVWzluiQH7CvKoZ1uDKU3PJN05mO22u7qlLeG" /></picture></a>

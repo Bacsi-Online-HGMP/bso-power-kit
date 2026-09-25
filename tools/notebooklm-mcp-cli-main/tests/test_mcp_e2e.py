@@ -5,6 +5,7 @@ Tests the consolidated MCP tools against the real NotebookLM API.
 Run with: NOTEBOOKLM_E2E=1 pytest tests/test_mcp_e2e.py -v
 """
 
+import asyncio
 import contextlib
 import os
 import time
@@ -151,8 +152,10 @@ class TestMCPQueryTools:
         )
         time.sleep(3)
 
-        result = mcp_tools["chat"].notebook_query(
-            notebook_id=test_notebook, query="What is the speed of light?"
+        result = asyncio.run(
+            mcp_tools["chat"].notebook_query(
+                notebook_id=test_notebook, query="What is the speed of light?"
+            )
         )
 
         assert result["status"] == "success"
@@ -254,7 +257,7 @@ class TestMCPDownloadTools:
     def test_download_artifact_no_artifact(self, mcp_tools, test_notebook):
         """Test download when no artifact exists."""
         result = mcp_tools["downloads"].download_artifact(
-            notebook_id=test_notebook, artifact_type="audio", output_path="test_audio.mp3"
+            notebook_id=test_notebook, artifact_type="audio", output_path="test_audio.m4a"
         )
         # Should fail gracefully - no audio exists
         assert result["status"] == "error"

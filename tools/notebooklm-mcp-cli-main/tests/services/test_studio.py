@@ -217,6 +217,21 @@ class TestCreateArtifact:
         assert call_kwargs[1]["focus_prompt"] == "key takeaways"
         assert call_kwargs[1]["visual_style_prompt"] == ""
 
+    def test_create_video_short_adds_non_english_language_requirement(self, mock_client):
+        create_artifact(
+            mock_client,
+            "nb-1",
+            "video",
+            video_format="short",
+            language="de",
+            focus_prompt="Explain the key ideas",
+        )
+
+        focus_prompt = mock_client.create_video_overview.call_args.kwargs["focus_prompt"]
+        assert "de" in focus_prompt
+        assert "narration, subtitles, and all on-screen text" in focus_prompt
+        assert focus_prompt.endswith("Explain the key ideas")
+
     def test_create_video_short_rejects_style(self, mock_client):
         """Short still rejects --style (style codes don't apply)."""
         with pytest.raises(ValidationError, match="does not support --style") as exc_info:
@@ -382,15 +397,126 @@ class TestGetStudioStatus:
         assert result["completed"] == 2  # 1 studio + 1 mind map
         assert result["in_progress"] == 1
 
+    def test_preserves_xlsx_download_filename(self, mock_client):
+        mock_client.poll_studio_status.return_value = [
+            {
+                "artifact_id": "xlsx-1",
+                "type": "data_table_xlsx",
+                "title": "Excel Table",
+                "status": "completed",
+                "download_filename": "sawn-lumber-design.xlsx",
+            }
+        ]
+        mock_client.list_mind_maps.return_value = []
+
+        result = get_studio_status(mock_client, "nb-1")
+
+        assert result["artifacts"][0]["download_filename"] == "sawn-lumber-design.xlsx"
+
+    def test_preserves_generic_file_metadata(self, mock_client):
+        mock_client.poll_studio_status.return_value = [
+            {
+                "artifact_id": "file-1",
+                "type": "file",
+                "title": "analysis.md",
+                "status": "completed",
+                "download_filename": "analysis.md",
+                "mime_type": "text/markdown",
+            }
+        ]
+        mock_client.list_mind_maps.return_value = []
+
+        result = get_studio_status(mock_client, "nb-1")
+
+        assert result["artifacts"][0]["type"] == "file"
+        assert result["artifacts"][0]["download_filename"] == "analysis.md"
+        assert result["artifacts"][0]["mime_type"] == "text/markdown"
+
     def test_mind_map_fetch_failure_ignored(self, mock_client):
         mock_client.list_mind_maps.side_effect = RuntimeError("fail")
         result = get_studio_status(mock_client, "nb-1")
         assert result["total"] == 2  # only studio artifacts
 
+    def test_deduplicates_mind_map_returned_by_both_status_apis(self, mock_client):
+        mock_client.poll_studio_status.return_value = [
+            {
+                "artifact_id": "mm-1",
+                "type": "mind_map",
+                "title": "Map 1",
+                "status": "completed",
+            }
+        ]
+        mock_client.list_mind_maps.return_value = [
+            {"mind_map_id": "mm-1", "title": "Map 1"},
+        ]
+
+        result = get_studio_status(mock_client, "nb-1")
+
+        assert result["total"] == 1
+        assert result["artifacts"][0]["type"] == "mind_map"
+
     def test_api_error(self, mock_client):
         mock_client.poll_studio_status.side_effect = RuntimeError("fail")
         with pytest.raises(ServiceError, match="Failed to poll"):
             get_studio_status(mock_client, "nb-1")
+
+    def test_lean_status_omits_large_detail_fields(self, mock_client):
+        mock_client.poll_studio_status.return_value = [
+            {
+                "artifact_id": "a1",
+                "type": "video",
+                "title": "Short",
+                "status": "completed",
+                "created_at": "2026-07-16T00:00:00Z",
+                "custom_instructions": "x" * 10_000,
+                "report_content": "y" * 10_000,
+                "source_ids": ["src-1"],
+                "video_url": "https://example.com/video.mp4",
+            }
+        ]
+        mock_client.list_mind_maps.return_value = []
+
+        result = get_studio_status(mock_client, "nb-1", include_details=False)
+
+        assert result["artifacts"] == [
+            {
+                "artifact_id": "a1",
+                "type": "video",
+                "title": "Short",
+                "status": "completed",
+                "created_at": "2026-07-16T00:00:00Z",
+                "error_reason": None,
+            }
+        ]
+
+    def test_status_supports_artifact_lookup(self, mock_client):
+        result = get_studio_status(mock_client, "nb-1", artifact_id="a2")
+
+        assert [artifact["artifact_id"] for artifact in result["artifacts"]] == ["a2"]
+        assert result["returned"] == 1
+        assert result["has_more"] is False
+
+    def test_status_supports_bounded_pages(self, mock_client):
+        result = get_studio_status(mock_client, "nb-1", limit=1, offset=1)
+
+        assert [artifact["artifact_id"] for artifact in result["artifacts"]] == ["a2"]
+        assert result["total"] == 3
+        assert result["returned"] == 1
+        assert result["offset"] == 1
+        assert result["limit"] == 1
+        assert result["has_more"] is True
+
+    @pytest.mark.parametrize(
+        ("limit", "offset", "message"),
+        [
+            (0, 0, "limit must be between 1 and 100"),
+            (101, 0, "limit must be between 1 and 100"),
+            (1, -1, "offset must be 0 or greater"),
+        ],
+    )
+    def test_status_rejects_invalid_pagination(self, mock_client, limit, offset, message):
+        with pytest.raises(ValidationError, match=message):
+            get_studio_status(mock_client, "nb-1", limit=limit, offset=offset)
 
 
 class TestReviseArtifact:

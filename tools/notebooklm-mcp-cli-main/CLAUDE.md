@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-**NotebookLM MCP Server & CLI** - Provides programmatic access to NotebookLM (notebooklm.google.com) via both a Model Context Protocol server and a comprehensive command-line interface.
+**Gemini Notebook (formerly Google NotebookLM) MCP Server & CLI** - Provides programmatic access to Gemini Notebook (notebook.google.com) via both a Model Context Protocol server and a comprehensive command-line interface.
 
 Tested with personal/free tier accounts. May work with Google Workspace accounts but has not been tested.
 
@@ -49,7 +49,7 @@ Extract CSRF token and session ID directly from network request - **no page fetc
 
 ```python
 # 1. Navigate to NotebookLM page
-navigate_page(url="https://notebooklm.google.com/")
+navigate_page(url="https://notebook.google.com/")
 
 # 2. Get a batchexecute request (any NotebookLM API call)
 get_network_request(reqid=<any_batchexecute_request>)
@@ -79,10 +79,11 @@ save_auth_tokens(cookies=<cookie_header>)
 | `NOTEBOOKLM_BL` | No | Override for build label / bl URL param (auto-extracted from page) |
 | `NOTEBOOKLM_HL` | No | Interface language and default artifact language (default: `en`) |
 | `NOTEBOOKLM_RPC_OVERRIDES` | No | Hot-patch rotated batchexecute RPC method IDs without a release. JSON object mapping `BaseClient` RPC attribute names to new IDs, e.g. `{"RPC_LIST_NOTEBOOKS": "abc123"}` |
+| `NOTEBOOKLM_DISABLE_HEADLESS_REFRESH` | No | Set to `1` to disable the automatic headless self-heal and `nlm auth refresh`. Use on Google Workspace accounts whose session is revoked when the saved browser profile is relaunched (issue #330) |
 
 ### Resilience: rotated RPC IDs
 
-NotebookLM's internal API uses short RPC "method IDs" (e.g. `wXbhsf`) that Google rotates without notice. When one rotates, calls using the old ID fail. The client now:
+Gemini Notebook's internal API uses short RPC "method IDs" (e.g. `wXbhsf`) that Google rotates without notice. When one rotates, calls using the old ID fail. The client now:
 
 - **Detects drift loudly**: raises `RPCDriftError` (instead of returning silently) when the server responds with **other** `wrb.fr` RPC IDs than the one requested. An empty response still returns silently (no comparison points), so use `--debug` to inspect in that case.
 - **Discovers the new ID**: run with `--debug` to log `RPC IDs in response: [...]` — the new ID for your call appears there.
@@ -97,6 +98,14 @@ NotebookLM's internal API uses short RPC "method IDs" (e.g. `wXbhsf`) that Googl
 - **Build label (bl)**: Auto-extracted during login and CSRF refresh; stays current with Google's build
 
 When API calls fail with auth errors, re-extract fresh cookies from Chrome DevTools.
+
+**Unattended keep-alive:** A live session self-heals — auth recovery reloads
+newer disk cookies (external re-login) or runs a headless-browser refresh to
+make Google reissue the short-lived `*PSIDTS` freshness cookies when they age
+out. For schedulers, `nlm auth refresh` triggers that headless refresh
+non-interactively so a session never lapses between jobs. (RotateCookies alone
+refreshes only the `*SIDCC` session cookies, not `*PSIDTS`, from a plain HTTP
+client — see issue #316.)
 
 ## Architecture
 
@@ -144,7 +153,13 @@ src/notebooklm_tools/
 
 **Executables:**
 - `nlm` - Command-line interface
-- `notebooklm-mcp` - The MCP server
+- `notebooklm-mcp` - The Gemini Notebook MCP server executable
+
+**Configured MCP name:** `gemini-notebook-mcp` (the executable name remains
+`notebooklm-mcp` for compatibility). Claude Desktop setup detects regular and
+Relay AI/3P profiles, never creates missing profiles, and refuses to write
+while the selected Claude instance is running. User-level skill installation
+also requires the target tool to be detected.
 
 ## MCP Tools Provided
 
@@ -162,6 +177,9 @@ src/notebooklm_tools/
 | `notebook_delete` | Delete a notebook (REQUIRES confirmation) |
 | `source_add` | Add source (url, text, drive, file) |
 | `notebook_query` | Ask questions (AI answers!) |
+| `chat_list` | List chat sessions for a notebook |
+| `chat_get` | Get full transcript of a chat session (defaults to latest) |
+| `chat_export` | Export a chat transcript to Markdown or JSON |
 | `source_list_drive` | List sources with types, check Drive freshness |
 | `source_sync_drive` | Sync stale Drive sources (REQUIRES confirmation) |
 | `source_rename` | Rename a source in a notebook |
@@ -171,10 +189,12 @@ src/notebooklm_tools/
 | `research_import` | Import discovered sources into notebook (manual, if `auto_import` not used) |
 | `studio_create` | Generate unified content (audio, video, infographic, slides, etc.) |
 | `download_artifact` | Download any artifact (audio, video, pdf, markdown, json). Supports `wait`, `wait_timeout`, `poll_interval` params and returns `download_url` when MCP HTTP transport is active. |
+| `download_all_artifacts` | Download every completed artifact of a notebook — or every notebook with `all_notebooks=True` — into per-notebook directories (named after notebook titles). Optional `artifact_types` filter and `skip_existing` for incremental re-runs; failures on one artifact/notebook don't stop the rest. CLI: `nlm download all [--all-notebooks] [--skip-existing]` |
 | `export_artifact` | Export Data Tables to Google Sheets or Reports to Google Docs |
 | `studio_status` | Check studio artifact generation status |
 | `studio_delete` | Delete studio artifacts (REQUIRES confirmation) |
 | `studio_revise` | Revise slides in an existing slide deck (creates new artifact, REQUIRES confirmation) |
+| `report` | Interactive report elements: `action=get` (markdown + elements), `elements` (sections, settings; optional wait / review content), `generate` (validate a plan; runs with `confirm=True`) |
 | `notebook_share_status` | Get sharing settings and collaborators |
 | `notebook_share_public` | Enable/disable public link access |
 | `notebook_share_invite` | Invite collaborator by email |
@@ -184,6 +204,7 @@ src/notebooklm_tools/
 | `note_list` | List all notes in a notebook |
 | `note_update` | Update a note's content or title |
 | `note_delete` | Delete a note (REQUIRES confirmation) |
+| `usage_get` | Show remaining plan usage per window (rolling + weekly) and reset times |
 
 **IMPORTANT - Operations Requiring Confirmation:**
 - `notebook_delete` requires `confirm=True` - deletion is IRREVERSIBLE
@@ -192,11 +213,12 @@ src/notebooklm_tools/
 - All studio creation tools require `confirm=True` - show settings and get user approval first
 - `studio_delete` requires `confirm=True` - list artifacts first via `studio_status`, deletion is IRREVERSIBLE
 - `studio_revise` requires `confirm=True` - creates a new artifact with revisions applied
+- `report(action="generate")` requires `confirm=True` - starts generation of the plan's elements (without it, the plan is only validated)
 - `note_delete` requires `confirm=True` - deletion is IRREVERSIBLE
 
 ## Features NOT Yet Implemented
 
-None - all NotebookLM features that can be accessed programmatically are implemented.
+None - all Gemini Notebook features that can be accessed programmatically are implemented.
 
 ## Troubleshooting
 
@@ -213,8 +235,13 @@ None - all NotebookLM features that can be accessed programmatically are impleme
 - Verify you're logged into the correct account
 
 ### Rate limit errors
-- Free tier: ~50 queries/day
-- Wait until the next day or upgrade to Plus
+- Since 2026-09-02, chat and Studio usage is metered as compute against two
+  windows at once: a short rolling window (~5h) and a weekly cap. Allowance
+  scales with plan tier.
+- Run `nlm usage` (MCP: `usage_get`) to see what is left in each window and
+  when it resets, instead of guessing.
+- Brief throttling is retried automatically with backoff; an exhausted window
+  needs to wait for the reset time that `nlm usage` reports.
 
 ## Documentation
 
@@ -244,7 +271,7 @@ Only read API_REFERENCE.md when:
 **[docs/MCP_CLI_TEST_PLAN.md](./docs/MCP_CLI_TEST_PLAN.md)**
 
 This includes:
-- Step-by-step test cases for all 29 MCP tools and CLI commands
+- Step-by-step test cases for all 43 MCP tools and CLI commands
 - Authentication and basic operations tests
 - Source management and Drive sync tests
 - Studio content generation tests (audio, video, infographics, etc.)
@@ -276,6 +303,12 @@ When adding new features:
 - `src/notebooklm_tools/data/SKILL.md` → `version: "X.Y.Z"`
 - `src/notebooklm_tools/data/AGENTS_SECTION.md` → `<!-- nlm-version: X.Y.Z -->`
 - `desktop-extension/manifest.json` → `"version": "X.Y.Z"`
+
+**CHANGELOG.md is also REQUIRED on every release** — add the `[X.Y.Z]` section at the top of `CHANGELOG.md` BEFORE committing the version bump. This is not optional and is not covered by the CI version-alignment check. Include:
+- A dated header: `## [X.Y.Z] - YYYY-MM-DD`
+- All Added / Fixed / Changed / Removed sections with full descriptions
+- Community credits with contributor GitHub handles and PR/issue links (e.g. "Thanks to **@username** for …")
+- DO NOT claim CHANGELOG.md was updated without verifying the file was actually modified in the commit
 
 ## License
 

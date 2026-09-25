@@ -280,6 +280,103 @@ class TestStudioMixinMethods:
         assert result[0]["status"] == "completed"
         assert result[0]["audio_url"] == "https://example.com/audio.m4a"
 
+    def test_poll_studio_status_identifies_mind_map_subtype(self):
+        """Shared type code 4 with subtype 4 is a saved mind map, not flashcards."""
+        mixin = StudioMixin(cookies={"test": "cookie"}, csrf_token="test")
+        mixin._call_rpc = MagicMock(
+            return_value=[
+                [
+                    [
+                        "mind-map-1",
+                        "Budget Map",
+                        mixin.STUDIO_TYPE_FLASHCARDS,
+                        [[["source-1"]]],
+                        3,
+                        None,
+                        None,
+                        None,
+                        None,
+                        ["", [4, None, None, "en", None, None, None, None, True]],
+                    ]
+                ]
+            ]
+        )
+
+        result = mixin.poll_studio_status("nb-1")
+
+        assert result[0]["artifact_id"] == "mind-map-1"
+        assert result[0]["type"] == "mind_map"
+        assert result[0]["flashcard_count"] is None
+
+    def test_poll_studio_status_classifies_xlsx_data_table_artifact(self):
+        """Studio type 10 is the downloadable XLSX data-table export."""
+        mixin = StudioMixin(cookies={"test": "cookie"}, csrf_token="test")
+        raw_artifact = [
+            "xlsx-1",
+            "sawn-lumber-design.xlsx",
+            10,
+            None,
+            3,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            "cursor",
+            None,
+            None,
+            [
+                "sawn-lumber-design.xlsx",
+                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                "https://drive.google.com/viewer/upload?ds=viewer-token",
+                "https://contribution.usercontent.google/download?c=download-token",
+            ],
+        ]
+        mixin._call_rpc = MagicMock(return_value=[[raw_artifact]])
+
+        result = mixin.poll_studio_status("nb-1")
+
+        assert result[0]["type"] == "data_table_xlsx"
+        assert result[0]["download_filename"] == "sawn-lumber-design.xlsx"
+        assert result[0]["mime_type"] == (
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
+
+    def test_poll_studio_status_classifies_non_xlsx_type_10_as_file(self):
+        """A type-10 Markdown export must not be routed through the XLSX downloader."""
+        mixin = StudioMixin(cookies={"test": "cookie"}, csrf_token="test")
+        raw_artifact = [
+            "file-1",
+            "analysis.md",
+            10,
+            [["source-1"]],
+            3,
+        ]
+        raw_artifact.extend([None] * 20)
+        raw_artifact[24] = [
+            "analysis.md",
+            "text/markdown",
+            "https://drive.google.com/viewer/upload?ds=viewer-token",
+        ]
+        mixin._call_rpc = MagicMock(return_value=[[raw_artifact]])
+
+        result = mixin.poll_studio_status("nb-1")
+
+        assert result[0]["type"] == "file"
+        assert result[0]["download_filename"] == "analysis.md"
+        assert result[0]["mime_type"] == "text/markdown"
+
     def test_create_audio_overview_uses_normalized_status_mapping(self):
         mixin = StudioMixin(cookies={"test": "cookie"}, csrf_token="test")
         http_client = MagicMock()
@@ -429,3 +526,86 @@ class TestShortVideoFormat:
         assert result["format"] == "short"
         assert result["visual_style"] is None
         assert result["language"] == "en"
+
+
+def test_list_mind_maps_excludes_prose_notes():
+    """Issue: the notes store mixes notes and mind maps; only real mind maps
+    (JSON content with children/nodes) may be returned as mind maps."""
+    from unittest.mock import patch
+
+    from notebooklm_tools.core.studio import StudioMixin
+
+    mind_map_entry = [
+        "mm-1",
+        [
+            "mm-1",
+            '{"name": "Root", "children": []}',
+            [None, None, [1700000000, 0]],
+            None,
+            "Real Map",
+        ],
+        1,
+    ]
+    note_entry = [
+        "note-1",
+        [
+            "note-1",
+            "To run Docling locally, follow these steps...",
+            [None, None, None],
+            None,
+            "A Note",
+        ],
+        1,
+    ]
+    tombstone_entry = ["gone-1", None, 2]
+
+    with (
+        patch.object(StudioMixin, "_refresh_auth_tokens"),
+        patch.object(StudioMixin, "_call_rpc") as mock_rpc,
+    ):
+        mock_rpc.return_value = [[note_entry, mind_map_entry, tombstone_entry]]
+        mixin = StudioMixin(cookies={"test": "cookie"}, csrf_token="test")
+        result = mixin.list_mind_maps("nb-1")
+
+    assert len(result) == 1
+    assert result[0]["mind_map_id"] == "mm-1"
+    assert result[0]["title"] == "Real Map"
+
+
+def _raw_type4_artifact(artifact_id, title, format_code):
+    """Raw poll entry for a type-4 (interactive) studio artifact."""
+    return [
+        artifact_id,
+        title,
+        4,  # STUDIO_TYPE_FLASHCARDS — shared by flashcards/quiz/mind map
+        None,
+        3,  # completed
+        None,
+        None,
+        None,
+        None,
+        ["", [format_code, None, None, "en", None, None, None, None, True]],
+    ]
+
+
+def test_poll_studio_status_classifies_type4_subtypes():
+    """Type-4 artifacts split by format code: 1=flashcards, 2=quiz, 4=mind map."""
+    from unittest.mock import patch
+
+    from notebooklm_tools.core.studio import StudioMixin
+
+    raw = [
+        _raw_type4_artifact("f-1", "Cards", 1),
+        _raw_type4_artifact("q-1", "Quiz", 2),
+        _raw_type4_artifact("mm-1", "Map", 4),
+    ]
+    with (
+        patch.object(StudioMixin, "_refresh_auth_tokens"),
+        patch.object(StudioMixin, "_call_rpc") as mock_rpc,
+    ):
+        mock_rpc.return_value = [raw]
+        mixin = StudioMixin(cookies={"test": "cookie"}, csrf_token="test")
+        artifacts = mixin.poll_studio_status("nb-1")
+
+    types = {a["artifact_id"]: a["type"] for a in artifacts}
+    assert types == {"f-1": "flashcards", "q-1": "quiz", "mm-1": "mind_map"}

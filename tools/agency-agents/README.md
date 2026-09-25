@@ -173,6 +173,12 @@ Building the future, one commit at a time.
 | 🦀 [Rust Refactoring Specialist](engineering/engineering-rust-refactoring-specialist.md) | Behavior-aware Rust refactoring | Reforming crates/traits/modules with evidence-based, behavior-preserving changes |
 | 🧪 [LLM Post-Training Engineer](engineering/engineering-llm-post-training-engineer.md) | Post-training stack (SFT/DPO/GRPO/RLVR) | Evidence-based experiment gating, checkpoint integrity, failure classification |
 | 📈 [Data Visualization Engineer](engineering/engineering-data-visualization-engineer.md) | Perceptually honest data viz | Chart-type selection, colorblind-safe palettes, performant D3/Vega rendering |
+| 🧠 [Knowledge Graph Engineer](engineering/engineering-knowledge-graph-engineer.md) | Knowledge graphs, entity-relationship extraction, graph-enhanced RAG | Structuring documents into queryable Neo4j graphs with LangGraph; provenance, contradiction tracking, subgraph retrieval |
+| 🌏 [China Network Engineer](engineering/engineering-china-network-engineer.md) | Huawei VRP, H3C Comware, Ruijie RGOS, Hillstone StoneOS | Routing/switching/firewall design, NAT, MLPS 2.0 compliant borders, change windows with rollback plans |
+| 🛤️ [Platform Engineer](engineering/engineering-platform-engineer.md) | Internal developer platforms, golden paths, IDPs, self-serve infrastructure | Paved-road scaffolding, developer experience measurement, platform-as-a-product roadmaps |
+| 📑 [PDF Engine Architect](engineering/engineering-pdf-engine-architect.md) | Deterministic HTML-to-PDF compilation, tagged PDF/UA and PDF/A | Playwright render pools, dynamic page sizing, archival-grade document output |
+| 🎯 [ATS Validator Architect](engineering/engineering-ats-validator-architect.md) | Resume parseability, ATS ingestion pipelines | BM25/TF-IDF relevance scoring, layout linearization audits, EU AI Act and NYC LL144 compliance |
+| 📑 [Universal Document Compiler](engineering/engineering-universal-document-compiler.md) | Schema-agnostic document ASTs, data-shape layout inference, paged publishing | Compiling arbitrary YAML trees into proposals, technical specs, executive dossiers |
 
 ### 🎨 Design Division
 
@@ -414,6 +420,8 @@ The unique specialists who don't fit in a box.
 | 🏺 [Codebase Archaeologist](specialized/specialized-codebase-archaeologist.md) | Multi-tool codebase drift audits | Detecting silent drift across Claude/Cursor/Copilot/Windsurf edits |
 | 🧾 [Resume Tailor](specialized/resume-tailor.md) | Candidate-side resume optimization | JD mapping, ATS keyword alignment, experience-to-requirement matching |
 | 🧡 [Aging Parent Care Companion](specialized/healthcare-aging-parent-care-companion.md) | Family caregiver decision-support | Appointment/medication coordination, care-team comms, caregiver wellbeing (HIPAA-aligned) |
+| 🏛️ [Master Plan Architect](specialized/specialized-master-plan-architect.md) | Architectural teaching, red-team plan critique | Deep architecture teaching, risk critique, comprehensive Markdown implementation plans (no code execution) |
+| 🎧 [Focus Music Architect](specialized/specialized-focus-music-architect.md) | Instrumental focus-music prompt engineering, neuroacoustics | Soundscape architecture, BPM curves, binaural layers for generative audio models |
 
 ### 💵 Finance Division
 
@@ -440,6 +448,7 @@ Building worlds, systems, and experiences across every major engine.
 | 🎨 [Technical Artist](game-development/technical-artist.md) | Shaders, VFX, LOD pipeline, art-to-engine optimization | Bridging art and engineering, shader authoring, performance-safe asset pipelines |
 | 🔊 [Game Audio Engineer](game-development/game-audio-engineer.md) | FMOD/Wwise, adaptive music, spatial audio, audio budgets | Interactive audio systems, dynamic music, audio performance |
 | 📖 [Narrative Designer](game-development/narrative-designer.md) | Story systems, branching dialogue, lore architecture | Writing branching narratives, implementing dialogue systems, world lore |
+| 💰 [Economy Designer](game-development/economy-designer.md) | Virtual currencies, sources/sinks, monetization modeling, inflation control | Designing in-game economies, balancing F2P monetization, live economy tuning |
 
 #### Unity
 
@@ -480,7 +489,6 @@ Building worlds, systems, and experiences across every major engine.
 | ⚙️ [Roblox Systems Scripter](game-development/roblox-studio/roblox-systems-scripter.md) | Luau, RemoteEvents/Functions, DataStore, server-authoritative module architecture | Building secure Roblox game systems, client-server communication, data persistence |
 | 🎯 [Roblox Experience Designer](game-development/roblox-studio/roblox-experience-designer.md) | Engagement loops, monetization, D1/D7 retention, onboarding flow | Designing Roblox game loops, Game Passes, daily rewards, player retention |
 | 👗 [Roblox Avatar Creator](game-development/roblox-studio/roblox-avatar-creator.md) | UGC pipeline, accessory rigging, Creator Marketplace submission | Roblox UGC items, HumanoidDescription customization, in-experience avatar shops |
-| 💰 [Economy Designer](game-development/economy-designer.md) | Virtual currencies, sources/sinks, monetization modeling, inflation control | Designing in-game economies, balancing F2P monetization, live economy tuning |
 
 ### 📚 Academic Division
 
@@ -528,6 +536,16 @@ Building AI agents for regulated clinical and sovereign health contexts.
 | 🩺 [Clinical Evidence Agent](healthcare/healthcare-clinical-evidence-agent.md) | Evidence standards, validated vs unvalidated claims, diagnostic authority boundaries | Making clinical claims credibly without overstepping into diagnostic authority |
 | 🌍 [Sovereign Health Systems Agent](healthcare/healthcare-sovereign-health-systems-agent.md) | Government health mandates, UHC policy, emerging market deployment | Health tech teams operating at the intersection of national health infrastructure and sovereign health policy |
 | 🧭 [Healthcare Innovation Strategist](healthcare/healthcare-innovation-strategist.md) | Narrative architecture for healthcare founders across investor, regulatory, sovereign, and clinical audiences | Healthcare founders who need to translate clinical and financial complexity into language that moves capital and builds trust |
+
+---
+
+### 🔍 Research Division
+
+Finding, evaluating, and synthesizing existing evidence rather than generating new primary data.
+
+| Agent | Specialty | When to Use |
+|-------|-----------|-------------|
+| 🔍 [Research Synthesist](research/research-synthesist.md) | Literature review, source evaluation, citation tracing, evidence synthesis | Turning a scattered pile of sources into a structured, honestly-weighted map of what the evidence supports |
 
 ---
 
@@ -715,7 +733,7 @@ The Agency works natively with Claude Code, and ships conversion + install scrip
 - **[Gemini CLI](https://github.com/google-gemini/gemini-cli)** -- `.md` agent files -> `~/.gemini/agents/`
 - **[OpenCode](https://opencode.ai)** — `.md` agent files → `.opencode/agents/`
 - **[Cursor](https://cursor.sh)** — `.mdc` rule files → `.cursor/rules/`
-- **[Aider](https://aider.chat)** — single `CONVENTIONS.md` → `./CONVENTIONS.md`
+- **[Aider](https://aider.chat)** — `CONVENTIONS.md` roster index → `./CONVENTIONS.md`
 - **[Windsurf](https://codeium.com/windsurf)** — single `.windsurfrules` → `./.windsurfrules`
 - **[OpenClaw](https://github.com/openclaw/openclaw)** — `SOUL.md` + `AGENTS.md` + `IDENTITY.md` per agent
 - **[Qwen Code](https://github.com/QwenLM/qwen-code)** — `.md` SubAgent files → `~/.qwen/agents/`
@@ -908,7 +926,10 @@ See [integrations/cursor/README.md](integrations/cursor/README.md) for details.
 <details>
 <summary><strong>Aider</strong></summary>
 
-All agents are compiled into a single `CONVENTIONS.md` file that Aider reads automatically.
+`CONVENTIONS.md` is the roster index — every agent's name, description, and the
+path to its full instructions. Aider keeps a conventions file in context for the
+whole session, and the 279 bodies together are about a million tokens, so the
+file lists the agents rather than inlining them.
 
 ```bash
 cd /your/project
@@ -918,6 +939,11 @@ cd /your/project
 Then reference agents in your Aider session:
 ```
 Use the Frontend Developer agent to refactor this component.
+```
+
+When you want an agent's full instructions, read its file in:
+```
+/read-only /path/to/agency-agents/engineering/engineering-frontend-developer.md
 ```
 
 See [integrations/aider/README.md](integrations/aider/README.md) for details.
@@ -1067,12 +1093,6 @@ Community-maintained translations and regional adaptations. These are independen
 | 🇻🇳 Tiếng Việt (vi-VN) | [@rodonguyen](https://github.com/rodonguyen) | [agency-agents](https://github.com/rodonguyen/agency-agents) | Starter Vietnamese localization focused on README, quick start, and high-use docs |
 
 Want to add a translation? Open an issue and we'll link it here.
-
----
-
-## 🔗 Related Resources
-
-- [awesome-openclaw-agents](https://github.com/mergisi/awesome-openclaw-agents) — Community-maintained OpenClaw agent collection (derived from this repo)
 
 ---
 

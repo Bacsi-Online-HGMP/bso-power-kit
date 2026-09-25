@@ -8,6 +8,7 @@ operations (notebooks, sources, studio, etc.) are provided by mixin classes.
 Internal API. See CLAUDE.md for full documentation.
 """
 
+import contextlib
 import json
 import logging
 import os
@@ -25,7 +26,7 @@ from notebooklm_tools.utils.config import get_base_url
 from . import constants
 from .data_types import ConversationTurn
 from .errors import ClientAuthenticationError as AuthenticationError
-from .errors import ResourceExhaustedError, RPCDriftError, RPCError
+from .errors import ResourceExhaustedError, RPCDriftError, RPCError, TransientBackendError
 from .retry import (
     DEFAULT_BASE_DELAY,
     DEFAULT_MAX_DELAY,
@@ -62,6 +63,33 @@ def _safe_int_env(name: str, default: int) -> int:
         return default
     if value < 0:
         logger.warning("%s=%d is negative; clamping to 0 (no cap)", name, value)
+        return 0
+    return value
+
+
+def _rate_limit_max_retries() -> int:
+    """Return the retry ceiling for HTTP 429 and RPC RESOURCE_EXHAUSTED errors.
+
+    The default preserves the standard transport retry behavior. Setting
+    ``NOTEBOOKLM_RATE_LIMIT_MAX_RETRIES=0`` surfaces rate limits immediately,
+    which is useful when a caller or queue owns retry scheduling.
+    """
+    name = "NOTEBOOKLM_RATE_LIMIT_MAX_RETRIES"
+    raw = os.environ.get(name)
+    if raw is None or raw.strip() == "":
+        return DEFAULT_MAX_RETRIES
+    try:
+        value = int(raw)
+    except ValueError:
+        logger.warning(
+            "Invalid %s=%r; falling back to default %d",
+            name,
+            raw,
+            DEFAULT_MAX_RETRIES,
+        )
+        return DEFAULT_MAX_RETRIES
+    if value < 0:
+        logger.warning("%s=%d is negative; clamping to 0", name, value)
         return 0
     return value
 
@@ -116,6 +144,39 @@ DEFAULT_TIMEOUT = 30.0  # Default for most operations
 SOURCE_ADD_TIMEOUT = 120.0  # Extended timeout for all source operations
 
 
+def _is_unreachable_failure(exc: Exception | None) -> bool:
+    """Return whether a refresh failure indicates an unreachable backend.
+
+    A failed homepage refresh can mean either that credentials were rejected
+    or that the request never reached a usable NotebookLM backend. Only the
+    former should result in an authentication-expired message.
+    """
+    if exc is None:
+        return False
+    if isinstance(exc, (httpx.TransportError, httpx.TimeoutException, OSError)):
+        return True
+    if isinstance(exc, httpx.HTTPStatusError):
+        return exc.response.status_code >= 500
+
+    text = str(exc).lower()
+    if "accounts.google.com" in text or "authentication expired" in text or "expired" in text:
+        return False
+    if re.search(r"\b5\d{2}\b", text):
+        return True
+    return any(
+        marker in text
+        for marker in (
+            "could not reach",
+            "network",
+            "timed out",
+            "timeout",
+            "connection",
+            "temporarily unavailable",
+            "dns",
+        )
+    )
+
+
 class BaseClient:
     """Base client providing HTTP/RPC infrastructure for NotebookLM API.
 
@@ -129,17 +190,42 @@ class BaseClient:
     from this base class.
     """
 
-    @classmethod
-    def _get_base_url(cls) -> str:
-        return get_base_url()
+    def _get_base_url(self) -> str:
+        return get_base_url(getattr(self, "_base_host", "") or None)
 
-    @classmethod
-    def _get_batchexecute_url(cls) -> str:
-        return f"{cls._get_base_url()}/_/LabsTailwindUi/data/batchexecute"
+    def _is_enterprise(self) -> bool:
+        """Return True if connected to Gemini Notebook Enterprise (Vertex AI Search / Cloud)."""
+        base_url = self._get_base_url()
+        return "vertexaisearch.cloud.google.com" in base_url or "cloud.google.com" in base_url
 
-    @classmethod
-    def _get_upload_url(cls) -> str:
-        return f"{cls._get_base_url()}/upload/_/"
+    def _get_enterprise_location(self) -> str:
+        """Return the enterprise location/region (e.g. global, us, eu)."""
+        from notebooklm_tools.utils.config import get_enterprise_location
+
+        return getattr(self, "_location", None) or get_enterprise_location()
+
+    def _get_enterprise_prefix(self) -> str:
+        base_url = self._get_base_url()
+        loc = self._get_enterprise_location()
+        if "vertexaisearch.cloud.google.com" in base_url:
+            return f"/notebooklm/{loc}"
+        # notebooklm.cloud.google.com uses /{location}
+        return f"/{loc}"
+
+    def _get_batchexecute_url(self) -> str:
+        if self._is_enterprise():
+            return f"{self._get_base_url()}{self._get_enterprise_prefix()}/_/CloudNotebookLmUi/data/batchexecute"
+        return f"{self._get_base_url()}/_/LabsTailwindUi/data/batchexecute"
+
+    def _get_upload_url(self) -> str:
+        if self._is_enterprise():
+            return f"{self._get_base_url()}{self._get_enterprise_prefix()}/upload/_/"
+        return f"{self._get_base_url()}/upload/_/"
+
+    def _get_query_endpoint(self) -> str:
+        if self._is_enterprise():
+            return f"{self._get_enterprise_prefix()}/_/CloudNotebookLmUi/data/google.cloud.notebooklm.v1main.NotebookService/GenerateFreeFormStreamed"
+        return self.QUERY_ENDPOINT
 
     # Keep class-level attributes for backward compatibility with code that
     # reads them directly (e.g. tests). These are the defaults; runtime code
@@ -148,6 +234,7 @@ class BaseClient:
     BATCHEXECUTE_URL = f"{BASE_URL}/_/LabsTailwindUi/data/batchexecute"
     UPLOAD_URL = "https://notebooklm.google.com/upload/_/"
     _BL_FALLBACK = "boq_labs-tailwind-frontend_20260108.06_p0"
+    _BL_FALLBACK_ENTERPRISE = "boq_cloud-ml-notebooklm-ui_20260816.08_p0"
 
     # =========================================================================
     # Known RPC IDs
@@ -155,6 +242,7 @@ class BaseClient:
 
     # Notebook operations
     RPC_LIST_NOTEBOOKS = "wXbhsf"
+    RPC_LIST_NOTEBOOKS_ENTERPRISE = "rG2vCb"
     RPC_GET_NOTEBOOK = "rLM1Ne"
     RPC_CREATE_NOTEBOOK = "CCqFvf"
     RPC_RENAME_NOTEBOOK = "s0tc2d"
@@ -172,6 +260,7 @@ class BaseClient:
 
     # Misc
     RPC_GET_CONVERSATIONS = "hPTbtc"
+    RPC_GET_CONVERSATION_TURNS = "khqZz"  # Fetch full Q&A turn history for a conversation ID
     RPC_DELETE_CHAT_HISTORY = "J7Gthc"
     RPC_PREFERENCES = "hT54vc"
     RPC_SETTINGS = "ZwVcOc"
@@ -190,6 +279,9 @@ class BaseClient:
     RPC_DELETE_STUDIO = "V5N4be"  # Delete Audio or Video Overview
     RPC_RENAME_ARTIFACT = "rc3d8d"  # Rename any studio artifact (Audio, Video, etc.)
     RPC_GET_INTERACTIVE_HTML = "v9rmvd"  # Fetch quiz/flashcard HTML content
+    RPC_GET_ARTIFACT = "v9rmvd"  # Get one artifact by id (same RPC; also reads element metadata)
+    RPC_SET_ARTIFACT_FIELDS = "rc3d8d"  # Update artifact fields via field mask (same RPC as rename)
+    RPC_START_ARTIFACT = "Rytqqe"  # Kick off generation of a (suggested) artifact
     RPC_REVISE_SLIDE_DECK = "KmcKPe"  # Revise existing slide deck with per-slide instructions
 
     # Mind map RPCs
@@ -215,6 +307,14 @@ class BaseClient:
 
     # Export RPCs
     RPC_EXPORT_ARTIFACT = "Krh3pd"  # Export to Google Docs/Sheets
+
+    # Usage RPCs
+    RPC_GET_USAGE = "EylDcb"  # Remaining allowance and reset time per usage window
+    # Same endpoint as RPC_ADD_SOURCE_V2: Google dual-maps ozz5Z, returning the
+    # subscription tier for homepage params and adding a URL source for notebook
+    # params. Kept as its own constant so the two uses stay independently
+    # documented and independently patchable via NOTEBOOKLM_RPC_OVERRIDES.
+    RPC_GET_ENTITLEMENT = "ozz5Z"  # Subscription tier the account is entitled to
 
     # =========================================================================
     # API Constants (re-exported from constants module)
@@ -243,6 +343,8 @@ class BaseClient:
     STUDIO_TYPE_INFOGRAPHIC = constants.STUDIO_TYPE_INFOGRAPHIC
     STUDIO_TYPE_SLIDE_DECK = constants.STUDIO_TYPE_SLIDE_DECK
     STUDIO_TYPE_DATA_TABLE = constants.STUDIO_TYPE_DATA_TABLE
+    STUDIO_TYPE_DATA_TABLE_XLSX = constants.STUDIO_TYPE_DATA_TABLE_XLSX
+    STUDIO_TYPE_INTERACTIVE_REPORT = constants.STUDIO_TYPE_INTERACTIVE_REPORT
 
     # Audio formats and lengths
     AUDIO_FORMAT_DEEP_DIVE = constants.AUDIO_FORMAT_DEEP_DIVE
@@ -346,6 +448,10 @@ class BaseClient:
         csrf_token: str = "",
         session_id: str = "",
         build_label: str = "",
+        base_host: str = "",
+        profile_name: str | None = None,
+        location: str | None = None,
+        project_id: str | None = None,
     ):
         """
         Initialize the base client.
@@ -355,14 +461,31 @@ class BaseClient:
             csrf_token: CSRF token (optional - will be auto-extracted from page if not provided)
             session_id: Session ID (optional - will be auto-extracted from page if not provided)
             build_label: Build label / bl param (optional - auto-extracted from page if not provided)
+            base_host: Host the account is signed in on, e.g. "notebook.google.com"
+                (optional - falls back to NOTEBOOKLM_BASE_URL or the default host)
+            profile_name: Auth profile that owns these credentials. Uses the
+                configured default when omitted.
+            location: GCP region for Enterprise (e.g. global, us, eu). Defaults to NOTEBOOKLM_LOCATION or 'global'.
+            project_id: GCP project ID for Enterprise. Defaults to NOTEBOOKLM_PROJECT_ID.
         """
         import time as _time
+
+        from notebooklm_tools.utils.config import get_enterprise_location, get_enterprise_project_id
 
         self.cookies = cookies
         self.csrf_token = csrf_token
         self._client: httpx.Client | None = None
         self._session_id = session_id
         self._bl = build_label
+        self._base_host = base_host
+        self._profile_name = profile_name
+        self._location = location or get_enterprise_location()
+        self._enterprise_project_id = project_id or get_enterprise_project_id()
+        if self._is_enterprise() and not self._enterprise_project_id:
+            raise ValueError(
+                "NOTEBOOKLM_PROJECT_ID is required when NOTEBOOKLM_BASE_URL points to "
+                "Gemini Notebook Enterprise."
+            )
         self._created_at: float = _time.time()
 
         # Conversation cache for follow-up queries.
@@ -383,6 +506,8 @@ class BaseClient:
 
         # Request counter for _reqid parameter (required for query endpoint)
         self._reqid_counter = random.randint(100000, 999999)
+        self._cdp_ws_url: str | None = None
+        self._cdp_launched_port: int | None = None
 
         # RPC version cache for URL source addition (issue #121).
         # Google is rolling out a new RPC (ozz5Z) to replace izAoDd for URL sources.
@@ -401,10 +526,19 @@ class BaseClient:
         # Apply any runtime RPC-ID overrides (hot-patch for rotated method IDs).
         self._apply_rpc_overrides()
 
+        # In Enterprise mode, ensure we have enterprise-compatible tokens and session ID
+        if self._is_enterprise() and self._bl and "tailwind" in self._bl:
+            self._bl = ""
+            self._session_id = ""
+            self.csrf_token = ""
+
         # Only refresh CSRF token if not provided - tokens actually last hours/days, not minutes
         # The retry logic in _call_rpc() handles expired tokens gracefully
         if not self.csrf_token:
-            self._refresh_auth_tokens()
+            if self._cdp_rpc_transport_enabled():
+                self._prepare_cdp_transport(DEFAULT_TIMEOUT)
+            else:
+                self._refresh_auth_tokens()
 
     def __enter__(self):
         return self
@@ -417,6 +551,13 @@ class BaseClient:
         if self._client:
             self._client.close()
             self._client = None
+        if self._cdp_launched_port is not None:
+            from notebooklm_tools.utils import cdp
+
+            with contextlib.suppress(Exception):
+                cdp.terminate_chrome(port=self._cdp_launched_port)
+            self._cdp_launched_port = None
+            self._cdp_ws_url = None
 
     def _apply_rpc_overrides(self) -> None:
         """Apply NOTEBOOKLM_RPC_OVERRIDES as instance attributes.
@@ -473,14 +614,10 @@ class BaseClient:
 
     def _get_cookie_header(self) -> str:
         """Get Cookie header string (backward compatibility)."""
-        if isinstance(self.cookies, list):
-            # Flatten to simple dict for header
-            simple_cookies = {
-                c["name"]: c["value"] for c in self.cookies if "name" in c and "value" in c
-            }
-            return "; ".join(f"{k}={v}" for k, v in simple_cookies.items())
-        else:
-            return "; ".join(f"{k}={v}" for k, v in self.cookies.items())
+        from notebooklm_tools.utils.browser import flatten_cookies
+
+        simple_cookies = flatten_cookies(self.cookies)
+        return "; ".join(f"{k}={v}" for k, v in simple_cookies.items())
 
     # =========================================================================
     # HTTP Client Management
@@ -558,10 +695,11 @@ class BaseClient:
 
     def _build_url(self, rpc_id: str, source_path: str = "/") -> str:
         """Build the batchexecute URL with query params."""
+        fallback_bl = self._BL_FALLBACK_ENTERPRISE if self._is_enterprise() else self._BL_FALLBACK
         params = {
             "rpcids": rpc_id,
             "source-path": source_path,
-            "bl": os.environ.get("NOTEBOOKLM_BL") or getattr(self, "_bl", "") or self._BL_FALLBACK,
+            "bl": os.environ.get("NOTEBOOKLM_BL") or getattr(self, "_bl", "") or fallback_bl,
             "hl": os.environ.get("NOTEBOOKLM_HL", "en"),
             "rt": "c",
         }
@@ -720,6 +858,108 @@ class BaseClient:
                         present.append(item[1])
         return present
 
+    def _cdp_rpc_transport_enabled(self) -> bool:
+        from .cdp_transport import cdp_transport_enabled
+
+        return cdp_transport_enabled()
+
+    def _prepare_cdp_transport(self, timeout: float | None = None) -> None:
+        """Refresh request tokens from a profile-owned NotebookLM browser page."""
+        from .cdp_transport import get_cdp_page_context
+
+        with self._state_lock:
+            if self._cdp_ws_url and self._session_id:
+                return
+            csrf_fallback = self.csrf_token
+            session_fallback = self._session_id
+            build_fallback = self._bl
+
+        context = get_cdp_page_context(
+            profile_name=self._profile_name,
+            timeout=timeout if timeout is not None else DEFAULT_TIMEOUT,
+            csrf_fallback=csrf_fallback,
+            session_fallback=session_fallback,
+            build_fallback=build_fallback,
+        )
+        with self._state_lock:
+            self.csrf_token = context.csrf_token
+            self._session_id = context.session_id
+            self._bl = context.build_label
+            self._cdp_ws_url = context.ws_url
+            if context.launched:
+                self._cdp_launched_port = context.port
+
+    def _post_form_via_cdp(self, url: str, body: str, timeout: float | None = None) -> str:
+        """POST an already-built form request through the browser page."""
+        from .cdp_transport import CdpTransportError, fetch_form_in_page
+
+        with self._state_lock:
+            ws_url = self._cdp_ws_url
+
+        if not ws_url:
+            self._prepare_cdp_transport(timeout if timeout is not None else DEFAULT_TIMEOUT)
+            with self._state_lock:
+                ws_url = self._cdp_ws_url
+
+        if not ws_url:
+            raise CdpTransportError("CDP transport was enabled, but no page websocket was found.")
+
+        result = fetch_form_in_page(
+            ws_url,
+            url,
+            body,
+            timeout=timeout if timeout is not None else DEFAULT_TIMEOUT,
+        )
+        if result.status_code in (400, 401, 403):
+            raise AuthenticationError(f"CDP fetch returned HTTP {result.status_code}.")
+        if result.status_code >= 400:
+            raise CdpTransportError(f"CDP fetch returned HTTP {result.status_code}.")
+        return result.text
+
+    def _call_rpc_via_cdp(
+        self,
+        rpc_id: str,
+        params: Any,
+        path: str = "/",
+        timeout: float | None = None,
+        _server_retry: int = 0,
+    ) -> Any:
+        """Execute a batchexecute RPC through the experimental CDP transport."""
+        self._prepare_cdp_transport(timeout if timeout is not None else DEFAULT_TIMEOUT)
+        body = self._build_request_body(rpc_id, params)
+        url = self._build_url(rpc_id, path)
+        response_text = self._post_form_via_cdp(
+            url,
+            body,
+            timeout if timeout is not None else DEFAULT_TIMEOUT,
+        )
+
+        parsed = self._parse_response(response_text)
+        try:
+            return self._extract_rpc_result(parsed, rpc_id)
+        except ResourceExhaustedError:
+            max_retries = _rate_limit_max_retries()
+            if _server_retry < max_retries:
+                import time as _time
+
+                delay = min(DEFAULT_BASE_DELAY * (2**_server_retry), DEFAULT_MAX_DELAY)
+                logger.warning(
+                    "RPC rate limit (RESOURCE_EXHAUSTED) on %s, attempt %d/%d, retrying in %.1fs...",
+                    rpc_id,
+                    _server_retry + 1,
+                    max_retries + 1,
+                    delay,
+                )
+                _time.sleep(delay)
+                return self._call_rpc_via_cdp(
+                    rpc_id,
+                    params,
+                    path,
+                    timeout,
+                    _server_retry=_server_retry + 1,
+                )
+            raise
+
     def _call_rpc(
         self,
         rpc_id: str,
@@ -729,6 +969,8 @@ class BaseClient:
         _retry: bool = False,
         _deep_retry: bool = False,
         _server_retry: int = 0,
+        *,
+        retry_server_errors: bool = True,
     ) -> Any:
         """Execute an RPC call and return the extracted result.
 
@@ -736,7 +978,20 @@ class BaseClient:
         1. Refresh CSRF/session tokens (fast, handles token expiry)
         2. Reload cookies from disk (handles external re-authentication)
         3. Run headless auth (auto-refresh if Chrome profile has saved login)
+
+        retry_server_errors: False disables the HTTP 5xx/429 replay. Use for
+        non-idempotent mutations whose delivery may have succeeded (e.g. the
+        Rytqqe kickoff).
         """
+        if self._cdp_rpc_transport_enabled():
+            return self._call_rpc_via_cdp(
+                rpc_id,
+                params,
+                path,
+                timeout,
+                _server_retry=_server_retry,
+            )
+
         client = self._get_client()
         body = self._build_request_body(rpc_id, params)
         url = self._build_url(rpc_id, path)
@@ -799,16 +1054,19 @@ class BaseClient:
             return result
 
         except httpx.HTTPStatusError as e:
-            # Retry on transient server errors (5xx, 429) with exponential backoff
-            if is_retryable_error(e):
+            # Retry on transient server errors (5xx, 429) with exponential backoff.
+            # Rate limits have a separate ceiling so external schedulers can own
+            # retry policy without disabling safe connection or 5xx retries.
+            if retry_server_errors and is_retryable_error(e):
                 import time as _time
 
                 status = e.response.status_code
+                max_retries = _rate_limit_max_retries() if status == 429 else DEFAULT_MAX_RETRIES
                 # Use _server_retry to track retries across recursive calls
-                if _server_retry < DEFAULT_MAX_RETRIES:
+                if _server_retry < max_retries:
                     delay = min(DEFAULT_BASE_DELAY * (2**_server_retry), DEFAULT_MAX_DELAY)
                     logger.warning(
-                        f"Server error {status} on attempt {_server_retry + 1}/{DEFAULT_MAX_RETRIES + 1}, "
+                        f"Server error {status} on attempt {_server_retry + 1}/{max_retries + 1}, "
                         f"retrying in {delay:.1f}s..."
                     )
                     _time.sleep(delay)
@@ -820,6 +1078,7 @@ class BaseClient:
                         _retry,
                         _deep_retry,
                         _server_retry=_server_retry + 1,
+                        retry_server_errors=retry_server_errors,
                     )
                 # Exhausted retries, re-raise
                 raise
@@ -863,13 +1122,15 @@ class BaseClient:
                     _retry,
                     _deep_retry,
                     _server_retry=_server_retry + 1,
+                    retry_server_errors=retry_server_errors,
                 )
             # Exhausted retries, re-raise
             raise
 
         except ResourceExhaustedError:
             # RPC-level rate limit (HTTP 200, error code 8). Back off and retry.
-            if _server_retry < DEFAULT_MAX_RETRIES:
+            max_retries = _rate_limit_max_retries()
+            if _server_retry < max_retries:
                 import time as _time
 
                 delay = min(DEFAULT_BASE_DELAY * (2**_server_retry), DEFAULT_MAX_DELAY)
@@ -877,7 +1138,7 @@ class BaseClient:
                     "RPC rate limit (RESOURCE_EXHAUSTED) on %s, attempt %d/%d, retrying in %.1fs...",
                     rpc_id,
                     _server_retry + 1,
-                    DEFAULT_MAX_RETRIES + 1,
+                    max_retries + 1,
                     delay,
                 )
                 _time.sleep(delay)
@@ -889,6 +1150,7 @@ class BaseClient:
                     _retry,
                     _deep_retry,
                     _server_retry=_server_retry + 1,
+                    retry_server_errors=retry_server_errors,
                 )
             raise
 
@@ -904,16 +1166,56 @@ class BaseClient:
                 self._refresh_auth_tokens()
                 with self._state_lock:
                     self._client = None
-                return self._call_rpc(rpc_id, params, path, timeout, _retry=True)
-            except ValueError:
-                # CSRF refresh failed (cookies expired) - continue to layer 2
+                return self._call_rpc(
+                    rpc_id,
+                    params,
+                    path,
+                    timeout,
+                    _retry=True,
+                    retry_server_errors=retry_server_errors,
+                )
+            except (ValueError, httpx.HTTPError, OSError) as exc:
+                # A transport or 5xx failure is not evidence that credentials
+                # expired. Retrying auth would produce the wrong user guidance
+                # and may launch a needless interactive login.
+                if _is_unreachable_failure(exc):
+                    raise TransientBackendError(
+                        "Could not reach NotebookLM while verifying the session.",
+                        hint=(
+                            "Check your connection and retry; your saved credentials may still "
+                            "be valid."
+                        ),
+                    ) from exc
+                # A redirect to accounts.google.com or an explicit expiry
+                # message remains a genuine authentication failure.
                 pass
 
         # Layer 2 & 3: Reload from disk or run headless auth (deep retry)
         if not _deep_retry and self._try_reload_or_headless_auth():
+            # Layer 2 (disk reload) blanks the CSRF token to force a fresh
+            # extraction, but the deep retry below skips Layer 1 — the only
+            # place that re-extracts it. Without re-extracting here the retry
+            # would POST an empty at= token, get an HTTP 400, and fail even
+            # though valid cookies were just loaded (issue #316). Layer 3
+            # (headless) already supplies a token, so only refresh when missing.
+            if not self.csrf_token:
+                try:
+                    self._refresh_auth_tokens()
+                except (ValueError, httpx.HTTPError, OSError) as exc:
+                    # Freshly loaded cookies may themselves be expired; fall
+                    # through to the deep retry, which surfaces the auth failure.
+                    logger.debug("CSRF re-extraction after auth recovery failed: %s", exc)
             with self._state_lock:
                 self._client = None
-            return self._call_rpc(rpc_id, params, path, timeout, _retry=True, _deep_retry=True)
+            return self._call_rpc(
+                rpc_id,
+                params,
+                path,
+                timeout,
+                _retry=True,
+                _deep_retry=True,
+                retry_server_errors=retry_server_errors,
+            )
 
         # All recovery attempts failed
         msg = (
@@ -948,11 +1250,20 @@ class BaseClient:
         # Must use browser-like headers for page fetch
         headers = self._PAGE_FETCH_HEADERS.copy()
 
-        # Use a temporary client for the page fetch
+        # Use a temporary client for the page fetch. Before the fetch, touch
+        # Google's RotateCookies endpoint as a non-fatal freshness step. Note
+        # this refreshes only the short-lived *SIDCC session cookies; it does
+        # NOT rotate *PSIDTS from a plain HTTP client (only a real browser
+        # session does), so it cannot revive an aged-out session on its own —
+        # the headless refresh in _try_reload_or_headless_auth does (issue #316).
         with httpx.Client(
             cookies=cookies, headers=headers, follow_redirects=True, timeout=15.0
         ) as client:
-            response = client.get(f"{self._get_base_url()}/")
+            from .cookie_rotation import rotate_google_cookies
+
+            rotate_google_cookies(client)
+            home_path = f"{self._get_enterprise_prefix()}/" if self._is_enterprise() else "/"
+            response = client.get(f"{self._get_base_url()}{home_path}")
 
             # Check if redirected to login (cookies expired)
             if "accounts.google.com" in str(response.url):
@@ -976,11 +1287,18 @@ class BaseClient:
 
                 debug_dir = get_storage_dir()
                 debug_path = debug_dir / "debug_page.html"
-                debug_path.write_text(html, encoding="utf-8")
-                import contextlib as _ctxlib
-
-                with _ctxlib.suppress(OSError):
-                    debug_path.chmod(0o600)
+                # The dump is the authenticated page: session identifiers and
+                # notebook metadata. Create it 0o600 atomically rather than
+                # writing first and narrowing after, which leaves a window in
+                # which the file is world-readable.
+                fd = os.open(str(debug_path), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+                try:
+                    f = os.fdopen(fd, "w", encoding="utf-8")
+                except BaseException:
+                    os.close(fd)
+                    raise
+                with f:
+                    f.write(html)
                 raise ValueError(
                     f"Could not extract CSRF token from page. "
                     f"Page saved to {debug_path} for debugging. "
@@ -994,6 +1312,9 @@ class BaseClient:
             bl_match = re.search(r'"cfb2h":"([^"]+)"', html)
 
             with self._state_lock:
+                from .cookie_rotation import snapshot_cookie_input
+
+                self.cookies = snapshot_cookie_input(self.cookies, client.cookies)
                 self.csrf_token = csrf_token
                 if sid_match:
                     self._session_id = sid_match.group(1)
@@ -1015,9 +1336,10 @@ class BaseClient:
             from .auth import AuthTokens, load_cached_tokens, save_tokens_to_cache
 
             # Load existing cache or create new
-            cached = load_cached_tokens()
+            cached = load_cached_tokens(profile_name=self._profile_name)
             if cached:
                 # Update existing cache with new tokens
+                cached.cookies = self.cookies
                 cached.csrf_token = self.csrf_token
                 cached.session_id = self._session_id
                 if self._bl:
@@ -1032,7 +1354,7 @@ class BaseClient:
                     extracted_at=time.time(),
                 )
 
-            save_tokens_to_cache(cached, silent=True)
+            save_tokens_to_cache(cached, silent=True, profile_name=self._profile_name)
         except Exception as e:
             # Non-critical: caching is an optimization, but log at debug level
             logger.debug(f"Failed to update auth token cache: {e}")
@@ -1044,28 +1366,35 @@ class BaseClient:
         """
         from .auth import load_cached_tokens
 
-        # Layer 2: Reload cookies from disk (profile or legacy auth.json).
-        # load_cached_tokens() checks the default profile first, then falls
-        # back to the legacy auth.json file.  We no longer gate on
-        # auth.json existence so that users who only have profile-based
-        # credentials (from `nlm login`) are not skipped.
-        cached = load_cached_tokens()
-        if cached and cached.cookies:
-            # Always reload from disk when auth fails - current tokens are known-bad
-            # The cached tokens may be fresher (user ran nlm login)
-            # or the same, but worth retrying with a fresh CSRF token extraction
+        # Layer 2: Reload cookies from the same profile on disk — but only when
+        # those cookies actually differ from the known-bad ones already in
+        # memory (e.g. the user ran `nlm login` in another terminal). Reloading
+        # identical cookies cannot fix the auth failure, and returning True here
+        # regardless is what kept Layer 3 (headless refresh) from ever running
+        # (issue #316). The configured default may also fall back to legacy
+        # auth.json for compatibility.
+        cached = load_cached_tokens(profile_name=self._profile_name)
+        if cached and cached.cookies and cached.cookies != self.cookies:
             with self._state_lock:
                 self.cookies = cached.cookies
                 self.csrf_token = ""  # Force re-extraction of CSRF token
                 self._session_id = ""  # Force re-extraction of session ID
             return True
 
-        # Try headless auth if the configured default Chrome profile exists.
+        # Layer 3: Headless auth for the same profile that owns this client.
+        # Relaunching Chrome with the saved profile makes Google reissue the
+        # short-lived *PSIDTS freshness cookies, which is what revives an
+        # otherwise-valid session that aged out (issue #316). Some Workspace
+        # accounts instead have the relaunch revoke the session server-side, so
+        # this can be disabled (issue #330).
+        if os.environ.get("NOTEBOOKLM_DISABLE_HEADLESS_REFRESH") == "1":
+            logger.debug("Headless refresh disabled via NOTEBOOKLM_DISABLE_HEADLESS_REFRESH")
+            return False
         try:
             from notebooklm_tools.utils.auth_browser import run_headless_auth
             from notebooklm_tools.utils.config import get_config
 
-            profile_name = get_config().auth.default_profile
+            profile_name = self._profile_name or get_config().auth.default_profile
             tokens = run_headless_auth(profile_name=profile_name)
             if tokens:
                 with self._state_lock:

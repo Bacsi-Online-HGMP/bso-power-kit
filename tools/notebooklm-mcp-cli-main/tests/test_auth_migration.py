@@ -189,11 +189,11 @@ class TestBrowserDetection:
             assert browser in names, f"{browser!r} missing from Linux candidates"
 
     def test_windows_candidates_include_expected_browsers(self):
-        """Windows candidate list should include Chrome, Edge, and Brave."""
+        """Windows candidate list should include Chromium-based browsers."""
         from notebooklm_tools.utils.cdp import _windows_browser_candidates
 
         names = [name for name, _ in _windows_browser_candidates()]
-        for browser in ("Google Chrome", "Microsoft Edge", "Brave Browser"):
+        for browser in ("Google Chrome", "Chromium", "Microsoft Edge", "Brave Browser"):
             assert browser in names, f"{browser!r} missing from Windows candidates"
 
     def test_windows_candidates_include_localappdata_paths(self):
@@ -250,7 +250,8 @@ class TestCDPStartupHandling:
         ):
             extract_cookies_via_cdp()
 
-        mock_get_debugger_url.assert_called_once_with(9222, tries=30)
+        # Polls with short tries so a handed-off/exited child can abort early (#277).
+        mock_get_debugger_url.assert_called_once_with(9222, tries=1, timeout=1)
 
     def test_extract_cookies_does_not_reuse_unmapped_cdp_browser(self):
         """Default login should not attach to an unrelated CDP browser."""
@@ -325,14 +326,15 @@ class TestCDPStartupHandling:
         chrome_path = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
 
         def fake_exists(self):
-            return str(self) == chrome_path
+            return self.as_posix() == chrome_path
 
         with (
             patch("notebooklm_tools.utils.cdp.platform.system", return_value="Darwin"),
             patch.object(Path, "exists", fake_exists),
         ):
             result = get_chrome_path()
-        assert result == chrome_path
+        assert result is not None
+        assert Path(result).as_posix() == chrome_path
 
     # ------------------------------------------------------------------
     # get_chrome_path — Linux
@@ -411,6 +413,27 @@ class TestCDPStartupHandling:
             patch.object(Path, "exists", fake_exists),
         ):
             result = get_chrome_path()
+        assert result == target_path
+
+    def test_get_chromium_path_windows_honors_preference(self):
+        """The explicit Chromium preference should select Windows Chromium."""
+        from notebooklm_tools.utils.cdp import _get_chromium_path, _windows_browser_candidates
+
+        chromium_paths = [
+            path for name, path in _windows_browser_candidates() if name == "Chromium"
+        ]
+        assert chromium_paths, "Windows Chromium candidates should be defined"
+        target_path = chromium_paths[0]
+
+        def fake_exists(self):
+            return str(self) == target_path
+
+        with (
+            patch("notebooklm_tools.utils.cdp.platform.system", return_value="Windows"),
+            patch.object(Path, "exists", fake_exists),
+        ):
+            result = _get_chromium_path("chromium")
+
         assert result == target_path
 
     def test_get_chrome_path_windows_returns_none_when_nothing_exists(self):
@@ -651,7 +674,7 @@ class TestPageFetchHeaders:
     manually imported cookies (e.g. from a Windows Chrome session) are not
     rejected by Google's servers due to a platform fingerprint mismatch.
 
-    See: https://github.com/jacob-bd/notebooklm-mcp-cli/issues/105
+    See: https://github.com/jacob-bd/gemini-notebook-mcp-cli/issues/105
     """
 
     def _get_headers(self):

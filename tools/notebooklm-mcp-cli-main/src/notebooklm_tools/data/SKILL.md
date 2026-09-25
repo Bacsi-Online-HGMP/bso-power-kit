@@ -1,25 +1,26 @@
 ---
 name: nlm-skill
-version: "0.8.1"
-description: "Expert guide for the NotebookLM CLI (`nlm`) and MCP server - interfaces for Google NotebookLM. Use this skill when users want to interact with NotebookLM programmatically, including: creating/managing notebooks, adding sources (URLs, YouTube, text, Google Drive), generating content (podcasts, reports, quizzes, flashcards, mind maps, slides, infographics, videos, data tables), conducting research, chatting with sources, or automating NotebookLM workflows. Triggers on mentions of \"nlm\", \"notebooklm\", \"notebook lm\", \"podcast generation\", \"audio overview\", \"refactor document\", \"critique draft\", or any NotebookLM-related automation task."
+version: "0.12.0"
+description: 'Expert guide for the Gemini Notebook (formerly Google NotebookLM) CLI (`nlm`) and MCP server - interfaces for Gemini Notebook. Use this skill when users want to interact with Gemini Notebook programmatically, including: creating/managing notebooks, checking plan usage and quota windows, adding sources (URLs, YouTube, text, Google Drive), generating content (podcasts, reports, interactive reports, quizzes, flashcards, mind maps, slides, infographics, videos, data tables), conducting research, chatting with sources, or automating Gemini Notebook workflows. Triggers on mentions of "nlm", "notebooklm", "Gemini Notebook", "plan usage", "quota", "podcast generation", "audio overview", "interactive report", "lesson report", "refactor document", "critique draft", or any Gemini Notebook-related automation task.'
 ---
 
-# NotebookLM CLI & MCP Expert
+# Gemini Notebook CLI & MCP Expert
 
-This skill provides comprehensive guidance for using NotebookLM via both the `nlm` CLI and MCP tools.
+This skill provides comprehensive guidance for using Gemini Notebook via both the `nlm` CLI and MCP tools.
 
 ## Tool Detection (CRITICAL - Read First!)
 
 **ALWAYS check which tools are available before proceeding:**
 
-1. **Check for MCP tools**: Look for tools starting with `mcp__notebooklm-mcp__*` or `mcp_notebooklm_*`
+1. **Check for MCP tools**: Look for tools starting with `mcp__gemini-notebook-mcp__*` or `mcp_gemini_notebook_mcp_*`
 2. **If BOTH MCP tools AND CLI are available**: **ASK the user** which they prefer to use before proceeding
 3. **If only MCP tools are available**: Use them directly (refer to tool docstrings for parameters)
 4. **If only CLI is available**: Use `nlm` CLI commands via Bash
 
 **Decision Logic:**
+
 ```
-has_mcp_tools = check_available_tools()  # Look for mcp__notebooklm-mcp__* or mcp_notebooklm_*
+has_mcp_tools = check_available_tools()  # Look for mcp__gemini-notebook-mcp__* or mcp_gemini_notebook_mcp_*
 has_cli = check_bash_available()  # Can run nlm commands
 
 if has_mcp_tools and has_cli:
@@ -27,7 +28,7 @@ if has_mcp_tools and has_cli:
     user_preference = ask_user()
 else if has_mcp_tools:
     # Use MCP tools directly
-    mcp__notebooklm-mcp__notebook_list()
+    mcp__gemini-notebook-mcp__notebook_list()
 else:
     # Use CLI via Bash
     bash("nlm notebook list")
@@ -44,29 +45,34 @@ nlm --help              # List all commands
 nlm <command> --help    # Help for specific command
 nlm --ai                # Full AI-optimized documentation (RECOMMENDED)
 nlm --version           # Check installed version
+nlm usage               # Check rolling and weekly plan usage and reset times
+nlm usage --json        # Return usage data as machine-readable JSON
 ```
 
 ## Critical Rules (Read First!)
 
 1. **Authenticate when needed**: Run `nlm login` for first-time setup or confirmed stale/missing credentials. Saved cookies often remain usable for weeks.
 2. **Do not confuse network failures with expired auth**: `auth_status="unverified"` means the probe was inconclusive. Check connectivity or try an API call before asking the user to log in again.
-3. **⚠️ ALWAYS ASK USER BEFORE DELETE**: Before executing ANY delete command, ask the user for explicit confirmation. Deletions are **irreversible**. Show what will be deleted and warn about permanent data loss.
-4. **Always obtain approval before generation or deletion**: Direct
+3. **Auto-Authentication Recovery**: The CLI includes automatic 3-layer auth recovery (CSRF refresh -> Token reload -> Headless Auth) and 3x server error retries. Most errors are handled automatically. You only need to manually run `nlm login` if all recovery layers fail. For unattended machines, `nlm auth refresh` refreshes a session non-interactively (headless) from a scheduler so it never lapses between jobs.
+4. **⚠️ ALWAYS ASK USER BEFORE DELETE**: Before executing ANY delete command, ask the user for explicit confirmation. Deletions are **irreversible**. Show what will be deleted and warn about permanent data loss.
+5. **Always obtain approval before generation or deletion**: Direct
    `studio_create` and delete operations enforce `--confirm` / `confirm=True`.
    The current MCP batch Studio path does not enforce its confirm parameter,
    so the agent must preserve the approval gate.
-5. **Research needs a destination**: Pass `--notebook-id <id>` for an existing notebook or `--title <title>` to create one.
-6. **Capture IDs from output**: Create/start commands return IDs needed for subsequent operations
-7. **Use aliases**: Simplify long UUIDs with `nlm alias set <name> <uuid>`
-8. **Check aliases before creating**: Run `nlm alias list` before creating a new alias to avoid conflicts with existing names.
-9. **DO NOT launch REPL**: Never use `nlm chat start` - it opens an interactive REPL that AI tools cannot control. Use `nlm notebook query` for one-shot Q&A instead.
-10. **Choose output format wisely**: Default output (no flags) is compact and token-efficient—use it for status checks. Use `--quiet` to capture IDs for piping. Only use `--json` when you need to parse specific fields programmatically.
-11. **Use `--help` when unsure**: Run `nlm <command> --help` to see available options and flags for any command.
-12. **Studio: fast track by default**: Infer format/style/prompt silently—one compact line, then `studio_create(confirm=True)`. No intake questionnaires. Fast track reduces clarifying questions, not the confirm gate. **Cinematic video is always guided** (quota-limited). Full preview only when vague, high-stakes, cinematic, or user asks. See **[references/studio-prompting-guide.md](references/studio-prompting-guide.md)**.
+6. **Research needs a destination**: Pass `--notebook-id <id>` for an existing notebook or `--title <title>` to create one.
+7. **Capture IDs from output**: Create/start commands return IDs needed for subsequent operations
+8. **Use aliases**: Simplify long UUIDs with `nlm alias set <name> <uuid>`
+9. **Check aliases before creating**: Run `nlm alias list` before creating a new alias to avoid conflicts with existing names.
+10. **DO NOT launch REPL**: Never use `nlm chat start` - it opens an interactive REPL that AI tools cannot control. Use `nlm notebook query` for one-shot Q&A instead.
+11. **Choose output format wisely**: Default output (no flags) is compact and token-efficient—use it for status checks. Use `--quiet` to capture IDs for piping. Only use `--json` when you need to parse specific fields programmatically.
+12. **Use `--help` when unsure**: Run `nlm <command> --help` to see available options and flags for any command.
+13. **Studio: fast track by default**: Infer format/style/prompt silently—one compact line, then `studio_create(confirm=True)`. No intake questionnaires. Fast track reduces clarifying questions, not the confirm gate. **Cinematic video is always guided** (quota-limited). Full preview only when vague, high-stakes, cinematic, or user asks. See **[references/studio-prompting-guide.md](references/studio-prompting-guide.md)**.
+14. **Check plan usage before quota-limited work**: Run `nlm usage` (MCP: `usage_get`) before expensive chat or Studio work when budget availability matters. It reports measured compute usage, remaining percentage, and UTC reset times for the rolling and weekly windows. If the check returns an authentication error, refresh the session instead of treating the allowance as exhausted.
 
-**Current MCP surface:** 39 tools. Consolidated action tools include `note`,
+**Current MCP surface:** 50 tools. Consolidated action tools include `note`,
 `label`, `studio_status`, `batch`, `pipeline`, and `tag`. Consolidated type
-tools include `source_add`, `studio_create`, and `download_artifact`.
+tools include `source_add`, `studio_create`, and `download_artifact`. The
+read-only `usage_get` tool reports rolling and weekly plan usage windows.
 
 ## Workflow Decision Tree
 
@@ -85,6 +91,10 @@ User wants to...
 │   ├─► From Google Drive → nlm source add <nb-id> --drive <doc-id> --type doc
 │   └─► Discover new sources → nlm research start "query" --notebook-id <nb-id>
 │
+├─► Check plan usage or quota availability
+│   └─► nlm usage (MCP: usage_get)
+│       (Use --json when a script needs percentages or reset timestamps)
+│
 ├─► Generate content from sources (→ Studio Prompting for optimal focus_prompt)
 │   ├─► Podcast/Audio → nlm audio create <nb-id> --confirm
 │   ├─► Written summary → nlm report create <nb-id> --confirm
@@ -96,10 +106,20 @@ User wants to...
 ├─► Refactor, critique, or improve a draft document
 │   └─► See Workflow 15 in references/workflows.md
 │
+├─► Ground a notebook in bounded public X research
+│   └─► See Workflow 16 in references/workflows.md
+│
+├─► Build a lesson-style interactive report with embedded elements
+│   └─► See Workflow 17 in references/workflows.md
+│       (create -> read markdown -> generate elements via the report view)
+│
 ├─► Ask questions about sources
 │   └─► nlm notebook query <nb-id> "question"
 │       (Use --conversation-id for follow-ups)
 │       ⚠️ Do NOT use `nlm chat start` - it's a REPL for humans only
+│
+├─► Review or export a past chat
+│   └─► nlm chats list <nb-id> → nlm chats get/export <nb-id> [conversation-id]
 │
 ├─► Check generation status
 │   └─► nlm studio status <nb-id>
@@ -124,17 +144,19 @@ If using MCP tools and encountering authentication errors:
 nlm login
 
 # Then reload tokens in MCP
-mcp__notebooklm-mcp__refresh_auth()
+mcp__gemini-notebook-mcp__refresh_auth()
 # Returns status: "success" (valid), "expired" (tokens dead, run `nlm login`),
 # or "error". `nlm login` is the only recovery path for "expired".
 ```
 
 Or manually save cookies via MCP (fallback):
+
 ```python
 # Extract cookies from Chrome DevTools and save
-mcp__notebooklm-mcp__save_auth_tokens(cookies="<cookie_header>")
+mcp__gemini-notebook-mcp__save_auth_tokens(cookies="<cookie_header>")
 ```
-```
+
+````
 
 #### CLI Authentication
 
@@ -147,9 +169,10 @@ nlm login switch <profile>          # Switch the default profile
 nlm login profile list              # List all profiles with email addresses
 nlm login profile delete <name>     # Delete a profile
 nlm login profile rename <old> <new> # Rename a profile
-```
+nlm auth refresh                    # Non-interactive headless refresh (schedulers/unattended)
+````
 
-**Multi-Profile Support**: Each profile gets its own isolated browser session (supports Chrome, Arc, Brave, Edge, Chromium, and more), so you can be logged into multiple Google accounts simultaneously.
+**Multi-Profile Support**: Each profile gets its own isolated browser session (supports Chrome, Arc, Dia, Comet, Brave, Edge, Chromium, Firefox, and more), so you can be logged into multiple Google accounts simultaneously.
 
 **Auth status:** `configured` means usable; `stale` means run `nlm login`;
 `not_configured` means first-time setup is required; `unverified` means the
@@ -158,6 +181,45 @@ probe was inconclusive; `error` means the health check itself failed.
 **Switching MCP Accounts**: The MCP server always uses the active default profile. If you need to switch which Google account the MCP server is communicating with, you MUST use the CLI: run `nlm login switch <name>`. Your next MCP tool call will instantly use the new account.
 
 **Note**: Both MCP and CLI share the same authentication backend, so authenticating with one works for both.
+
+### Plan Usage and Quotas
+
+Gemini Notebook meters chat and Studio usage as compute against two simultaneous
+windows: a short rolling window (about five hours) and a weekly cap. The API
+reports the measured percentage used, percentage remaining, and reset timestamp;
+the client does not estimate cost from request counts.
+
+#### MCP Tool
+
+Call `usage_get()` for a read-only account-level usage report. It returns:
+
+- `windows`: `rolling` and `weekly` entries, sorted in that order
+- `percent_used`: percentage consumed (0.0 when the backend confirms a full allowance)
+- `percent_remaining`: percentage left
+- `resets_at`: ISO 8601 UTC reset timestamp
+- `tier`: subscription tier when available
+
+To check separate accounts, call `usage_get(profile="work")` and
+`usage_get(profile="personal")` using their saved profile names. Each call
+uses that account without switching the default or affecting other MCP tools.
+An explicit profile overrides `NOTEBOOKLM_COOKIES`; a missing profile returns
+an error instead of falling back to another account.
+
+The API may return windows in either order, so consumers should use the window
+name. If the usage request fails with an authentication error, refresh with
+`nlm auth refresh` or `nlm login`; do not interpret the failure as zero quota.
+
+#### CLI
+
+```bash
+nlm usage                 # Human-readable table in the local timezone
+nlm usage --json          # Machine-readable JSON; reset timestamps stay in UTC
+nlm usage --profile work  # Check work without changing the default account
+nlm usage -p personal    # Check personal separately
+```
+
+Use this check before quota-limited chat or Studio work when the remaining
+budget or reset time affects the decision.
 
 ### 2. Notebook Management
 
@@ -168,10 +230,17 @@ Use `notebook_list`, `notebook_create`, `notebook_get`, `notebook_describe`,
 get/describe/query/rename/delete tools require `notebook_id`; list and create
 do not. Delete requires `confirm=True`.
 
-For large notebooks or long-running questions, call `notebook_query_start`,
-then poll `notebook_query_status(query_id)` until completed or errored.
+Queries use a 120-second wall-clock budget by default. Source-heavy notebooks
+or long-running questions may need a larger budget, for example
+`timeout=180`. For those queries, call `notebook_query_start`, then poll
+`notebook_query_status(query_id)` until completed or errored.
+
+By default, `notebook_query` continues the notebook's persistent chat when
+`conversation_id` is omitted. For an independent question, pass
+`new_conversation=True` (or use `--new-conversation` with the CLI).
 
 #### CLI Commands
+
 ```bash
 nlm notebook list                      # List all notebooks
 nlm notebook list --json               # JSON output for parsing
@@ -181,6 +250,7 @@ nlm notebook create "Title" --json     # Stable machine-readable ID capture
 nlm notebook get <id>                  # Get notebook details
 nlm notebook describe <id>             # AI-generated summary + suggested topics
 nlm notebook query <id> "question"     # One-shot Q&A with sources
+nlm notebook query <id> "question" --new-conversation  # Start a fresh chat
 nlm notebook rename <id> "New Title"   # Rename notebook
 nlm notebook delete <id> --confirm     # PERMANENT deletion
 ```
@@ -190,13 +260,15 @@ nlm notebook delete <id> --confirm     # PERMANENT deletion
 #### MCP Tools
 
 Use `source_add` with these `source_type` values:
+
 - `url` - Web page or YouTube URL (`url` param)
 - `text` - Pasted content (`text` + `title` params)
 - `file` - Server-local file upload (`file_path` param). The path must exist on
-  the machine running the MCP server, not merely on the client host. Failures
-  preserve the concrete reason and include a host-path hint. Supported:
-  `PDF, TXT, MD, DOCX, CSV, EPUB, MP3, M4A, WAV, AAC, OGG, OPUS, MP4, JPG,
-  JPEG, PNG, GIF, WEBP`.
+  the machine running the MCP server, not merely on the client host. Local
+  admission is case-insensitive and follows the official 43-extension contract:
+  OFFICIAL_FILE_EXTENSIONS: .pdf, .txt, .md, .docx, .csv, .pptx, .epub, .avif, .bmp, .gif, .heic, .heif, .ico, .jp2, .jpe, .jpeg, .jpg, .png, .tif, .tiff, .webp, .3g2, .3gp, .aac, .aif, .aifc, .aiff, .amr, .au, .avi, .cda, .m4a, .mid, .mp3, .mp4, .mpeg, .ogg, .opus, .ra, .ram, .snd, .wav, .wma
+  Admission does not guarantee provider processing success. Corrupt, misleading,
+  inaccessible, or reference-only files can still fail during NotebookLM ingestion.
 - `drive` - Google Drive doc (`document_id` + `doc_type` params)
 
 Other tools: `source_list_drive` (`skip_freshness=True` reports
@@ -214,6 +286,7 @@ Use `label` with actions `auto`, `list`, `reorganize`, `create`, `rename`,
 require `confirm=True`; `reorganize(unlabeled_only=True)` does not.
 
 #### CLI Commands
+
 ```bash
 # Adding sources
 nlm source add <nb-id> --url "https://..."           # Web page
@@ -254,6 +327,7 @@ Research finds NEW sources from the web or Google Drive.
 #### MCP Tools
 
 Use `research_start` with:
+
 - `source`: `web` or `drive`
 - `mode`: `fast` (~30s) or `deep` (~5min, web only)
 
@@ -264,6 +338,7 @@ to create a destination notebook. MCP status defaults to a 900-second wait
 with 30-second polling.
 
 #### CLI Commands
+
 ```bash
 # Start research in an existing notebook or create one with --title
 nlm research start "query" --notebook-id <id>              # Fast web (~30s)
@@ -293,20 +368,28 @@ nlm research import <nb-id> <task-id> --timeout 600    # Custom timeout (default
 
 Use `studio_create` with `artifact_type` and type-specific options. All require `confirm=True`. `studio_create` runs a pre-flight auth check before firing the request, so stale auth fails immediately with an `nlm login` hint instead of returning a fake success that collapses seconds later.
 
-| artifact_type | Key Options |
-|--------------|-------------|
-| `audio` | `audio_format`: deep_dive/brief/critique/debate, `audio_length`: short/default/long |
-| `video` | `video_format`: explainer/brief/cinematic/short, `visual_style`: auto_select/classic/whiteboard/kawaii/anime/watercolor/retro_print/heritage/paper_craft (not for cinematic/short), `video_style_prompt` |
-| `report` | `report_format`: Briefing Doc/Study Guide/Blog Post/Create Your Own, `custom_prompt` |
-| `quiz` | `question_count`, `difficulty`: easy/medium/hard |
-| `flashcards` | `difficulty`: easy/medium/hard |
-| `mind_map` | `title` |
-| `slide_deck` | `slide_format`: detailed_deck/presenter_slides, `slide_length`: short/default |
+| artifact_type | Key Options                                                                                                                                                                                                           |
+| ------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `audio`       | `audio_format`: deep_dive/brief/critique/debate, `audio_length`: short/default/long                                                                                                                                   |
+| `video`       | `video_format`: explainer/brief/cinematic/short, `visual_style`: auto_select/classic/whiteboard/kawaii/anime/watercolor/retro_print/heritage/paper_craft (not for cinematic/short), `video_style_prompt`              |
+| `report`      | `report_format`: Briefing Doc/Study Guide/Blog Post/Create Your Own/**Interactive**, `report_template` (Interactive only; `learning_overview`), `custom_prompt`                                                        |
+| `quiz`        | `question_count`, `difficulty`: easy/medium/hard                                                                                                                                                                      |
+| `flashcards`  | `difficulty`: easy/medium/hard                                                                                                                                                                                        |
+| `mind_map`    | `title`                                                                                                                                                                                                               |
+| `slide_deck`  | `slide_format`: detailed_deck/presenter_slides, `slide_length`: short/default                                                                                                                                         |
 | `infographic` | `orientation`: landscape/portrait/square, `detail_level`: concise/standard/detailed, `infographic_style`: auto_select/sketch_note/professional/bento_grid/editorial/instructional/bricks/clay/anime/kawaii/scientific |
-| `data_table` | `description` (REQUIRED) |
+| `data_table`  | `description` (REQUIRED)                                                                                                                                                                                              |
 
 **Common options**: `source_ids`, `language` (BCP-47 code, including regional
 locales such as `es-419`), `focus_prompt`
+
+**Interactive reports:** `studio_create(artifact_type="report",
+report_format="Interactive")` builds a lesson-style document that embeds
+recommended elements (audio / video / mind map / infographic / flashcards /
+slide deck / quiz) as *suggested* placeholders. Read it and work with its elements through one tool: `report(action="get")` (markdown for agents), `report(action="elements")` (section, card description and allowed settings per element; optional `wait_for` / `include_content`), and `report(action="generate", plan=[...])` to validate a plan and, with `confirm=True`, generate it.
+Wait on generation with bounded waiting (`wait_for` / `--wait`) and review inline
+content against the plan and section. Full sequence: Workflow 17 in
+references/workflows.md.
 
 **Audio accent:** NotebookLM has been observed using the `language` region
 subtag, not the prompt, to choose the Audio Overview accent. For example,
@@ -316,6 +399,7 @@ the default. Treat this as observed upstream behavior, not a guaranteed API
 contract.
 
 **Revise Slides:** Use `studio_revise` to revise individual slides in an existing slide deck.
+
 - Requires `artifact_id` (from `studio_status`) and `slide_instructions`
 - Creates a NEW artifact — the original is not modified
 - Slide numbers are 1-based (slide 1 = first slide)
@@ -326,6 +410,7 @@ contract.
 All generation commands share `--confirm`, `--source-ids`, and `--profile`.
 `--language` is available for audio, report, slides, infographic, video, and
 data-table:
+
 - `--confirm` or `-y`: **REQUIRED** to execute
 - `--source-ids <id1,id2>`: Limit to specific sources
 - `--language <code>`: BCP-47 code (`en`, `es-ES`, `es-US`, `es-419`, `fr`, etc.)
@@ -342,7 +427,13 @@ nlm audio create <id> --format brief --focus "key topic" --confirm
 nlm report create <id> --confirm
 nlm report create <id> --format "Study Guide" --confirm
 nlm report create <id> --format "Create Your Own" --prompt "Custom..." --confirm
-# Formats: "Briefing Doc", "Study Guide", "Blog Post", "Create Your Own"
+# Formats: "Briefing Doc", "Study Guide", "Blog Post", "Create Your Own", "Interactive"
+
+# Interactive lesson report (embeds elements — see Workflow 17)
+nlm report create <id> --format Interactive --prompt "Lesson goal..." --confirm
+nlm report get <id> <report-id>              # markdown (add --json / -o file.md)
+nlm report elements <id> <report-id>         # embedded elements + status
+nlm report element create <id> <report-id> --type infographic --confirm
 
 # Quiz
 nlm quiz create <id> --confirm
@@ -407,28 +498,28 @@ nlm data-table create <id> "Extract all dates and events" --confirm
 
 **Prompt parameters by artifact:**
 
-| Artifact | Prompt field | CLI flag |
-|----------|--------------|----------|
-| audio, video, infographic, slide_deck, quiz, flashcards | `focus_prompt` | `--focus` |
-| report (Create Your Own) | `custom_prompt` | `--prompt` |
-| data_table | `description` | positional arg (required) |
+| Artifact                                                | Prompt field    | CLI flag                  |
+| ------------------------------------------------------- | --------------- | ------------------------- |
+| audio, video, infographic, slide_deck, quiz, flashcards | `focus_prompt`  | `--focus`                 |
+| report (Create Your Own)                                | `custom_prompt` | `--prompt`                |
+| data_table                                              | `description`   | positional arg (required) |
 
 **Quick format picks:**
 
-| User intent | Default |
-|-------------|---------|
-| Podcast / learn | audio: `deep_dive`, `default` |
-| Quick audio recap | audio: `brief`, `short` |
-| Teach / explain | video: `explainer` |
-| Exec video summary | video: `brief` |
-| Narrative / launch video | video: `cinematic` + full brief in focus |
-| Shareable slides | slide_deck: `detailed_deck` |
-| Live presentation | slide_deck: `presenter_slides` |
-| LinkedIn visual | infographic: `square`, `concise`, `bento_grid` |
-| Custom report | report: `Create Your Own` + `custom_prompt` |
-| Structured extraction | data_table: explicit column schema in `description` |
+| User intent              | Default                                             |
+| ------------------------ | --------------------------------------------------- |
+| Podcast / learn          | audio: `deep_dive`, `default`                       |
+| Quick audio recap        | audio: `brief`, `short`                             |
+| Teach / explain          | video: `explainer`                                  |
+| Exec video summary       | video: `brief`                                      |
+| Narrative / launch video | video: `cinematic` + full brief in focus            |
+| Shareable slides         | slide_deck: `detailed_deck`                         |
+| Live presentation        | slide_deck: `presenter_slides`                      |
+| LinkedIn visual          | infographic: `square`, `concise`, `bento_grid`      |
+| Custom report            | report: `Create Your Own` + `custom_prompt`         |
+| Structured extraction    | data_table: explicit column schema in `description` |
 
-**After generation:** Poll `studio_status`. Revise slides with `studio_revise`. Reuse successful prompts from `custom_instructions` in status output.
+**After generation:** Poll `studio_status` by `artifact_id`. Revise slides with `studio_revise`. Request `include_details=True` only when reusing a successful prompt from `custom_instructions`.
 
 ### 6. Studio (Artifact Management)
 
@@ -436,27 +527,50 @@ nlm data-table create <id> "Extract all dates and events" --confirm
 
 Use `studio_status` to check progress, rename with `action="rename"`, or inspect
 supported types with `action="list_types"`. Failed artifacts include
-`error_reason`. Each artifact also includes `source_ids`; an empty list means
+`error_reason`. Detailed mode also includes `source_ids`; an empty list means
 the upstream payload did not expose provenance, not necessarily that no
 sources were used. Use `download_artifact` with `artifact_type` and
-`output_path`, `export_artifact` with `export_type` (`docs`/`sheets`), and
+`output_path`, `download_all_artifacts` to fetch every completed artifact of a
+notebook (or every notebook with `all_notebooks=True`) into per-notebook
+folders, `export_artifact` with `export_type` (`docs`/`sheets`), and
 `studio_delete` with `confirm=True`.
 
+**Where MCP downloads go.** Downloads through the MCP tools are confined to one
+download directory: `~/Downloads/gemini-notebook` by default, or whatever the
+operator set in `NOTEBOOKLM_DOWNLOAD_DIR`. Pass `output_path` relative to that
+directory (`"podcast.m4a"`, `"My Notebook/report.md"`); a path outside it is
+refused. The result carries the absolute path the file was written to, so read
+the destination from the response rather than assuming it. If a user asks for a
+file somewhere else, tell them the download location and let them move it, or
+have them run the `nlm` CLI, which writes wherever they point it. Do not try to
+work around the boundary: it exists because source content can carry
+instructions, and it stops a download from overwriting shell startup files,
+agent instruction files, or git hooks.
+
 #### CLI Commands
+
 ```bash
 # Check status
 nlm studio status <nb-id>                          # List all artifacts
 nlm studio status <nb-id> --full                   # Show full details (including custom prompts)
 nlm studio status <nb-id> --json                   # JSON output
 nlm studio status <nb-id> --json --full            # Includes artifact source_ids
+nlm studio status <nb-id> --artifact-id <id>       # Poll one artifact
+nlm studio status <nb-id> --json --mcp-compatible  # MCP-shaped paginated output
+nlm video list <nb-id> --json                      # List videos only
 
 # Download artifacts
-nlm download audio <nb-id> --output podcast.mp3
+nlm download audio <nb-id> --output podcast.m4a   # AAC/MP4; .mp3 is rejected
 nlm download video <nb-id> --output video.mp4
 nlm download report <nb-id> --output report.md
+nlm download file <nb-id> --id <artifact-id> --output export.bin  # Generic type-10 file export
 nlm download slide-deck <nb-id> --output slides.pdf           # PDF (default)
 nlm download slide-deck <nb-id> --output slides.pptx --format pptx  # PPTX
-nlm download quiz <nb-id> --output quiz.json --format json
+nlm download quiz <nb-id> --output quiz.html --format html    # Also: json, markdown
+nlm download all <nb-id> -d ./exports                          # Every completed artifact
+nlm download all --all-notebooks -d ./exports --skip-existing  # Sweep every notebook
+# The CLI writes wherever the user points it. Only MCP downloads are confined
+# to the download directory. Setting NOTEBOOKLM_DOWNLOAD_DIR bounds both.
 
 # Export to Google Docs/Sheets
 nlm export sheets <nb-id> <artifact-id> --title "My Data Table"
@@ -468,7 +582,7 @@ nlm studio delete <nb-id> <artifact-id> --confirm
 
 **Status values**: `completed` (✓), `in_progress` (●), `failed` (✗)
 
-**Prompt Extraction**: The `studio_status` tool returns a `custom_instructions` field for each artifact. This contains the original focus prompt or custom instructions used to generate that artifact (e.g., the prompt for a "Create Your Own" report, or the focus topic for an Audio Overview). This is useful for retrieving the exact prompt that generated a successful artifact.
+**Prompt Extraction**: MCP `studio_status` is lean and returns at most 20 artifacts by default. Pass `include_details=True` to retrieve `custom_instructions`, source IDs, report content, and media details. Pass `artifact_id` when polling a newly created artifact. CLI `--full` preserves the detailed output.
 
 ### Renaming Resources
 
@@ -477,6 +591,7 @@ nlm studio delete <nb-id> <artifact-id> --confirm
 **MCP Tool:** `source_rename(notebook_id, source_id, new_title)`
 
 **CLI:**
+
 ```bash
 nlm source rename <source-id> "New Title" --notebook <notebook-id>
 nlm rename source <source-id> "New Title" --notebook <notebook-id>  # verb-first
@@ -489,6 +604,7 @@ nlm rename source <source-id> "New Title" --notebook <notebook-id>  # verb-first
 Use `studio_status` with `action="rename"`, `artifact_id`, and `new_title`.
 
 #### CLI Commands
+
 ```bash
 nlm studio rename <artifact-id> "New Title"
 nlm rename studio <artifact-id> "New Title"  # verb-first alternative
@@ -501,7 +617,7 @@ nlm rename studio <artifact-id> "New Title"  # verb-first alternative
 Use `server_info` to get version and check for updates:
 
 ```python
-mcp__notebooklm-mcp__server_info()
+mcp__gemini-notebook-mcp__server_info()
 # Returns version/update fields plus auth_status
 ```
 
@@ -509,15 +625,23 @@ Treat `stale` as requiring `nlm login`. `unverified` is an inconclusive probe,
 not confirmed expiration.
 
 #### CLI Commands
+
 ```bash
 nlm --version  # Shows version and update availability
 ```
 
-### 7. Chat Configuration and Notes
+### 7. Chat Configuration, Chat Sessions, and Notes
 
 #### MCP Tools
 
 Use `chat_configure` with `goal`: default/learning_guide/custom. Use `note` with `action`: create/list/update/delete. Delete requires `confirm=True`.
+
+Use `chat_list`, `chat_get`, and `chat_export` to list/view/export a
+notebook's chat history. Transcripts are fetched from NotebookLM's server
+(not just this process's cache), so past chats are visible even from a fresh
+MCP session. `chat_get`'s `conversation_id` is optional and defaults to the
+notebook's latest session. There is no MCP tool for saving a chat to a note
+yet — use the CLI's `nlm chats to-note` for that.
 
 #### CLI Commands
 
@@ -530,12 +654,14 @@ nlm chat start <nb-id>  # Launch interactive REPL
 ```
 
 **REPL Commands**:
+
 - `/sources` - List available sources
 - `/clear` - Reset conversation context
 - `/help` - Show commands
 - `/exit` - Exit REPL
 
 **Configure chat behavior** (works for both REPL and query):
+
 ```bash
 nlm chat configure <id> --goal default
 nlm chat configure <id> --goal learning_guide
@@ -544,11 +670,26 @@ nlm chat configure <id> --response-length longer  # longer, default, shorter
 ```
 
 **Notes management**:
+
 ```bash
 nlm note create <nb-id> --content "Content" --title "Title"
 nlm note list <nb-id>
 nlm note update <nb-id> <note-id> --content "New content"
 nlm note delete <nb-id> <note-id> --confirm
+```
+
+**Chat sessions** (list/view/export past chats, resume, or save to a note):
+
+```bash
+nlm chats list <nb-id>                              # List chat sessions
+nlm chats get <nb-id>                               # Latest session's transcript
+nlm chats get <nb-id> <conversation-id>              # Specific session
+nlm chats export <nb-id> --format md -o chat.md      # Export to file
+nlm chats to-note <nb-id> <conversation-id> --turn 3 # Save one turn as a Note
+nlm chats to-note <nb-id> <conversation-id>          # Save the full chat as a Note
+
+# Resume a listed conversation with a follow-up question:
+nlm notebook query <nb-id> "follow-up question" --conversation-id <conversation-id>
 ```
 
 ### 8. Notebook Sharing
@@ -561,6 +702,7 @@ public links, and `notebook_share_invite` for one collaborator. Use
 "viewer|editor"}]` and `confirm=True` for multiple collaborators.
 
 #### CLI Commands
+
 ```bash
 # Check sharing status
 nlm share status <nb-id>
@@ -606,13 +748,36 @@ nlm login switch work                        # Switch default profile
 
 **Available Settings:**
 
-| Key | Default | Description |
-|-----|---------|-------------|
-| `output.format` | `table` | Default output format (table, json) |
-| `output.color` | `true` | Enable colored output |
-| `output.short_ids` | `true` | Show shortened IDs |
-| `auth.browser` | `auto` | Preferred browser for login (auto, chrome, arc, brave, edge, chromium, vivaldi, opera) |
-| `auth.default_profile` | `default` | Profile to use when `--profile` not specified |
+| Key                    | Default   | Description                                                                                     |
+| ---------------------- | --------- | ----------------------------------------------------------------------------------------------- |
+| `output.format`        | `table`   | Default output format (table, json)                                                             |
+| `output.color`         | `true`    | Enable colored output                                                                           |
+| `output.short_ids`     | `true`    | Show shortened IDs                                                                              |
+| `auth.browser`         | `auto`    | Preferred browser for login (auto, chrome, arc, dia, comet, brave, edge, chromium, firefox, vivaldi, opera) |
+| `auth.browser_path`    | empty     | Explicit Chromium-compatible executable; overrides discovery (`NLM_BROWSER_PATH` also supported) |
+| `auth.default_profile` | `default` | Profile to use when `--profile` not specified                                                   |
+
+### Diagnostics & Setup
+
+Diagnose and fix issues with your Gemini Notebook installation, MCP server, and AI tools:
+
+```bash
+nlm doctor                                   # Full diagnostic check
+nlm setup mcp                                # Show MCP server config JSON
+nlm setup add json                           # Interactive MCP config generator
+nlm setup add claude-desktop                 # Setup detected Claude Desktop profile(s)
+nlm setup add claude-desktop --profile 3p    # Select Relay AI / Claude 3P
+nlm setup remove claude-desktop --profile 3p # Remove from Relay AI / Claude 3P
+nlm setup add cursor                         # Setup MCP for Cursor
+nlm setup remove cursor                      # Remove MCP from Cursor
+```
+
+Claude Desktop setup never creates a missing profile. If both regular and
+Relay AI/3P profiles exist, select one with `--profile regular|3p|both` or
+answer the prompt. Fully quit the selected Claude profile before setup;
+the CLI refuses to write while its executable is running. User-level skill
+installation likewise requires the target tool to be detected; use
+`--level project` for an intentional project-local install.
 
 ### 11. Skill Management
 
@@ -632,14 +797,14 @@ nlm skill uninstall <tool>                  # Uninstall skill
 
 Most list commands support multiple formats:
 
-| Flag | Description |
-|------|-------------|
-| (none) | Rich table (human-readable) |
-| `--json` | JSON output (for parsing) |
-| `--quiet` | IDs only (for piping) |
-| `--title` | "ID: Title" format |
-| `--url` | "ID: URL" format (sources only) |
-| `--full` | All columns/details |
+| Flag      | Description                     |
+| --------- | ------------------------------- |
+| (none)    | Rich table (human-readable)     |
+| `--json`  | JSON output (for parsing)       |
+| `--quiet` | IDs only (for piping)           |
+| `--title` | "ID: Title" format              |
+| `--url`   | "ID: URL" format (sources only) |
+| `--full`  | All columns/details             |
 
 ### 12. Batch Operations
 
@@ -658,6 +823,7 @@ batch(action="studio", artifact_type="audio", tags="research", confirm=True)
 ```
 
 #### CLI Commands
+
 ```bash
 nlm batch query "What are the key takeaways?" --notebooks "id1,id2"
 nlm batch query "Summarize" --tags "ai,research"      # Query by tag
@@ -681,6 +847,7 @@ cross_notebook_query(query="Everything", all=True)
 ```
 
 #### CLI Commands
+
 ```bash
 nlm cross query "What features are discussed?" --notebooks "id1,id2"
 nlm cross query "Compare approaches" --tags "ai,research"
@@ -699,6 +866,7 @@ pipeline(action="run", notebook_id="...", pipeline_name="ingest-and-podcast", in
 ```
 
 #### CLI Commands
+
 ```bash
 nlm pipeline list                                         # List available pipelines
 nlm pipeline run ingest-and-podcast --notebook <id> --input-url "https://..."
@@ -725,6 +893,7 @@ tag(action="select", query="ai research")    # Find notebooks by tag match
 ```
 
 #### CLI Commands
+
 ```bash
 nlm tag add <notebook> --tags "ai,research,llm"           # Add tags
 nlm tag add <notebook> --tags "ai" --title "My Notebook"  # With display title
@@ -741,11 +910,11 @@ The MCP server runs as a long-lived process. For 24/7 deployments (e.g. an alway
 
 The in-process conversation history cache used to grow without bound, eventually OOM'ing the host on always-on servers. Three env-var knobs cap memory. Set any to `0` to disable that specific cap and restore the old unbounded behavior:
 
-| Env var | Default | Purpose |
-|---------|---------|---------|
-| `NOTEBOOKLM_CONVERSATION_MAX_TURNS` | `50` | Max turns kept per conversation. Older turns are FIFO-dropped. Survivors are renumbered `1..N` so `turn_number` stays a stable 1-indexed position in the current list. |
-| `NOTEBOOKLM_CONVERSATION_MAX_CONVS` | `500` | Max distinct conversations cached. On overflow, the least-recently-used conversation is evicted. Reads and writes both promote to MRU. |
-| `NOTEBOOKLM_CONVERSATION_MAX_CHARS_PER_TURN` | `100000` | Per-turn answer char cap. Safety net against pathological payloads. Queries are user input and not truncated. |
+| Env var                                      | Default  | Purpose                                                                                                                                                                |
+| -------------------------------------------- | -------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `NOTEBOOKLM_CONVERSATION_MAX_TURNS`          | `50`     | Max turns kept per conversation. Older turns are FIFO-dropped. Survivors are renumbered `1..N` so `turn_number` stays a stable 1-indexed position in the current list. |
+| `NOTEBOOKLM_CONVERSATION_MAX_CONVS`          | `500`    | Max distinct conversations cached. On overflow, the least-recently-used conversation is evicted. Reads and writes both promote to MRU.                                 |
+| `NOTEBOOKLM_CONVERSATION_MAX_CHARS_PER_TURN` | `100000` | Per-turn answer char cap. Safety net against pathological payloads. Queries are user input and not truncated.                                                          |
 
 With all defaults: 500 convs × 50 turns × up to 100k chars = hard upper bound around ~2.5 GB of answer text. In practice answers are 1–10 KB, so the typical ceiling is ~25 MB.
 
@@ -843,32 +1012,36 @@ nlm pipeline run ingest-and-podcast --notebook <id> --input-url "https://example
 
 ## Error Recovery
 
-| Error | Cause | Solution |
-|-------|-------|----------|
-| "Cookies have expired" | Session timeout | `nlm login` |
-| "authentication may have expired" | Session timeout | `nlm login` |
-| "Notebook not found" | Invalid ID | `nlm notebook list` |
-| "Source not found" | Invalid ID | `nlm source list <nb-id>` |
-| "Rate limit exceeded" | Too many calls | Wait 30s, retry |
-| "Research already in progress" | Pending research | Use `--force` or import first |
-| "Import timed out" | Too many sources | Use `--timeout 600` for larger notebooks |
-| "Google API error code 3" | Transient deep research error | Retry in a few minutes, or use `--mode fast` |
-| Browser doesn't launch | Port conflict | Close browser, retry |
-| `nlm login` crashes with `ClientAuthenticationError` | (Fixed in 0.6.14) Disk tokens fully expired | `nlm login` now works directly, no manual `nlm login profile delete` needed |
-| `RPCDriftError` / rotated method ID | NotebookLM changed an internal RPC ID | Run with `--debug`, apply the suggested `NOTEBOOKLM_RPC_OVERRIDES` JSON mapping, then restart the MCP server |
-| File upload path not found | Path exists on the client but not the CLI/MCP host | Use a path accessible on the machine running `nlm` or the MCP server |
+| Error                                                | Cause                                              | Solution                                                                                                     |
+| ---------------------------------------------------- | -------------------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
+| "Cookies have expired"                               | Session timeout                                    | `nlm login`                                                                                                  |
+| "authentication may have expired"                    | Session timeout                                    | `nlm login`                                                                                                  |
+| "Notebook not found"                                 | Invalid ID                                         | `nlm notebook list`                                                                                          |
+| "Source not found"                                   | Invalid ID                                         | `nlm source list <nb-id>`                                                                                    |
+| "Rate limit exceeded"                                | Too many calls or an exhausted usage window      | Run `nlm usage` / `usage_get` to inspect remaining budget; wait for the reported reset time when a window is exhausted |
+| "Research already in progress"                       | Pending research                                   | Use `--force` or import first                                                                                |
+| "Import timed out"                                   | Too many sources                                   | Use `--timeout 600` for larger notebooks                                                                     |
+| "Google API error code 3"                            | Transient deep research error                      | Retry in a few minutes, or use `--mode fast`                                                                 |
+| Browser doesn't launch                               | Port conflict                                      | Close browser, retry                                                                                         |
+| `nlm login` crashes with `ClientAuthenticationError` | (Fixed in 0.6.14) Disk tokens fully expired        | `nlm login` now works directly, no manual `nlm login profile delete` needed                                  |
+| `RPCDriftError` / rotated method ID                  | Gemini Notebook changed an internal RPC ID         | Run with `--debug`, apply the suggested `NOTEBOOKLM_RPC_OVERRIDES` JSON mapping, then restart the MCP server |
+| File upload path not found                           | Path exists on the client but not the CLI/MCP host | Use a path accessible on the machine running `nlm` or the MCP server                                         |
 
 ## Rate Limiting
 
 Wait between operations to avoid rate limits:
+
 - Source operations: 2 seconds
-- Content generation: 5 seconds
+- Content generation: run sequentially; after a rate limit, wait 1-2 minutes
 - Research operations: 2 seconds
 - Query operations: 2 seconds
+- Before quota-limited chat or Studio work, check `nlm usage` (MCP: `usage_get`)
+  to see the rolling and weekly percentages and reset timestamps.
 
 ## Advanced Reference
 
 For detailed information, see:
+
 - **[references/studio-prompting-guide.md](references/studio-prompting-guide.md)**: Studio prompt best practices, fast vs guided modes, per-artifact decision trees
 - **[references/studio-prompt-examples.md](references/studio-prompt-examples.md)**: Copy-paste prompt templates and command examples
 - **[references/command_reference.md](references/command_reference.md)**: Complete command signatures

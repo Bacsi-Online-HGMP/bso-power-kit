@@ -2,6 +2,8 @@
 
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 
 def test_notebook_mixin_import():
     """Test that NotebookMixin can be imported."""
@@ -36,6 +38,25 @@ def test_notebook_mixin_has_methods():
         assert hasattr(NotebookMixin, method_name), f"Missing method: {method_name}"
 
 
+def test_enterprise_list_does_not_fallback_to_consumer_rpc():
+    """Enterprise failures must remain visible instead of hiding behind a consumer call."""
+    from notebooklm_tools.core.notebooks import NotebookMixin
+
+    mixin = NotebookMixin(cookies={"SID": "x"}, csrf_token="csrf")
+    mixin._is_enterprise = lambda: True
+    mixin._enterprise_project_id = "project-123"
+    with (
+        patch.object(mixin, "_call_rpc", side_effect=RuntimeError("enterprise RPC failed")) as rpc,
+        pytest.raises(RuntimeError, match="enterprise RPC failed"),
+    ):
+        mixin.list_notebooks()
+
+    rpc.assert_called_once_with(
+        mixin.RPC_LIST_NOTEBOOKS_ENTERPRISE,
+        ["projects/project-123/locations/global", None, None, 1],
+    )
+
+
 def test_list_notebooks_uses_correct_rpc():
     """Test that list_notebooks calls the correct RPC."""
     from notebooklm_tools.core.notebooks import NotebookMixin
@@ -58,6 +79,21 @@ def test_list_notebooks_uses_correct_rpc():
                             # Verify correct RPC ID was used
                             mock_build_body.assert_called_once()
                             assert mock_build_body.call_args[0][0] == "wXbhsf"  # RPC_LIST_NOTEBOOKS
+
+
+def test_list_notebooks_preserves_emoji():
+    """Notebook emoji metadata should survive parsing into the Notebook model."""
+    from notebooklm_tools.core.notebooks import NotebookMixin
+
+    raw = [["My Notebook", [], "nb-123", "📚"]]
+    with (
+        patch.object(NotebookMixin, "_refresh_auth_tokens"),
+        patch.object(NotebookMixin, "_call_rpc", return_value=[raw]),
+    ):
+        mixin = NotebookMixin(cookies={"test": "cookie"}, csrf_token="test")
+        notebooks = mixin.list_notebooks()
+
+    assert notebooks[0].emoji == "📚"
 
 
 def test_create_notebook_uses_correct_rpc():
@@ -101,3 +137,18 @@ def test_delete_notebook_uses_correct_rpc():
                                 mock_build_body.call_args[0][0] == "WWINqb"
                             )  # RPC_DELETE_NOTEBOOK
                             assert result is True  # Should return True on success
+
+
+def test_get_notebook_passes_timeout_to_rpc():
+    from notebooklm_tools.core.notebooks import NotebookMixin
+
+    with patch.object(NotebookMixin, "_call_rpc", return_value=[]) as mock_rpc:
+        mixin = NotebookMixin(cookies={"test": "cookie"}, csrf_token="test")
+        mixin.get_notebook("nb-123", timeout=12.5)
+
+    mock_rpc.assert_called_once_with(
+        mixin.RPC_GET_NOTEBOOK,
+        ["nb-123", None, [2], None, 0],
+        "/notebook/nb-123",
+        timeout=12.5,
+    )

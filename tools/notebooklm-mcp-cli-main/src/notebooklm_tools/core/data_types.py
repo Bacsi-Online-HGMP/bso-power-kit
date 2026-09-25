@@ -60,13 +60,14 @@ class Notebook:
     is_shared: bool = False  # True if shared with others (for owned notebooks)
     created_at: str | None = None  # ISO format timestamp
     modified_at: str | None = None  # ISO format timestamp
+    emoji: str | None = None
 
     @property
     def url(self) -> str:
         """Get the NotebookLM web URL for this notebook."""
-        from notebooklm_tools.utils.config import get_base_url
+        from notebooklm_tools.utils.config import get_notebook_url
 
-        return f"{get_base_url()}/notebook/{self.id}"
+        return get_notebook_url(self.id)
 
     @property
     def ownership(self) -> str:

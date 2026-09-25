@@ -118,7 +118,7 @@ $RepoUrl = "https://github.com/AgriciDaniel/claude-seo"
 # This default MUST be bumped on every release. CI guard
 # (tests/test_manifest_consistency.py) enforces this matches plugin.json.
 # Override: $env:CLAUDE_SEO_TAG = 'main'; .\install.ps1
-$RepoTag = if ($env:CLAUDE_SEO_TAG) { $env:CLAUDE_SEO_TAG } else { 'v2.3.1' }
+$RepoTag = if ($env:CLAUDE_SEO_TAG) { $env:CLAUDE_SEO_TAG } else { 'v2.4.0' }
 
 # Create directories
 New-Item -ItemType Directory -Force -Path $SkillDir | Out-Null
@@ -317,6 +317,8 @@ try {
         $updated = $text.Replace($pluginRunner, $manualRunner)
         $updated = $updated.Replace($pluginSetup, $manualSetup)
         $updated = $updated.Replace($pluginDoctor, $manualDoctor)
+        # Read-tool paths need the absolute skills directory, not a variable.
+        $updated = $updated.Replace('${CLAUDE_PLUGIN_ROOT}/skills/', (($env:USERPROFILE -replace '\\', '/') + '/.claude/skills/'))
         if ($updated -ne $text) {
             [System.IO.File]::WriteAllText($_.FullName, $updated, $utf8NoBom)
         }

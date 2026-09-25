@@ -2,9 +2,15 @@
 
 from unittest.mock import MagicMock, patch
 
+import httpx
 import pytest
 
+from notebooklm_tools.core.conversation import QueryRejectedError
+from notebooklm_tools.core.data_types import Notebook
 from notebooklm_tools.services.chat import (
+    _QUERY_TTL_SECONDS,
+    _pending_lock,
+    _pending_queries,
     configure_chat,
     delete_chat_history,
     query,
@@ -16,7 +22,9 @@ from notebooklm_tools.services.errors import ServiceError, ValidationError
 
 @pytest.fixture
 def mock_client():
-    return MagicMock()
+    client = MagicMock()
+    client._is_enterprise.return_value = False
+    return client
 
 
 class TestQuery:
@@ -33,6 +41,7 @@ class TestQuery:
         result = query(mock_client, "nb-123", "What is the meaning?")
 
         assert result["answer"] == "The answer is 42."
+        assert result["question"] == "What is the meaning?"
         assert result["conversation_id"] == "conv-123"
         assert result["sources_used"] == ["src-1", "src-2"]
         assert result["citations"] == {1: "src-1", 2: "src-1", 3: "src-2"}
@@ -57,31 +66,158 @@ class TestQuery:
         with pytest.raises(ServiceError, match="empty result"):
             query(mock_client, "nb-123", "question")
 
+    @pytest.mark.parametrize("answer", ["", "   ", None])
+    def test_empty_answer_raises_service_error(self, mock_client, answer):
+        mock_client.query.return_value = {"answer": answer}
+
+        with pytest.raises(ServiceError, match="empty answer"):
+            query(mock_client, "nb-123", "question", source_ids=["src-1"])
+
     def test_api_error_raises_service_error(self, mock_client):
         mock_client.query.side_effect = RuntimeError("timeout")
         with pytest.raises(ServiceError, match="Query failed"):
             query(mock_client, "nb-123", "question")
 
+    @pytest.mark.parametrize(
+        ("provider_code", "category", "retryable", "suggested_action"),
+        [
+            (3, "invalid_argument", False, "check_query_arguments"),
+            (5, "not_found", False, "check_notebook_and_source_ids"),
+            (8, "resource_exhausted", True, "retry_after_delay"),
+            (16, "unauthenticated", False, "run_nlm_login"),
+        ],
+    )
+    def test_query_rejection_has_structured_metadata(
+        self,
+        mock_client,
+        provider_code,
+        category,
+        retryable,
+        suggested_action,
+    ):
+        mock_client.query.side_effect = QueryRejectedError(provider_code)
+
+        with pytest.raises(ServiceError) as exc_info:
+            query(mock_client, "nb-123", "question", source_ids=["src-1"])
+
+        error = exc_info.value
+        assert error.provider_code == provider_code
+        assert error.category == category
+        assert error.retryable is retryable
+        assert error.suggested_action == suggested_action
+        assert error.debug_code == f"query_{category}"
+
+    def test_invalid_argument_does_not_recommend_reauthentication(self, mock_client):
+        mock_client.query.side_effect = QueryRejectedError(3)
+
+        with pytest.raises(ServiceError) as exc_info:
+            query(mock_client, "nb-123", "question", source_ids=["missing-source"])
+
+        error = exc_info.value
+        assert "invalid" in error.user_message.lower()
+        assert "login" not in error.user_message.lower()
+        assert "login" not in (error.hint or "").lower()
+
     def test_source_ids_passed_through(self, mock_client):
         mock_client.query.return_value = {"answer": "ok"}
         query(mock_client, "nb-123", "question", source_ids=["src-1"])
-        mock_client.query.assert_called_once_with(
-            notebook_id="nb-123",
-            query_text="question",
+        call_kwargs = mock_client.query.call_args.kwargs
+        assert call_kwargs["notebook_id"] == "nb-123"
+        assert call_kwargs["query_text"] == "question"
+        assert call_kwargs["source_ids"] == ["src-1"]
+        assert call_kwargs["conversation_id"] is None
+        assert 0 < call_kwargs["timeout"] <= 120.0
+
+    def test_new_conversation_passed_through(self, mock_client):
+        mock_client.query.return_value = {"answer": "ok"}
+
+        query(
+            mock_client,
+            "nb-123",
+            "question",
             source_ids=["src-1"],
-            conversation_id=None,
+            new_conversation=True,
         )
+
+        call_kwargs = mock_client.query.call_args.kwargs
+        assert call_kwargs["notebook_id"] == "nb-123"
+        assert call_kwargs["query_text"] == "question"
+        assert call_kwargs["source_ids"] == ["src-1"]
+        assert call_kwargs["conversation_id"] is None
+        assert call_kwargs["new_conversation"] is True
+        assert 0 < call_kwargs["timeout"] <= 120.0
+
+    def test_enterprise_source_resolution_uses_enterprise_list(self, mock_client):
+        """Whole-notebook Enterprise queries must not call consumer get_notebook."""
+        mock_client._is_enterprise.return_value = True
+        mock_client.list_notebooks.return_value = [
+            Notebook(
+                id="nb-123",
+                title="Enterprise notebook",
+                source_count=1,
+                sources=[{"id": "src-1", "title": "Source"}],
+            )
+        ]
+        mock_client.query.return_value = {"answer": "ok"}
+
+        with patch("notebooklm_tools.services.chat.notebook_service.get_notebook") as get_notebook:
+            query(mock_client, "nb-123", "question")
+
+        get_notebook.assert_not_called()
+        assert mock_client.query.call_args.kwargs["source_ids"] == ["src-1"]
 
     def test_timeout_passed_through(self, mock_client):
         mock_client.query.return_value = {"answer": "ok"}
         query(mock_client, "nb-123", "question", timeout=30.0)
+        call_kwargs = mock_client.query.call_args.kwargs
+        assert call_kwargs["notebook_id"] == "nb-123"
+        assert call_kwargs["query_text"] == "question"
+        assert call_kwargs["source_ids"] is None
+        assert call_kwargs["conversation_id"] is None
+        assert 0 < call_kwargs["timeout"] <= 30.0
+
+    @patch("notebooklm_tools.services.chat.notebook_service")
+    def test_query_reuses_validated_sources_and_timeout_budget(
+        self, mock_notebook_service, mock_client
+    ):
+        mock_notebook_service.get_notebook.return_value = {
+            "source_count": 2,
+            "sources": [
+                {"id": "src-1", "title": "First"},
+                {"id": "src-2", "title": "Second"},
+            ],
+        }
+        mock_client.query.return_value = {"answer": "ok"}
+
+        with patch("notebooklm_tools.services.chat.time.monotonic", return_value=100.0):
+            query(mock_client, "nb-123", "question", timeout=45.0)
+
+        mock_notebook_service.get_notebook.assert_called_once_with(
+            mock_client, "nb-123", timeout=45.0
+        )
         mock_client.query.assert_called_once_with(
             notebook_id="nb-123",
             query_text="question",
-            source_ids=None,
+            source_ids=["src-1", "src-2"],
             conversation_id=None,
-            timeout=30.0,
+            timeout=45.0,
         )
+
+    def test_read_timeout_has_structured_deadline_error(self, mock_client):
+        mock_client.query.side_effect = httpx.ReadTimeout("The read operation timed out")
+
+        with pytest.raises(ServiceError) as exc_info:
+            query(mock_client, "nb-123", "question", source_ids=["src-1"], timeout=45.0)
+
+        error = exc_info.value
+        assert error.user_message == (
+            "NotebookLM did not respond within the configured query timeout."
+        )
+        assert error.hint == "Retry with a longer timeout, such as 180 seconds."
+        assert error.category == "deadline_exceeded"
+        assert error.retryable is True
+        assert error.suggested_action == "retry_with_longer_timeout"
+        assert error.debug_code == "query_deadline_exceeded"
 
 
 class TestConfigureChat:
@@ -312,7 +448,7 @@ class TestQueryStatus:
         with pytest.raises(ValidationError, match="not found"):
             query_status("nonexistent-id")
 
-    def test_completed_entry_cleaned_after_read(self, mock_client):
+    def test_completed_query_can_be_read_multiple_times_until_ttl(self, mock_client):
         import time as _time
 
         mock_client.query.return_value = {"answer": "ok"}
@@ -322,10 +458,81 @@ class TestQueryStatus:
 
         _time.sleep(1)
 
-        # First read should return the result
-        status = query_status(query_id)
-        assert status["status"] == "completed"
+        first_status = query_status(query_id)
+        second_status = query_status(query_id)
 
-        # Second read should fail because the entry was cleaned up
+        assert first_status["status"] == "completed"
+        assert second_status == first_status
+
+    def test_status_evicts_expired_query_before_reading(self, mock_client):
+        import time as _time
+
+        with _pending_lock:
+            _pending_queries["expired-status-id"] = {
+                "status": "completed",
+                "result": {"answer": "expired"},
+                "error": None,
+                "error_details": None,
+                "created_at": _time.monotonic() - _QUERY_TTL_SECONDS - 1,
+            }
+
         with pytest.raises(ValidationError, match="not found"):
-            query_status(query_id)
+            query_status("expired-status-id")
+
+    def test_error_query_preserves_structured_error_details(self, mock_client):
+        import time as _time
+
+        mock_client.query.side_effect = QueryRejectedError(3)
+        result = query_start(
+            mock_client,
+            "nb-123",
+            "question",
+            source_ids=["missing-source"],
+        )
+
+        for _ in range(100):
+            status = query_status(result["query_id"])
+            if status["status"] == "error":
+                break
+            _time.sleep(0.01)
+        else:
+            raise AssertionError("Background query did not reach an error state")
+
+        assert status["status"] == "error"
+        assert status["error_details"] == {
+            "category": "invalid_argument",
+            "provider_code": 3,
+            "retryable": False,
+            "suggested_action": "check_query_arguments",
+            "debug_code": "query_invalid_argument",
+        }
+
+    def test_timeout_query_preserves_structured_error_details(self, mock_client):
+        import time as _time
+
+        mock_client.query.side_effect = httpx.ReadTimeout("The read operation timed out")
+        result = query_start(
+            mock_client,
+            "nb-123",
+            "question",
+            source_ids=["src-1"],
+            timeout=45.0,
+        )
+
+        for _ in range(100):
+            status = query_status(result["query_id"])
+            if status["status"] == "error":
+                break
+            _time.sleep(0.01)
+        else:
+            raise AssertionError("Background query did not reach an error state")
+
+        assert status["error"] == (
+            "NotebookLM did not respond within the configured query timeout."
+        )
+        assert status["error_details"] == {
+            "category": "deadline_exceeded",
+            "retryable": True,
+            "suggested_action": "retry_with_longer_timeout",
+            "debug_code": "query_deadline_exceeded",
+        }

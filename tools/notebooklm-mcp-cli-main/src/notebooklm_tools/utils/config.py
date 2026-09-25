@@ -6,10 +6,12 @@ Supports automatic migration from old locations:
 - ~/.nlm/ (old CLI location)
 """
 
+import json
 import os
 import shutil
 from pathlib import Path
 from typing import Any
+from urllib.parse import quote, urlparse
 
 from pydantic import BaseModel, Field
 
@@ -20,6 +22,26 @@ from pydantic import BaseModel, Field
 STORAGE_DIR_NAME = ".notebooklm-mcp-cli"
 
 
+def get_home_dir() -> Path:
+    """Resolve a writable home anchor without failing at module import.
+
+    Service and hermetic runtimes can intentionally omit HOME/USERPROFILE. The
+    CLI still needs deterministic local state in that case, but importing the
+    package must not crash before an explicit NOTEBOOKLM_MCP_CLI_PATH override
+    can be honored.
+    """
+    try:
+        return Path.home()
+    except RuntimeError:
+        if configured := str(os.environ.get("NOTEBOOKLM_MCP_CLI_PATH") or "").strip():
+            return Path(configured).parent
+        for name in ("USERPROFILE", "HOME"):
+            value = str(os.environ.get(name) or "").strip()
+            if value:
+                return Path(value)
+        return Path.cwd() / ".notebooklm-home"
+
+
 def safe_mkdir(
     path: Path, *, parents: bool = False, exist_ok: bool = True, mode: int = 0o777
 ) -> None:
@@ -28,7 +50,7 @@ def safe_mkdir(
     On Python 3.14 + Windows, ``pathlib.mkdir(parents=True, exist_ok=True)``
     can raise ``FileExistsError`` (WinError 183) even when the directory
     already exists.  This wrapper catches that specific failure.
-    See: https://github.com/jacob-bd/notebooklm-mcp-cli/issues/169
+    See: https://github.com/jacob-bd/gemini-notebook-mcp-cli/issues/169
     """
     try:
         path.mkdir(parents=parents, exist_ok=exist_ok, mode=mode)
@@ -45,26 +67,77 @@ def safe_mkdir(
 
 _ALLOWED_BASE_HOSTS = {
     "notebooklm.google.com",
+    "notebook.google.com",
     "notebooklm.cloud.google.com",
+    "notebook.cloud.google.com",
+    "vertexaisearch.cloud.google.com",
 }
 
 
-def get_base_url() -> str:
+def get_base_url(profile_host: str | None = None) -> str:
     """Get the NotebookLM base URL.
 
-    Defaults to the personal URL (https://notebooklm.google.com).
+    Resolution order:
+      1. NOTEBOOKLM_BASE_URL env var, if set.
+      2. profile_host, if given and it's a recognized host (issue #269: the
+         host a signed-in account was last seen on, e.g. after Google's
+         notebook.google.com rebrand rollout).
+      3. The default personal URL (https://notebooklm.google.com).
+
     Set NOTEBOOKLM_BASE_URL to override, e.g. for enterprise:
         export NOTEBOOKLM_BASE_URL=https://notebooklm.cloud.google.com
     """
-    url = os.environ.get("NOTEBOOKLM_BASE_URL", "https://notebooklm.google.com").rstrip("/")
     from urllib.parse import urlparse
 
-    parsed = urlparse(url)
-    if parsed.scheme != "https" or parsed.hostname not in _ALLOWED_BASE_HOSTS:
-        raise ValueError(
-            f"NOTEBOOKLM_BASE_URL must use https and one of: {_ALLOWED_BASE_HOSTS}. Got: {url}"
-        )
+    env_override = os.environ.get("NOTEBOOKLM_BASE_URL")
+    if env_override:
+        url = env_override.rstrip("/")
+        parsed = urlparse(url)
+        if parsed.scheme != "https" or parsed.hostname not in _ALLOWED_BASE_HOSTS:
+            raise ValueError(
+                f"NOTEBOOKLM_BASE_URL must use https and one of: {_ALLOWED_BASE_HOSTS}. Got: {url}"
+            )
+        return f"{parsed.scheme}://{parsed.netloc}"
+
+    if profile_host and profile_host in _ALLOWED_BASE_HOSTS:
+        return f"https://{profile_host}"
+
+    url = "https://notebooklm.google.com"
     return url
+
+
+def get_enterprise_project_id() -> str:
+    """Get GCP Project ID for Gemini Notebook Enterprise (from NOTEBOOKLM_PROJECT_ID or default)."""
+    return os.environ.get("NOTEBOOKLM_PROJECT_ID", "").strip()
+
+
+def get_enterprise_location() -> str:
+    """Get GCP Location/Region for Gemini Notebook Enterprise (from NOTEBOOKLM_LOCATION or default 'global').
+
+    Supported locations include: 'global', 'us', 'eu', or specific regions.
+    """
+    loc = os.environ.get("NOTEBOOKLM_LOCATION", "").strip()
+    return loc if loc else "global"
+
+
+def get_notebook_url(notebook_id: str) -> str:
+    """Build the browser URL for a notebook on the configured host."""
+    base_url = get_base_url()
+    host = (urlparse(base_url).hostname or "").lower()
+    if host not in {
+        "notebooklm.cloud.google.com",
+        "notebook.cloud.google.com",
+        "vertexaisearch.cloud.google.com",
+    }:
+        return f"{base_url}/notebook/{quote(notebook_id, safe='')}"
+
+    location = get_enterprise_location()
+    prefix = (
+        f"/notebooklm/{location}" if host == "vertexaisearch.cloud.google.com" else f"/{location}"
+    )
+    url = f"{base_url}{prefix}/notebook/{quote(notebook_id, safe='')}"
+    project_id = get_enterprise_project_id()
+    return f"{url}?project={quote(project_id, safe='')}" if project_id else url
 
 
 def get_default_language() -> str:
@@ -85,7 +158,7 @@ def get_storage_dir() -> Path:
     if env_path := os.environ.get("NOTEBOOKLM_MCP_CLI_PATH"):
         storage_dir = Path(env_path)
     else:
-        storage_dir = Path.home() / STORAGE_DIR_NAME
+        storage_dir = get_home_dir() / STORAGE_DIR_NAME
 
     safe_mkdir(storage_dir, mode=0o700)
     return storage_dir
@@ -160,14 +233,14 @@ def get_snap_chrome_profile_dir(
     if snap_common is None:
         # Auto-detect snap common directory
         for snap_name in ("chromium", "google-chrome"):
-            candidate = Path.home() / "snap" / snap_name / "common"
+            candidate = get_home_dir() / "snap" / snap_name / "common"
             if candidate.exists():
                 snap_common = candidate
                 break
 
     if snap_common is None:
         # Fallback: use chromium common dir (create if needed)
-        snap_common = Path.home() / "snap" / "chromium" / "common"
+        snap_common = get_home_dir() / "snap" / "chromium" / "common"
         safe_mkdir(snap_common, parents=True)
 
     chrome_dir = snap_common / "notebooklm-mcp-cli" / "chrome-profiles" / profile_name
@@ -176,9 +249,10 @@ def get_snap_chrome_profile_dir(
 
 
 def get_firefox_profile_dir(profile_name: str = "default") -> Path:
-    """Get Firefox profile directory kept for backwards compatibility."""
+    """Get the persistent Firefox profile directory for automated auth."""
     firefox_dir = get_storage_dir() / "firefox-profiles" / profile_name
-    safe_mkdir(firefox_dir, parents=True)
+    safe_mkdir(firefox_dir, parents=True, mode=0o700)
+    firefox_dir.chmod(0o700)
     return firefox_dir
 
 
@@ -198,13 +272,13 @@ def get_auth_cache_file() -> Path:
 
 # Old locations for Chrome profiles (checked for migration)
 OLD_CHROME_PROFILES = [
-    Path.home() / ".notebooklm-mcp" / "chrome-profile",  # Old MCP (pre-0.2.13)
-    Path.home() / ".nlm" / "chrome-profile",  # Old CLI
+    get_home_dir() / ".notebooklm-mcp" / "chrome-profile",  # Old MCP (pre-0.2.13)
+    get_home_dir() / ".nlm" / "chrome-profile",  # Old CLI
 ]
 
 # Old locations for auth.json (checked for migration)
 OLD_AUTH_LOCATIONS = [
-    Path.home() / ".notebooklm-mcp" / "auth.json",  # Old MCP (pre-0.2.13)
+    get_home_dir() / ".notebooklm-mcp" / "auth.json",  # Old MCP (pre-0.2.13)
 ]
 
 # Old locations for aliases
@@ -405,7 +479,13 @@ class AuthConfig(BaseModel):
 
     browser: str = Field(
         default="auto",
-        description=("Browser for auth: auto, chrome, arc, brave, edge, chromium, vivaldi, opera"),
+        description=(
+            "Browser for auth: auto, chrome, arc, brave, dia, comet, edge, chromium, firefox, vivaldi, opera"
+        ),
+    )
+    browser_path: str = Field(
+        default="",
+        description="Optional path to a Chromium-compatible browser executable",
     )
     default_profile: str = Field(default="default", description="Default profile name")
 
@@ -442,6 +522,9 @@ def load_config() -> Config:
     if browser := os.environ.get("NLM_BROWSER"):
         config_data.setdefault("auth", {})["browser"] = browser
 
+    if browser_path := os.environ.get("NLM_BROWSER_PATH"):
+        config_data.setdefault("auth", {})["browser_path"] = browser_path
+
     if profile := os.environ.get("NLM_PROFILE"):
         config_data.setdefault("auth", {})["default_profile"] = profile
 
@@ -470,6 +553,7 @@ def _config_to_toml(config: Config) -> str:
 
     lines.append("[auth]")
     lines.append(f'browser = "{config.auth.browser}"')
+    lines.append(f"browser_path = {json.dumps(config.auth.browser_path)}")
     lines.append(f'default_profile = "{config.auth.default_profile}"')
     lines.append("")
 

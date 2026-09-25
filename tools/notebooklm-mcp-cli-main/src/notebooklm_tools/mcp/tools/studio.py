@@ -1,11 +1,12 @@
 """Studio tools - Artifact creation with consolidated studio_create."""
 
+import json
 import time as _time
 from typing import Any
 
 from ...services import ServiceError, ValidationError
 from ...services import studio as studio_service
-from ...utils.config import get_base_url, get_default_language
+from ...utils.config import get_default_language, get_notebook_url
 from ._utils import ResultDict, coerce_list, error_result, get_client, logged_tool
 
 # Auth guard: avoid a live HTTP check on every studio_create call. We check
@@ -65,7 +66,7 @@ def _normalize_studio_validation_error(message: str) -> str:
 def studio_create(
     notebook_id: str,
     artifact_type: str,
-    source_ids: list[str] | None = None,
+    source_ids: str | list[str] | None = None,
     confirm: bool = False,
     # Audio/Video options
     audio_format: str = "deep_dive",
@@ -82,6 +83,7 @@ def studio_create(
     slide_length: str = "default",
     # Report options
     report_format: str = "Briefing Doc",
+    report_template: str = "learning_overview",
     custom_prompt: str = "",
     # Quiz options
     question_count: int = 2,
@@ -118,7 +120,10 @@ def studio_create(
         - video: video_format (explainer|brief|cinematic|short), visual_style (auto_select|custom|classic|whiteboard|kawaii|anime|watercolor|retro_print|heritage|paper_craft; not for cinematic/short), video_style_prompt
         - infographic: orientation (landscape|portrait|square), detail_level (concise|standard|detailed), infographic_style (auto_select|sketch_note|professional|bento_grid|editorial|instructional|bricks|clay|anime|kawaii|scientific)
         - slide_deck: slide_format (detailed_deck|presenter_slides), slide_length (short|default)
-        - report: report_format (Briefing Doc|Study Guide|Blog Post|Create Your Own), custom_prompt
+        - report: report_format (Briefing Doc|Study Guide|Blog Post|Create Your Own|Interactive), custom_prompt
+          - Interactive reports additionally take report_template (learning_overview) and embed
+            studio elements (audio, video, slide deck, infographic, flashcards, quiz, mind map).
+            Read the report and generate those elements with report(action=get|elements|generate).
         - flashcards: difficulty (easy|medium|hard)
         - quiz: question_count (int), difficulty (easy|medium|hard)
         - data_table: description (required)
@@ -172,6 +177,8 @@ def studio_create(
             settings.update({"format": slide_format, "length": slide_length, "language": language})
         elif artifact_type == "report":
             settings.update({"format": report_format, "language": language})
+            if report_format.strip().lower() == "interactive":
+                settings["report_template"] = report_template
         elif artifact_type in ("flashcards", "quiz"):
             settings.update({"difficulty": difficulty})
             if artifact_type == "quiz":
@@ -238,6 +245,7 @@ def studio_create(
             slide_format=slide_format,
             slide_length=slide_length,
             report_format=report_format,
+            report_template=report_template,
             custom_prompt=custom_prompt,
             question_count=question_count,
             difficulty=difficulty,
@@ -254,12 +262,12 @@ def studio_create(
         return {
             **result_payload,
             "status": "success",
-            "notebook_url": f"{get_base_url()}/notebook/{notebook_id}",
+            "notebook_url": get_notebook_url(notebook_id),
         }
     except ValidationError as e:
         return error_result(_normalize_studio_validation_error(str(e)))
     except ServiceError as e:
-        return error_result(e.user_message)
+        return error_result(e.user_message, hint=e.hint)
     except Exception as e:
         return error_result(str(e))
 
@@ -270,6 +278,9 @@ def studio_status(
     action: str = "status",
     artifact_id: str | None = None,
     new_title: str | None = None,
+    include_details: bool = False,
+    limit: int = 20,
+    offset: int = 0,
 ) -> ResultDict:
     """Check studio content generation status and get URLs, or rename an artifact.
 
@@ -279,22 +290,27 @@ def studio_status(
             - status (default): List all artifacts with their status and URLs
             - rename: Rename an artifact (requires artifact_id and new_title)
             - list_types: List all supported artifact types with their options
-        artifact_id: Required for action="rename" - the artifact UUID to rename
+        artifact_id: For status, return only this artifact. Required for action="rename".
         new_title: Required for action="rename" - the new title for the artifact
+        include_details: Include prompts, source IDs, report content, and media details
+        limit: Maximum artifacts to return for status (1-100, default 20)
+        offset: Number of artifacts to skip for status pagination
 
     Returns:
         Dictionary with status and results.
         For action="status":
             - status: "success"
-            - artifacts: List of artifacts, each containing:
+            - artifacts: Lean page of artifacts, each containing:
                 - artifact_id: UUID
                 - title: Artifact title
                 - type: audio, video, report, etc.
                 - status: completed, in_progress, failed
-                - url: URL to view/download (if applicable)
-                - custom_instructions: The custom prompt/focus instructions used to generate the artifact (if any)
-                - source_ids: List of source UUIDs the artifact was generated from
+                - created_at: Creation timestamp
+                - error_reason: Failure guidance when status is failed
+              With include_details=True, artifacts also include prompts, source IDs,
+              report content, media URLs, and other rich fields.
             - summary: Counts of total, completed, in_progress
+            - pagination: returned, offset, limit, and has_more
     """
     try:
         if action == "list_types":
@@ -317,7 +333,14 @@ def studio_status(
                 **rename_result,
             }
 
-        status_result = studio_service.get_studio_status(client, notebook_id)
+        status_result = studio_service.get_studio_status(
+            client,
+            notebook_id,
+            artifact_id=artifact_id,
+            include_details=include_details,
+            limit=limit,
+            offset=offset,
+        )
         return {
             "status": "success",
             "notebook_id": notebook_id,
@@ -327,8 +350,144 @@ def studio_status(
                 "in_progress": status_result["in_progress"],
             },
             "artifacts": status_result["artifacts"],
-            "notebook_url": f"{get_base_url()}/notebook/{notebook_id}",
+            "pagination": {
+                "returned": status_result["returned"],
+                "offset": status_result["offset"],
+                "limit": status_result["limit"],
+                "has_more": status_result["has_more"],
+            },
+            "notebook_url": get_notebook_url(notebook_id),
         }
+    except (ValidationError, ServiceError) as e:
+        message = e.user_message if isinstance(e, ServiceError) else str(e)
+        return error_result(message, hint=getattr(e, "hint", None))
+    except Exception as e:
+        return error_result(str(e))
+
+
+@logged_tool()
+def report(
+    notebook_id: str,
+    artifact_id: str,
+    action: str,
+    wait_for: list[str] | str = "",
+    timeout: int = 600,
+    include_content: bool = False,
+    plan: list[dict[str, Any]] | str | None = None,
+    language: str = "",
+    confirm: bool = False,
+) -> ResultDict:
+    """Work with an interactive report's embedded elements. Unified report tool.
+
+    Create the report itself with studio_create(artifact_type="report",
+    report_format="Interactive"). Then:
+
+    Args:
+        notebook_id: Notebook UUID
+        artifact_id: Interactive report artifact UUID
+        action: Operation to perform:
+            - get: report markdown, prompt, language, source_ids, parse_status
+              and every element
+            - elements: list elements; each has element_id, type (audio|video|
+              slide_deck|infographic|flashcards|quiz|mind_map|unsupported),
+              element_status, description (card recommendation), section
+              ({heading, text} it sits in, or null) and settings (allowed values
+              + defaults). Optional wait_for / timeout / include_content.
+            - generate: validate or run a plan of 1-20 elements (see plan)
+        wait_for: (elements) element ids to wait on, list or comma-separated;
+            returns when all are completed/failed/suggested/missing or timeout
+        timeout: (elements) max seconds to wait (default 600); timed_out=true is
+            not an error
+        include_content: (elements) inline content of completed quiz/flashcards/
+            mind map for review. Review is against the plan and section, not the
+            original sources.
+        plan: (generate) list of {"element_id", "steering_prompt"?, "settings"?}.
+            Omit steering_prompt to use the element's saved prompt or card
+            description. settings use names from action="elements". Sources and
+            language come from the report.
+        language: (generate) BCP-47 override (default: the report's language)
+        confirm: (generate) without it the plan is only validated and returned
+            with generations_to_start for the user's approval; with confirm=True
+            every item is started. One item's failure does not stop others; a
+            quota/auth failure stops the rest (stopped_reason). outcome per item:
+            started | failed | unknown (kickoff response lost; NOT re-sent) |
+            not_started. Never set confirm=True unless the user approved this
+            exact plan or explicitly delegated choosing AND generating.
+
+    Example:
+        report(notebook_id="nb", artifact_id="rep", action="elements")
+        report(notebook_id="nb", artifact_id="rep", action="generate",
+               plan=[{"element_id": "el-1", "settings": {"difficulty": "hard"}}])
+        report(notebook_id="nb", artifact_id="rep", action="elements",
+               wait_for=["el-1"], include_content=True)
+    """
+    valid_actions = ("get", "elements", "generate")
+    if action not in valid_actions:
+        return error_result(f"Unknown action '{action}'. Valid actions: {', '.join(valid_actions)}")
+
+    try:
+        if action == "generate":
+            if plan is None or plan == "":
+                return error_result("action='generate' requires a plan (list of elements).")
+            raw = json.loads(plan) if isinstance(plan, str) else plan
+            items = studio_service.parse_element_plan(raw)
+
+        client = get_client()
+
+        if action == "get":
+            payload = dict(studio_service.get_report(client, notebook_id, artifact_id))
+            artifact_status = payload.pop("status", None)
+            return {
+                "status": "success",
+                **payload,
+                "artifact_status": artifact_status,
+                "notebook_url": get_notebook_url(notebook_id),
+            }
+
+        if action == "elements":
+            ids = coerce_list(wait_for) if wait_for else None
+            listing = studio_service.list_report_elements(
+                client,
+                notebook_id,
+                artifact_id,
+                wait_for=ids,
+                timeout=float(timeout),
+                include_content=include_content,
+            )
+            return {
+                "status": "success",
+                **listing,
+                "total": len(listing["elements"]),
+                "notebook_url": get_notebook_url(notebook_id),
+            }
+
+        if not confirm:
+            prepared = studio_service.prepare_element_plan(
+                client, notebook_id, artifact_id, items, language or None
+            )
+            return {
+                "status": "pending_confirmation",
+                "message": "Show this plan to the user and get approval before confirm=True.",
+                "generations_to_start": len(prepared.elements),
+                "language": prepared.language,
+                "source_ids": prepared.source_ids,
+                "plan": [
+                    {
+                        "element_id": el.element_id,
+                        "type": el.type,
+                        "title": el.title,
+                        "steering_prompt": el.prompt,
+                        "settings": el.settings_named,
+                    }
+                    for el in prepared.elements
+                ],
+            }
+        batch = studio_service.generate_report_elements(
+            client, notebook_id, artifact_id, items, language=language or None
+        )
+        return {"status": "success", **batch, "notebook_url": get_notebook_url(notebook_id)}
+    except json.JSONDecodeError as e:
+        return error_result(f"plan is not valid JSON: {e}")
     except (ValidationError, ServiceError) as e:
         message = e.user_message if isinstance(e, ServiceError) else str(e)
         return error_result(message, hint=getattr(e, "hint", None))
@@ -434,7 +593,7 @@ def studio_revise(
         )
         return {
             "status": "success",
-            "notebook_url": f"{get_base_url()}/notebook/{notebook_id}",
+            "notebook_url": get_notebook_url(notebook_id),
             **result,
         }
     except (ValidationError, ServiceError) as e:

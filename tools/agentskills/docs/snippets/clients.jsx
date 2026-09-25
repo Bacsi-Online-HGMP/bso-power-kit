@@ -395,4 +395,22 @@ export const clients = [
     scale: 0.45,
     instructionsUrl: "https://www.pulumi.com/docs/ai/skills/",
   },
+  {
+    name: "Hermes Agent",
+    description: "Hermes Agent is a personal AI agent by Nous Research that runs across a CLI, a desktop app, and messaging platforms. It is open source and model-agnostic, learns across sessions, and drives a real terminal and browser.",
+    url: "https://hermes-agent.nousresearch.com/",
+    lightSrc: "/images/logos/hermes-agent/hermes-agent-logo-light.svg",
+    darkSrc: "/images/logos/hermes-agent/hermes-agent-logo-dark.svg",
+    instructionsUrl: "https://hermes-agent.nousresearch.com/docs/user-guide/features/skills",
+    sourceCodeUrl: "https://github.com/NousResearch/hermes-agent",
+  },
+  {
+    name: "OpenClaw",
+    description: "OpenClaw is an open-source personal AI assistant that runs locally and connects to the messaging platforms and tools you already use.",
+    url: "https://openclaw.ai/",
+    lightSrc: "/images/logos/openclaw/light.svg",
+    darkSrc: "/images/logos/openclaw/dark.svg",
+    instructionsUrl: "https://docs.openclaw.ai/tools/skills",
+    sourceCodeUrl: "https://github.com/openclaw/openclaw",
+  },
 ];

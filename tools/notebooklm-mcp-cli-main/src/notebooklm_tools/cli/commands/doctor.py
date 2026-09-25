@@ -1,4 +1,4 @@
-"""Diagnostic command for troubleshooting NotebookLM MCP setup."""
+"""Diagnostic command for troubleshooting Gemini Notebook MCP setup."""
 
 import platform
 import shutil
@@ -10,7 +10,7 @@ from notebooklm_tools.cli.utils import make_console
 console = make_console()
 app = typer.Typer(
     name="doctor",
-    help="Diagnose NotebookLM MCP installation and configuration",
+    help="Diagnose Gemini Notebook MCP installation and configuration",
     invoke_without_command=True,
 )
 
@@ -26,7 +26,7 @@ def doctor(
     ),
 ) -> None:
     """
-    Run diagnostics on your NotebookLM MCP installation.
+    Run diagnostics on your Gemini Notebook MCP installation.
 
     Checks installation, authentication, Chrome profile, and AI tool
     configurations. Suggests fixes for common issues.
@@ -38,7 +38,7 @@ def doctor(
     if ctx.invoked_subcommand is not None:
         return
 
-    console.print("[bold]NotebookLM MCP Doctor[/bold]\n")
+    console.print("[bold]Gemini Notebook MCP Doctor[/bold]\n")
 
     # Check WSL first - it affects other checks
     is_wsl = _check_wsl(verbose)
@@ -61,6 +61,66 @@ def doctor(
         console.print("[green]✓ All checks passed![/green]")
     else:
         console.print("[yellow]Some issues found.[/yellow] See suggestions above.")
+
+
+@app.command("auth-replay")
+def auth_replay(
+    profile: str | None = typer.Option(
+        None,
+        "--profile",
+        "-p",
+        help="Profile to diagnose (defaults to configured profile)",
+    ),
+    no_cdp: bool = typer.Option(
+        False,
+        "--no-cdp",
+        help="Skip the in-browser CDP fetch probe",
+    ),
+    timeout: float = typer.Option(
+        15.0,
+        "--timeout",
+        help="Timeout in seconds for each replay lane",
+    ),
+) -> None:
+    """Diagnose cookie replay vs browser-bound auth failures.
+
+    This compares four lanes:
+    1. saved cookies through normal httpx,
+    2. httpx after a forced Google RotateCookies call,
+    3. cookies freshly re-extracted from a live, logged-in browser session,
+       replayed through normal httpx (distinguishes stale saved cookies
+       from genuine device-bound replay),
+    4. an optional in-page CDP fetch from that same browser session.
+
+    Lanes 3 and 4 are skipped together via --no-cdp.
+    """
+    from notebooklm_tools.services.auth import diagnose_auth_replay
+
+    console.print("[bold]NotebookLM Auth Replay Diagnostic[/bold]\n")
+    report = diagnose_auth_replay(profile=profile, include_cdp=not no_cdp, timeout=timeout)
+
+    console.print(f"Profile: [cyan]{report.profile}[/cyan]")
+    console.print(f"Verdict: [bold]{report.verdict}[/bold]\n")
+
+    for probe in report.probes:
+        if not probe.attempted:
+            status = "[dim]skipped[/dim]"
+        elif probe.valid:
+            status = "[green]pass[/green]"
+        else:
+            status = "[red]fail[/red]"
+        console.print(f"  {probe.name}: {status}")
+        if probe.notebook_count is not None:
+            console.print(f"    notebooks: {probe.notebook_count}")
+        if probe.detail:
+            console.print(f"    [dim]{probe.detail}[/dim]")
+        if probe.error:
+            console.print(f"    [red]{probe.error}[/red]")
+
+    console.print(f"\nRecommendation: {report.recommendation}")
+
+    if report.verdict in {"not_configured", "profile_load_error", "all_failed"}:
+        raise typer.Exit(2)
 
 
 def _check_installation(verbose: bool) -> bool:
@@ -301,6 +361,7 @@ def _check_clients(verbose: bool) -> bool:
 
     from notebooklm_tools.cli.commands.setup import (
         CLIENT_REGISTRY,
+        _claude_desktop_profile_paths,
         _cursor_config_path,
         _gemini_config_path,
         _is_configured,
@@ -338,6 +399,12 @@ def _check_clients(verbose: bool) -> bool:
                 if verbose:
                     console.print(f"  {info['name']}: [dim]not installed[/dim]")
                 continue
+
+        elif client_id == "claude-desktop":
+            paths = _claude_desktop_profile_paths()
+            status = bool(paths) and any(
+                _is_configured(_read_json_config(path)) for path in paths.values()
+            )
 
         elif client_id == "gemini":
             path = _gemini_config_path()

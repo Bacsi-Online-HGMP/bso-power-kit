@@ -23,12 +23,12 @@ health result as confirmed expiration.
 ```bash
 nlm login
 ```
-This opens NotebookLM in your browser (Chrome, Arc, Brave, Edge, Chromium, or another supported Chromium-family browser) and extracts cookies automatically.
+This opens NotebookLM in your browser (Chrome, Arc, Dia, Comet, Brave, Edge, Chromium, or another supported Chromium-family browser) and extracts cookies automatically.
 Output on success: `✓ Successfully authenticated!`
 
 ### Check If Already Authenticated
 ```bash
-nlm auth status
+nlm login --check
 ```
 Validates credentials by making a real API call (lists notebooks).
 Shows: `✓ Authenticated` with notebook count, or error if expired.
@@ -88,8 +88,9 @@ nlm status artifacts <notebook>
 
 | Command | Description |
 |---------|-------------|
-| `nlm login` | Authenticate with NotebookLM (**START HERE**) |
-| `nlm auth` | Check authentication status (status, list, delete) |
+| `nlm login` | Authenticate with NotebookLM and manage profiles (**START HERE**) |
+| `nlm auth refresh` | Non-interactive headless session refresh (for unattended/schedulers) |
+| `nlm usage` | Show rolling and weekly plan usage, reset times, and subscription tier |
 | `nlm config` | View/edit configuration (show, get, set) |
 | `nlm notebook` | Manage notebooks (list, create, get, describe, rename, delete, query) |
 | `nlm source` | Manage sources (list, add, get, describe, content, rename, delete, stale, sync) |
@@ -99,7 +100,7 @@ nlm status artifacts <notebook>
 | `nlm alias` | Manage ID shortcuts (set, get, list, delete) |
 | `nlm download` | Download artifacts (audio, video, report, mind-map, slides, infographic, data-table) |
 | `nlm audio` | Create audio overviews/podcasts (create) |
-| `nlm report` | Create reports (create) |
+| `nlm report` | Reports (create, get, elements, element create) |
 | `nlm quiz` | Create quizzes (create) |
 | `nlm flashcards` | Create flashcards (create) |
 | `nlm mindmap` | Create mind maps (create) |
@@ -174,12 +175,29 @@ nlm login --profile work               # Named profile
 nlm login --manual --file <path>       # Import cookies from file
 nlm login --check                      # Only check if auth valid
 nlm login --provider openclaw --cdp-url http://127.0.0.1:18800  # External CDP provider
-
-nlm auth status                        # Check current auth
-nlm auth status --profile work         # Check specific profile
-nlm auth list                          # List all profiles
-nlm auth delete work --confirm         # Delete a profile
+nlm login switch <profile>          # Switch the default profile
+nlm login profile list              # List all profiles with email addresses
+nlm login profile delete <name>     # Delete a profile
+nlm login profile rename <old> <new> # Rename a profile
+nlm auth refresh                    # Non-interactive headless refresh (unattended/schedulers)
 ```
+
+
+### Plan Usage
+
+Check the account's measured Gemini Notebook compute allowance before
+quota-limited chat or Studio work:
+
+```bash
+nlm usage                 # Human-readable table; reset times use local timezone
+nlm usage --json          # Machine-readable JSON; reset timestamps are ISO 8601 UTC
+```
+
+The report contains `rolling` (about five hours) and `weekly` windows with
+`percent_used`, `percent_remaining`, and `resets_at`, plus the subscription
+`tier` when available. The backend may return windows in either order; use the
+window name. If this call reports an authentication error, run `nlm auth refresh`
+or `nlm login` rather than treating the allowance as exhausted.
 
 
 ### Notebook Commands
@@ -193,11 +211,11 @@ nlm notebook list --title              # "ID: Title" format
 nlm notebook list --full               # All columns
 
 nlm notebook create "Title"            # Create new notebook
-nlm notebook get <id>                  # Get notebook details
+nlm notebook get <id> --json           # Get details, including notebook emoji
 nlm notebook describe <id>             # AI summary with topics
 nlm notebook describe <id> --json      # JSON output
 nlm notebook rename <id> "New Title"   # Rename notebook
-nlm notebook delete <id> --confirm     # Delete permanently
+nlm notebook delete <id> --confirm --json  # Structured deletion result
 nlm notebook query <id> "question"     # Chat with sources
 nlm notebook query <id> "question" --json  # JSON output
 nlm notebook query <id> "follow up" --conversation-id <cid>  # Persists in web UI history
@@ -226,6 +244,7 @@ nlm source list <notebook-id> --drive  # Show Drive sources with freshness
 nlm source list <notebook-id> --drive --skip-freshness  # Faster, skip freshness checks
 
 nlm source add <notebook-id> --url "https://..."           # Add URL
+nlm source add <notebook-id> --url "https://..." --json    # Return new source ID as JSON
 nlm source add <notebook-id> --url "https://..." --wait    # Add URL and wait until processed
 nlm source add <notebook-id> --url "https://youtube.com/..." # Add YouTube
 nlm source add <notebook-id> --text "content" --title "Title"  # Add text
@@ -234,7 +253,8 @@ nlm source add <notebook-id> --file doc.pdf --wait          # Upload and wait un
 nlm source add <notebook-id> --drive <doc-id>              # Add Drive doc
 nlm source add <notebook-id> --drive <doc-id> --type slides  # Add Drive slides
 # Types: doc, slides, sheets, pdf
-# Supported file types: PDF, TXT, MD, DOCX, CSV, EPUB, MP3, M4A, WAV, AAC, OGG, OPUS, MP4, JPG, JPEG, PNG, GIF, WEBP
+# OFFICIAL_FILE_EXTENSIONS: .pdf, .txt, .md, .docx, .csv, .pptx, .epub, .avif, .bmp, .gif, .heic, .heif, .ico, .jp2, .jpe, .jpeg, .jpg, .png, .tif, .tiff, .webp, .3g2, .3gp, .aac, .aif, .aifc, .aiff, .amr, .au, .avi, .cda, .m4a, .mid, .mp3, .mp4, .mpeg, .ogg, .opus, .ra, .ram, .snd, .wav, .wma
+# Local admission does not guarantee provider processing success for every file.
 
 nlm source get <source-id>             # Get source metadata
 nlm source get <source-id> --json      # JSON output
@@ -244,7 +264,7 @@ nlm source content <source-id>         # Raw text content
 nlm source content <source-id> --json  # JSON output
 nlm source content <source-id> --output file.txt  # Export to file
 nlm source rename <source-id> "New Title" --notebook <notebook-id>  # Rename source
-nlm source delete <source-id> --confirm  # Delete source
+nlm source delete <source-id> --confirm --json  # Structured deletion result
 nlm source stale <notebook-id>         # List stale Drive sources
 nlm source sync <notebook-id> --confirm  # Sync all stale
 nlm source sync <notebook-id> --source-ids <ids> --confirm  # Sync specific
@@ -345,6 +365,7 @@ nlm status research <notebook-id>                        # Check progress
 **Noun-First:**
 ```bash
 nlm audio create <notebook-id> --confirm
+nlm audio create <notebook-id> --confirm --json  # Return artifact ID as JSON
 nlm audio create <notebook-id> --format deep_dive --length default --confirm
 nlm audio create <notebook-id> --format brief --focus "key topic" --confirm
 nlm audio create <notebook-id> --language es-419 --confirm
@@ -370,7 +391,20 @@ nlm create audio <notebook-id> --format deep_dive --length short --confirm
 nlm report create <notebook-id> --confirm
 nlm report create <notebook-id> --format "Study Guide" --confirm
 nlm report create <notebook-id> --format "Create Your Own" --prompt "Summary..." --confirm
-# Formats: "Briefing Doc", "Study Guide", "Blog Post", "Create Your Own"
+# Formats: "Briefing Doc", "Study Guide", "Blog Post", "Create Your Own", "Interactive"
+
+# Interactive lesson report (embeds elements - see Workflow 17 in the skill)
+nlm report create <notebook-id> --format Interactive --prompt "Lesson goal..." --confirm
+nlm report get <notebook-id> <report-id>             # markdown to stdout
+nlm report get <notebook-id> <report-id> --json      # + prompt, language, elements
+nlm report get <notebook-id> <report-id> -o lesson.md
+nlm report elements <notebook-id> <report-id>        # element ids/types/status
+nlm report elements <notebook-id> <report-id> --wait <id> --content
+nlm report element create <notebook-id> <report-id> --type infographic --confirm
+nlm report element create <notebook-id> <report-id> --type quiz --setting difficulty=hard --confirm
+nlm report element create-batch <notebook-id> <report-id> --plan plan.json --confirm
+# MCP: report(action=get|elements|generate)
+# Omit --prompt to use the card's recommended description (same as "Generate" in the UI).
 ```
 
 **Verb-First:**
@@ -473,7 +507,8 @@ nlm create infographic <notebook-id> --orientation portrait --detail detailed --
 nlm video create <notebook-id> --confirm
 nlm video create <notebook-id> --format brief --style whiteboard --confirm
 nlm video create <notebook-id> --format short --confirm
-# Formats: explainer, brief, cinematic, short (default: explainer; short is vertical ~60s, English-only, no --style)
+# Formats: explainer, brief, cinematic, short (default: explainer; short is vertical ~60s, no --style)
+# Non-English Short output is best-effort; --language adds an explicit language requirement to the focus prompt.
 # Styles: auto_select, classic, whiteboard, kawaii, anime, watercolor, retro_print, heritage, paper_craft
 ```
 
@@ -504,6 +539,9 @@ nlm create data-table <notebook-id> "Extract all dates and events" --confirm
 nlm studio status <notebook-id>                    # List all artifacts + status
 nlm studio status <notebook-id> --json             # JSON output
 nlm studio status <notebook-id> --full             # All details
+nlm studio status <notebook-id> --artifact-id <id> # Check one artifact
+nlm studio status <notebook-id> --json --mcp-compatible  # MCP-shaped, paginated JSON
+nlm video list <notebook-id>                        # List video artifacts only
 nlm studio delete <notebook-id> <artifact-id> --confirm  # Delete artifact
 nlm slides revise <artifact-id> --slide '1 instruction' --confirm  # Revise slides
 ```
@@ -522,7 +560,7 @@ nlm delete artifact <notebook-id> <artifact-id> --confirm  # Delete artifact
 **Noun-First:**
 ```bash
 nlm download audio <notebook-id> --id <artifact-id>              # Download specific audio
-nlm download audio <notebook-id> --output podcast.mp3          # Download latest audio to file
+nlm download audio <notebook-id> --output podcast.m4a          # Download latest audio to file
 nlm download video <notebook-id>                               # Download latest video (default filename)
 nlm download report <notebook-id> --output report.md           # Download report
 nlm download mind-map <notebook-id>                            # Download mind map
@@ -530,6 +568,7 @@ nlm download slide-deck <notebook-id>                          # Download slides
 nlm download slide-deck <notebook-id> --format pptx            # Download slides (PPTX)
 nlm download infographic <notebook-id>                         # Download infographic
 nlm download data-table <notebook-id>                          # Download data table
+nlm download file <notebook-id> --id <artifact-id>             # Generic Studio file export
 ```
 
 **Download Workflow:**
@@ -551,14 +590,14 @@ nlm download data-table <notebook-id>                          # Download data t
 
 **Download with format conversion:**
 ```bash
-nlm download quiz <notebook-id> <artifact-id>                    # JSON (default)
-nlm download quiz <notebook-id> <artifact-id> --format json      # Structured JSON
-nlm download quiz <notebook-id> <artifact-id> --format markdown  # Markdown format
-nlm download quiz <notebook-id> <artifact-id> --format html      # Interactive HTML
+nlm download quiz <notebook-id> --id <artifact-id>                    # JSON (default)
+nlm download quiz <notebook-id> --id <artifact-id> --format json      # Structured JSON
+nlm download quiz <notebook-id> --id <artifact-id> --format markdown  # Markdown format
+nlm download quiz <notebook-id> --id <artifact-id> --format html      # Interactive HTML
 
-nlm download flashcards <notebook-id> <artifact-id>                    # JSON (default)
-nlm download flashcards <notebook-id> <artifact-id> --format markdown  # Markdown format
-nlm download flashcards <notebook-id> <artifact-id> --format html      # Interactive HTML
+nlm download flashcards <notebook-id> --id <artifact-id>                    # JSON (default)
+nlm download flashcards <notebook-id> --id <artifact-id> --format markdown  # Markdown format
+nlm download flashcards <notebook-id> --id <artifact-id> --format html      # Interactive HTML
 ```
 
 **Format Options:**
@@ -702,6 +741,10 @@ nlm skill show                              # Display skill content
 - `hermes` - Hermes Agent by NousResearch (`~/.hermes/skills/nlm-skill/`)
 - `other` - Export all formats to `./nlm-skill-export/` for manual installation
 
+User-level installs require the target tool to be detected and never create a
+missing tool directory. Project-level installs are explicit and remain
+available for project-local skills.
+
 **Installation Levels:**
 - `user` (default): Installs to user config directory (e.g., `~/.claude/skills/nlm-skill/`)
 - `project`: Installs to current project directory (e.g., `.claude/skills/nlm-skill/`)
@@ -726,7 +769,7 @@ nlm skill show | head -50
 ```
 
 **What Gets Installed:**
-- `SKILL.md` - Main skill file with NotebookLM CLI/MCP documentation
+- `SKILL.md` - Main skill file with Gemini Notebook CLI/MCP documentation
 - `references/` - Additional documentation, including command, troubleshooting, workflow, Studio prompting, and remote MCP guides
 
 For Gemini CLI (v0.33.1+) and Codex, it installs to `~/.agents/skills/nlm-skill/SKILL.md` — the cross-tool compatible path.
@@ -763,7 +806,8 @@ nlm set config <key> <value>    # Update setting
 ```
 
 **Available config keys:**
-- `auth.browser` — Preferred browser for login: auto (default), chrome, arc, brave, edge, chromium, vivaldi, opera. Falls back to auto if preferred browser is not found.
+- `auth.browser` — Preferred browser for login: auto (default), chrome, arc, dia, comet, brave, edge, chromium, firefox, vivaldi, opera. Falls back to auto if a preferred named browser is not found.
+- `auth.browser_path` — Explicit Chromium-compatible executable path (default: empty). Overrides named discovery; can also be set with `NLM_BROWSER_PATH`.
 - `auth.default_profile` — Default profile name (default: "default")
 - `output.format` — Default output format: table, json (default: "table")
 - `output.color` — Enable colored output (default: true)
@@ -771,7 +815,7 @@ nlm set config <key> <value>    # Update setting
 
 ### Diagnostics & Setup
 
-**Doctor** - Diagnose your NotebookLM MCP installation:
+**Doctor** - Diagnose your Gemini Notebook MCP installation:
 ```bash
 nlm doctor                      # Run all diagnostic checks
 nlm doctor --verbose            # Show additional details
@@ -783,6 +827,9 @@ Checks: installation, authentication, browser profile, AI tool configs. Shows su
 ```bash
 nlm setup list                          # Show all clients and their MCP status
 nlm setup add claude-code               # Add to Claude Code (via claude mcp add)
+nlm setup add claude-desktop            # Add to Claude Desktop config
+nlm setup add claude-desktop --profile 3p  # Select Relay AI / 3P explicitly
+nlm setup remove claude-desktop --profile regular  # Remove from regular explicitly
 nlm setup add gemini                    # Add to Gemini CLI config
 nlm setup add cursor                    # Add to Cursor config
 nlm setup add windsurf                  # Add to Windsurf config
@@ -795,7 +842,17 @@ nlm setup remove <client>               # Remove MCP from client
 nlm setup remove all                    # Remove MCP from ALL configured tools (with confirmation)
 ```
 
-**Supported Clients:** claude-code, gemini, cursor, windsurf, cline, antigravity, codex
+The configured MCP server name is `gemini-notebook-mcp`; the executable remains
+`notebooklm-mcp` for compatibility with existing installations. Legacy server
+names are recognized for migration and removal.
+
+Claude Desktop setup only targets detected regular or Relay AI/3P profiles and
+never creates a missing profile. Fully quit the selected profile before adding
+or removing configuration; the CLI refuses to write while its executable is
+running. User-level skill installation likewise requires the target tool to be
+detected; use `--level project` for an intentional project-local install.
+
+**Supported Clients:** claude-code, claude-desktop, gemini, cursor, windsurf, cline, antigravity, codex
 
 **For other tools:** `nlm setup add json` launches an interactive wizard — choose uvx or regular mode, full path or command name, and existing or new config. The JSON is printed with syntax highlighting and can be copied to clipboard (macOS).
 
@@ -808,7 +865,7 @@ Many commands support `--json` for structured output:
 | Flag | Description | Available On |
 |------|-------------|------|
 | (none) | Rich table (human-readable) | All |
-| `--json` | JSON output (for parsing/piping) | list, get, describe, query, content, status |
+| `--json` | JSON output (for parsing/piping) | list, get, describe, query, content, status, usage, source add/delete, notebook delete, Studio create |
 | `--quiet` | IDs only (for piping) | list |
 | `--title` | "ID: Title" format | notebook list |
 | `--url` | "ID: URL" format | source list |
@@ -826,7 +883,7 @@ Many commands support `--json` for structured output:
 | "authentication may have expired" | Session expired | Run `nlm login` |
 | "Notebook not found" | Invalid ID | Run `nlm notebook list` |
 | "Source not found" | Invalid ID | Run `nlm source list <notebook-id>` |
-| "Rate limit exceeded" | Too many API calls | Auto-retried (up to 3x with backoff) |
+| "Rate limit exceeded" | Too many calls or an exhausted usage window | Run `nlm usage`; wait for the reported reset time when a window is exhausted |
 | Server 503/502/500 | Google API flaky | Auto-retried (up to 3x with backoff) |
 | "Research already in progress" | Pending research | Use `--force` or import first |
 
@@ -857,15 +914,18 @@ nlm research status ai --max-wait 900
 # 6. Import all sources
 nlm research import ai task456...
 
-# 7. Generate podcast
+# 7. Check remaining usage before quota-limited generation
+nlm usage --json
+
+# 8. Generate podcast
 nlm audio create ai --format deep_dive --confirm
 
-# 8. Check status until completed
+# 9. Check status until completed
 nlm studio status ai
 # Note artifact ID: audio789...
 
-# 9. Download when ready
-nlm download audio ai audio789... --output podcast.mp3
+# 10. Download when ready
+nlm download audio ai audio789... --output podcast.m4a
 ```
 
 ### Sequence 1 Alternative: Research → Podcast → Download (Verb-First)
@@ -897,7 +957,7 @@ nlm create audio ai --confirm
 nlm status artifacts ai
 
 # 9. Download
-nlm download-verb audio ai audio789... --output podcast.mp3
+nlm download-verb audio ai audio789... --output podcast.m4a
 ```
 
 ### Sequence 2: Quick Source Ingestion
@@ -977,15 +1037,16 @@ nlm download infographic <notebook-id> --id <infographic-id>
 11. **DO NOT launch REPL** - Never use `nlm chat start` - it opens an interactive REPL that AI tools cannot control. Use `nlm notebook query` or `nlm query notebook` for one-shot Q&A instead.
 12. **Choose output format wisely** - Default output (no flags) is compact and token-efficient—use it for status checks. Use `--quiet` to capture IDs for piping. Only use `--json` when you need to parse specific fields programmatically.
 13. **Verb-first vs Noun-first** - Both command styles work identically. Use whichever is more natural for the context. Noun-first groups by resource (notebook, source), verb-first groups by action (create, list, delete).
-14. **Download workflow** - Always wait for artifact completion before downloading. Check status with `nlm studio status <notebook>`, get the artifact ID, then download with `nlm download <type> <notebook> <artifact-id>`.
+14. **Download workflow** - Always wait for artifact completion before downloading. Check status with `nlm studio status <notebook>`, get the artifact ID, then download with `nlm download <type> <notebook> --id <artifact-id>`.
 15. **Artifact generation takes time** - Audio/video: 1-5 minutes. Reports/quizzes: 30-60 seconds. Always poll status before attempting download.
-16. **Download output files** - If no `--output` specified, files are saved with default names (e.g., `audio_<id>.mp3`, `video_<id>.mp4`, `report_<id>.txt`). Use `--output` to specify custom filenames.
+16. **Download output files** - If no `--output` specified, files are saved with default names (e.g., `audio_<id>.m4a`, `video_<id>.mp4`, `report_<id>.md`). Use `--output` to specify custom filenames.
 17. **Streaming downloads** - All downloads use efficient streaming to handle large files without memory issues. This is automatic.
 18. **Drive source sync** - Use `nlm source stale <notebook>` or `nlm list stale-sources <notebook>` to check which Drive sources need syncing before running sync commands.
 19. **Use --wait for blocking source adds** - When adding sources before querying, use `nlm source add ... --wait` to block until processing completes. This ensures the source is ready for queries.
 20. **Export to Google Docs/Sheets** - Reports can be exported to Google Docs, Data Tables to Google Sheets. Use `nlm export to-docs/to-sheets <notebook> <artifact-id>`.
 21. **Batch with tags** - Tag notebooks first (`nlm tag add ... --tags "topic"`), then use `--tags` flag with batch commands for targeted multi-notebook operations.
 22. **Pipelines for automation** - Use `nlm pipeline list` to see available workflows, then `nlm pipeline run` for automated multi-step operations (ingest → generate).
+23. **Check plan usage before quota-limited work** - Run `nlm usage` or call the MCP `usage_get` tool to inspect rolling and weekly percentages and reset times. Refresh authentication when the check fails; an auth error is not an exhausted quota.
 """
 
 

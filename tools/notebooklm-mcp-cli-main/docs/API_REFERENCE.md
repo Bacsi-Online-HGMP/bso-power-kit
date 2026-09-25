@@ -1,8 +1,8 @@
-# NotebookLM MCP API Reference
+# Gemini Notebook (formerly Google NotebookLM) MCP API Reference
 
-This document contains detailed API documentation for the internal NotebookLM APIs. Only read this file when debugging API issues or adding new features.
+This document contains detailed API documentation for the internal Gemini Notebook APIs. Only read this file when debugging API issues or adding new features.
 
-**For general project info, see [CLAUDE.md](./CLAUDE.md)**
+**For general project info, see [CLAUDE.md](../CLAUDE.md)**
 
 ---
 
@@ -28,6 +28,12 @@ notebook_add_text(notebook_id, text="My research notes...", title="Notes")
 result = notebook_query(notebook_id, query="What are the key points?")
 print(result["answer"])
 ```
+
+Queries use a 120-second wall-clock timeout by default. Source-heavy notebooks
+may need a larger budget, for example `notebook_query(..., timeout=180)`. If a
+query may take longer, use `notebook_query_start(..., timeout=180)` and poll
+`notebook_query_status` until it completes. A deadline error includes a retry
+hint and the `query_deadline_exceeded` debug code.
 
 ### Configure Chat Settings
 ```python
@@ -202,13 +208,12 @@ result = video_overview_create(
 )
 
 # Check generation status (takes several minutes)
-status = studio_status(notebook_id)
+status = studio_status(notebook_id, artifact_id=result["artifact_id"])
 for artifact in status["artifacts"]:
     print(f"{artifact['title']}: {artifact['status']}")
-    if artifact["audio_url"]:
-        print(f"  Audio: {artifact['audio_url']}")
-    if artifact["video_url"]:
-        print(f"  Video: {artifact['video_url']}")
+
+# Rich fields are opt-in and responses are paginated.
+detailed = studio_status(notebook_id, include_details=True, limit=20, offset=0)
 
 # Delete an artifact (after user confirmation)
 studio_delete(
@@ -220,16 +225,59 @@ studio_delete(
 
 **Audio Formats:** deep_dive (conversation), brief, critique, debate
 **Audio Lengths:** short, default, long
-**Video Formats:** explainer, brief, cinematic, short (vertical, ~60s, English-only, no visual style)
+**Video Formats:** explainer, brief, cinematic, short (vertical, ~60s, no visual style)
 **Video Styles:** auto_select, custom, classic, whiteboard, kawaii, anime, watercolor, retro_print, heritage, paper_craft
+
+For Short videos, language selection is best-effort. The captured RPC uses a
+null language slot, so non-English requests are reinforced through the focus
+prompt rather than an undocumented payload change.
 
 ---
 
 ## Base Endpoint
 
 ```
-POST https://notebooklm.google.com/_/LabsTailwindUi/data/batchexecute
+POST https://notebook.google.com/_/LabsTailwindUi/data/batchexecute
 ```
+
+### Gemini Notebook Enterprise
+
+Enterprise uses a project- and location-scoped Cloud NotebookLM endpoint. The
+configured base host may be `notebook.cloud.google.com` (current documented
+host), `notebooklm.cloud.google.com`, or `vertexaisearch.cloud.google.com` for
+older deployments. Set `NOTEBOOKLM_PROJECT_ID` and `NOTEBOOKLM_LOCATION` before
+starting the client. `NOTEBOOKLM_PROJECT_ID` is required for Enterprise; the
+location defaults to `global`.
+
+For the documented `notebook.cloud.google.com` host, the routes are:
+
+```
+POST https://notebook.cloud.google.com/{location}/_/CloudNotebookLmUi/data/batchexecute
+POST https://notebook.cloud.google.com/{location}/_/CloudNotebookLmUi/data/google.cloud.notebooklm.v1main.NotebookService/GenerateFreeFormStreamed
+POST https://notebook.cloud.google.com/{location}/upload/_/
+```
+
+The Enterprise list-notebooks RPC is `rG2vCb` with a project-qualified parent:
+
+```json
+["projects/{project}/locations/{location}", null, null, 1]
+```
+
+Enterprise streamed-query requests identify the notebook with the resource
+name `projects/{project}/locations/{location}/notebooks/{notebook_id}`:
+
+```json
+[
+  [[["source-id"]]],
+  "question",
+  {"70000": "projects/{project}/locations/{location}/notebooks/{notebook_id}"}
+]
+```
+
+These structures are based on a contributor-provided Enterprise web-client
+capture and are covered by the Enterprise routing tests. Live validation still
+requires access to an Enterprise deployment; record a redacted network capture
+when updating them because Google may rotate the internal RPC IDs and paths.
 
 ## Request Format
 
@@ -243,6 +291,14 @@ The `f.req` structure:
 ```json
 [[["<RPC_ID>", "<params_json>", null, "generic"]]]
 ```
+
+The web client additionally sends browser-style headers on every call
+(`X-Same-Domain: 1`, Chrome UA + `sec-ch-ua*` hints, `Referer`, and — on
+studio calls such as `rc3d8d`, `Rytqqe` and `gArtLc` — an
+`x-goog-ext-525006520-jspb` header whose value is the request's config block,
+e.g. `[2,null,[1],[1,null,...,[1,3]]]`). None of these headers are required:
+the CLI omits them for every RPC, and adding them from a non-browser client
+does not change the `Rytqqe` outcome (see the Interactive Report section).
 
 ## URL Query Parameters
 
@@ -286,6 +342,7 @@ The `f.req` structure:
 | `b7Wfje` | Rename source | `[null, ["source_id"], [[["new_title"]]]]` - path: `/notebook/<notebook_id>` |
 | `tGMBJ` | Delete source | `[[["source_id"]], [2]]` - deletion is IRREVERSIBLE |
 | `hPTbtc` | Get conversation IDs | `[notebook_id]` |
+| `khqZz` | Get conversation turns (full Q&A history) | See "Conversation Turns (khqZz)" below |
 | `hT54vc` | User preferences | - |
 | `ZwVcOc` | Settings | - |
 | `ozz5Z` | Add source v2 (Unified) | See source types below |
@@ -296,7 +353,11 @@ The `f.req` structure:
 | `R7cb6c` | Create Studio Content | See Studio RPCs section |
 | `gArtLc` | Poll Studio Status | `[[2], notebook_id, 'NOT artifact.status = "ARTIFACT_STATUS_SUGGESTED"']` |
 | `V5N4be` | Delete Studio Content | `[[2], "artifact_id"]` |
-| `rc3d8d` | Rename Studio Artifact | `[["artifact_id", "new_title"], [["title"]]]` |
+| `rc3d8d` | Rename Studio Artifact / Update artifact fields (field mask) | `[["artifact_id", "new_title"], [["title"]]]` or `[sparse_artifact, [["app.generation_options.free_text_steering_prompt", ...]], null, config]` |
+| `v9rmvd` | Get one artifact by id (metadata, quiz HTML, report elements) | `[artifact_id, [2, null, null, [1, null*9, [1]], [[1, 4, 8, 10, 14, 2, 3, 6, 7]]]]` (simple `[artifact_id]` also works) |
+| `Rytqqe` | Kick off generation of a (suggested) artifact | `[[2, null, null, [1, null*9, [1]], [[1, 4, 8, 10, 14, 2, 3, 6]]], "<artifact_id>"]` (plain-string id) |
+| `Fxmvse` | Set artifact read state | `[config, artifact_id, [null, null, null, null, 0], [["is_unread"]]]` |
+| `HpN0Ub` | Mark artifact viewed / session bookkeeping | `[config, [artifact_id]]` (returns `[]`) |
 | `KmcKPe` | Revise Slide Deck | `[[2], artifact_id, [[[0-based_index, "instruction"], ...]]]` |
 | `yyryJe` | Generate Mind Map | See Mind Map RPCs section |
 | `CYK0Xb` | Save Mind Map | See Mind Map RPCs section |
@@ -304,6 +365,11 @@ The `f.req` structure:
 | `ciyUvf` | Get Suggested Report Formats | `[[2], notebook_id, [[source_id1], ...]]` |
 | `VfAZjd` | Get Report Suggestions | `[notebook_id, [2]]` |
 | `tr032e` | Get Source Guide | `[[[["source_id"]]]]` |
+| `JFMDGd` | Get current share status / access state (fires on notebook page load; used by `notebook share status`) | `[notebook_id, [2, null, [1], [1, null x9, [1, 3]]]]` |
+| `ub2Bae` | Unidentified notebook page-load call (observed 2026-09-24) | `[[2, null, [1], [1, null x9, [1, 3]]]]` |
+| `sqTeoe` | Unidentified notebook page-load call (observed 2026-09-24) | `[[2, null, null, [1, null x9, [1]], [[1, 4, 8, 10, 14, 2, 3, 6]]], null, 1]` |
+| `I3xc3c` | Unidentified notebook page-load call (observed 2026-09-24) | `[[2, null, [1], [1, null x9, [1, 3]]], "<notebook_id>"]` |
+| `sODAg` | Unidentified dialog-open call; fires alongside `EylDcb` when generation dialogs open | `[]` -> response `[true]` |
 
 ---
 
@@ -464,9 +530,57 @@ Streaming JSON with multiple chunks:
 
 ---
 
+## Conversation Turns (`khqZz`)
+
+Discovered via Chrome DevTools capture of the web UI loading a notebook's chat panel
+(2026-07-22). This is a `batchexecute` RPC (unlike the streaming query endpoint above)
+that fetches the **full Q&A history for a past conversation from the server** — it's
+what lets the same chat re-appear after closing and reopening a notebook, and it's what
+`nlm chats get` / `chat_get` / `chat_export` use to show real transcripts even on a
+fresh CLI invocation or MCP server session (`get_conversation_turns()` in
+`core/conversation.py`, wrapping `RPC_GET_CONVERSATION_TURNS`).
+
+Companion to `hPTbtc` (`get_conversation_id`), which only returns the conversation
+UUID — `khqZz` is the RPC that returns the actual turn content for that UUID.
+
+### Request
+```python
+params = [
+    [2, None, [1], [1, None, None, None, None, None, None, None, None, None, [1, 3]]],  # boilerplate client-capability descriptor, same shape used by hPTbtc
+    None,
+    None,
+    "conversation-uuid",  # from get_conversation_id()
+    20,                   # max turns to return (page size; no pagination implemented yet)
+]
+```
+
+### Response
+```
+[[turn, turn, ...], "continuation_token"]
+```
+Turns are returned **newest-first**, alternating **answer then query** per turn pair
+(the same `[answer, None, 2]` / `[query, None, 1]` shape the client already builds
+locally in `_build_conversation_history()` for follow-up queries):
+
+- **Answer turn**: `[turn_id, [unix_sec, nanos], 2, None, content]` where
+  `content[0] = [answer_text, None, [conv_id, conv_id, num]]` — the answer text is
+  nested **one level inside `content[0]`** (`content[0][0]`), not `content[0]` directly.
+  The remaining `content` entries (`content[1]`, `content[3]`, ...) carry rich
+  formatting/citation spans.
+- **Query turn**: `[turn_id, [unix_sec, nanos], 1, "query_text"]`
+
+`get_conversation_turns()` pairs consecutive `(answer, query)` entries, reverses them
+to chronological order, and returns `[{"turn": 1, "query": ..., "answer": ...}, ...]` —
+the same shape as the local-cache-based `get_conversation_history()`. Only plain
+answer/query text is extracted; the rich formatting and citation spans are not yet
+parsed. The `continuation_token` for fetching turns beyond the requested `limit` is
+not yet used (no pagination).
+
+---
+
 ## Research RPCs (Source Discovery)
 
-NotebookLM's "Research" feature discovers and suggests sources based on a query. It supports two source types (Web and Google Drive) and two research modes (Fast and Deep).
+Gemini Notebook's "Research" feature discovers and suggests sources based on a query. It supports two source types (Web and Google Drive) and two research modes (Fast and Deep).
 
 ### Source Types
 | Type | Value | Description |
@@ -607,7 +721,7 @@ Imports selected sources from research results into the notebook.
 
 ## Studio RPCs (Audio/Video Overviews)
 
-NotebookLM's "Studio" feature generates audio podcasts and video overviews from notebook sources.
+Gemini Notebook's "Studio" feature generates audio podcasts and video overviews from notebook sources.
 
 ### `R7cb6c` - Create Studio Content
 
@@ -668,9 +782,10 @@ params = [
 **Short format (code 4) — verified via live capture, 2026-06-30:** Short Video
 Overviews have no visual style picker, so the inner options list omits
 `visual_style_code`/`visual_style_prompt` entirely (matching Cinematic), and
-additionally sends `language_code` as `null` (server defaults to `"en"`;
-English-only for now) plus a trailing flag `1` whose meaning is undocumented
-by Google but required for the request to succeed:
+additionally sends `language_code` as `null` plus a trailing flag `1` whose
+meaning is undocumented by Google but required for the request to succeed.
+Current service behavior adds a best-effort language requirement to
+`focus_prompt` for non-English Short requests:
 ```python
 [
     [[source_id1], [source_id2], ...],  # Source IDs
@@ -725,6 +840,16 @@ params = [[2], notebook_id, 'NOT artifact.status = "ARTIFACT_STATUS_SUGGESTED"']
     ...
 ]
 ```
+
+Artifacts with type code `4` use the nested subtype at `[9][1][0]`:
+
+- `1` = flashcards
+- `2` = quiz
+- `4` = mind map
+
+Mind map subtype `4` was confirmed from a live `gArtLc` response on 2026-07-14.
+Older clients that only distinguish flashcards and quizzes will mislabel these
+saved mind maps as flashcards.
 
 ### `V5N4be` - Delete Studio Content
 
@@ -794,7 +919,7 @@ Returns the same structure as `R7cb6c` (Create Studio Content):
 | **Lengths** | 1=Short, 2=Default, 3=Long |
 | **Languages** | BCP-47 codes, including regional values such as `"es-ES"`, `"es-US"`, and `"es-419"` |
 
-For Audio Overviews, NotebookLM has been observed using the region subtag to
+For Audio Overviews, Gemini Notebook has been observed using the region subtag to
 select the voice accent. `es` and `es-ES` produce Spain Spanish, while `es-US`
 and `es-419` produce Latin-American Spanish. Prompt text does not reliably
 override the accent. This is observed behavior and may change upstream.
@@ -805,7 +930,7 @@ override the accent. This is observed behavior and may change upstream.
 |--------|--------|
 | **Formats** | 1=Explainer (comprehensive), 2=Brief, 3=Cinematic, 4=Short (vertical, ~60s) |
 | **Visual Styles** | 1=Auto-select, 2=Custom, 3=Classic, 4=Whiteboard, 5=Kawaii, 6=Anime, 7=Watercolor, 8=Retro print, 9=Heritage, 10=Paper-craft (not applicable to Cinematic or Short) |
-| **Languages** | BCP-47 codes: "en", "es", "fr", "de", "ja", etc. (Short is English-only for now) |
+| **Languages** | BCP-47 codes: "en", "es", "fr", "de", "ja", etc. Short uses best-effort prompt steering because its RPC language slot is null. |
 
 #### Infographic Request
 ```python
@@ -969,7 +1094,7 @@ Returns an AI-generated summary of the notebook and suggested report topics.
 
 ### `tr032e` - Get Source Guide
 
-Generates an AI summary and keyword chips for a specific source. This is the "Source Guide" feature shown when clicking on a source in the NotebookLM UI.
+Generates an AI summary and keyword chips for a specific source. This is the "Source Guide" feature shown when clicking on a source in the Gemini Notebook UI.
 
 ```python
 # Request params
@@ -1003,6 +1128,181 @@ params = [[[["5d318300-1b66-4bf6-ad3a-072c76f8a8eb"]]]]
 **Use case:** Perfect for a `source_describe` tool that provides an AI-generated overview of individual sources, similar to `notebook_describe` for notebooks.
 
 ---
+
+## Interactive Report RPCs (type 11)
+
+Interactive Reports (`STUDIO_TYPE_INTERACTIVE_REPORT = 11`) are long-form reports
+that embed Studio elements - audio, video, mind map, infographic, flashcards,
+slide deck and quiz - as *suggested* placeholder cards the reader can generate
+in place ("Add" -> "Generate", or "Add" -> "Customize"). They are created with the standard `R7cb6c` create
+RPC, read back with `v9rmvd`, and their elements are generated with an `rc3d8d`
+field update followed by a `Rytqqe` kickoff.
+
+### Create request (`R7cb6c`, type 11)
+
+```python
+params = [
+    [2, null, null,
+     [1, null, null, null, null, null, null, null, null, null, [1]],  # template block ([1] = Learning Overview)
+     [[1, 4, 8, 10, 14, 2, 3, 6]]],                                   # embeddable element type codes
+    notebook_id,
+    [
+        null, null,
+        11,                                   # STUDIO_TYPE_INTERACTIVE_REPORT
+        [[[source_id1]], [[source_id2]], ...],
+        null, null, null, null, null, null, null, null, null, null,
+        null, null, null, null, null, null, null, null, null, null,
+        null, null, null, null, null, null, null, null, null, null,      # indices 4..33 are padding
+        [null, [custom_prompt, language]],                               # options block at index 34 (not 7!)
+    ],
+]
+```
+
+| Difference from classic (type 2) reports | Detail |
+|------------------------------------------|--------|
+| Config block | Gains the template selector and the element-type allowlist |
+| Options block | Moves from index 7 to index 34 |
+| Response `[2]` | `11` instead of `2` |
+
+### Artifact layout
+
+| Index | Contents |
+|-------|----------|
+| `[0]` | artifact id |
+| `[1]` | title (auto-generated by the model) |
+| `[2]` | `11` |
+| `[3]` | sources |
+| `[4]` | status code (see below) |
+| `[10]` | modified timestamp `[seconds, nanos]` |
+| `[15]` | created timestamp `[seconds, nanos]` |
+| `[21]` | base64 task id |
+| `[34]` | `[document_or_null, [prompt, language, generated?]]` |
+
+Suggested *element* artifacts (status 5) are 36 long and carry
+`[title, card_description]` at index `[35]`. The description is the text shown
+on the card; a plain "Generate" click sends it as the steering prompt.
+
+Sources: the report stores its sources at `[3]` as `[[["<id>"], null, 5], ...]`.
+Suggested infographic / slide-deck elements carry the report's sources, but
+suggested type-4 elements (mind map, quiz, flashcards) were observed with
+`[3] = null`. The client therefore always sends the **report's** source ids in
+the `rc3d8d` update and refuses to generate when they cannot be resolved; it
+never widens to every notebook source.
+
+Status codes observed at index `[4]` (extends the standard set):
+
+| Code | Meaning |
+|------|---------|
+| 1 | in_progress (document rendering) |
+| 2 | queued/generating (observed for interactive reports, mind-map, quiz, flashcard and slide-deck elements; audio keeps its completed-with-media special case) |
+| 3 | completed |
+| 4 | failed |
+| 5 | suggested (element placeholders; excluded by the default `gArtLc` filter) |
+
+### Document blocks (`artifact[34][0][0][0]` once generated)
+
+A flat list of blocks:
+
+| Block | Shape |
+|-------|-------|
+| Heading | `[null, null, [[[null, null, ["<title>"]]], [null, 5]]]` |
+| Paragraph | `[start, end, [[[start, end, ["<text>", attrs?]], ...]]]` - `attrs == [true]` renders bold; offsets are character positions |
+| Bullet | `[start, end, [[span], [null, 1], null, [null, null, 0, meta]]]` with `meta = {"101": bullet_char, "102": 1, "103": item_index, "104": running_counter}` |
+| Embed | `[null x12, ["<element id>", 1]]` - placeholder for a suggested Studio element (the trailing flag was observed as `1` both before and after the element was generated, so treat it as informational) |
+
+### Generating an embedded element
+
+Two calls, mirroring the web UI:
+
+1. `rc3d8d` - update artifact fields via field mask:
+
+```python
+[
+    [element_id, null, null, [[[source_id]], ...], null, null, null, null, null,
+     [null, [subtype, null, steering_prompt, language]]],      # subtype e.g. 4 = mind map
+    [["app.generation_options.free_text_steering_prompt",
+      "app.generation_options.language_code",
+      "sources"]],
+    null,
+    [2, null, null, [1, null, null, null, null, null, null, null, null, null, [1]],
+     [[1, 4, 8, 10, 14, 2, 3, 6, 7]]],
+]
+```
+
+2. `Rytqqe` - kick off generation (response is the refreshed artifact). The
+   element id is a **plain string**, not wrapped in a list, and the config is
+   the same for every element kind:
+
+```python
+[[2, null, null, [1, null, null, null, null, null, null, null, null, null, [1]],
+  [[1, 4, 8, 10, 14, 2, 3, 6]]],
+ "<element_id>"]
+```
+
+Masks and option blocks are **kind-specific** (all captured live 2026-09-24):
+
+### Settings — payload and field mask pairs
+
+"Generate" = plain Generate click. "Customize" = Customize panel. Codes match
+the existing `constants.py` mappers unless noted.
+
+| Kind | Mode | Options block | Field mask (besides `sources`) |
+|------|------|---------------|--------------------------------|
+| Quiz | both | `[9] = [null, [2, null, prompt, lang, null, null, null, [count, difficulty]]]` | `app.generation_options.free_text_steering_prompt`, `.language_code`, `.quiz_generation_options.question_quantity`, `.quiz_difficulty` |
+| Flashcards | both | `[9] = [null, [1, null, prompt, lang, null, null, [count, difficulty]]]` | `app…free_text_steering_prompt`, `.language_code`, `.flashcards_generation_options.card_quantity`, `.flashcards_difficulty` |
+| Mind map | both | `[9] = [null, [4, null, prompt, lang]]` | `app…free_text_steering_prompt`, `.language_code` |
+| Infographic | both | `[14] = [[prompt, lang, null, orientation, detail, style]]` | `infographic.generation_options.user_steering_prompt`, `.language_code`, `.aspect_ratio`, `.information_density`, `.style` |
+| Slide deck | both | `[16] = [[prompt, lang, format, length]]` | `slides.generation_options.user_steering_prompt`, `.language_code`, `.deck_type`, `.length` |
+| Audio | Generate | `[6] = [null, [prompt, null, null, null, lang, null, format]]` | `audio_overview.generation_options.episode_focus`, `.language_code`, `.show_format` |
+| Audio | Customize | `[6] = [null, [prompt, 2, null, null, lang, null, format]]` | adds `.episode_length` |
+| Video | Generate | `[8] = [null, null, [null, lang, prompt, null, format]]` | `explainer_video.generation_options.language_code`, `.video_focus`, `.template_format` |
+| Video | Customize | `[8] = [null, null, [null, lang, prompt, null, format, 1]]` | adds `.video_overview_style` |
+| Video (Short) | Customize | `[8] = [null, null, [null, lang, prompt, null, 4]]` | same as Generate: **no** `.video_overview_style` |
+
+Value codes:
+
+| Setting | Values (code) | Plain-Generate default |
+|---------|---------------|------------------------|
+| quiz `question_amount` | fewer 1, standard 2, more 3 | standard |
+| flashcards `card_amount` | fewer 1, standard 2, more 3 | **fewer** (page pre-selects it though "Standard" is labelled default) |
+| `difficulty` (quiz, flashcards) | easy 1, medium 2, hard 3 | medium |
+| infographic `orientation` | landscape 1, portrait 2, square 3 | landscape |
+| infographic `detail_level` | concise 1, standard 2, detailed 3 | standard |
+| infographic `infographic_style` | existing 11-value mapper (e.g. kawaii 10) | auto_select |
+| slide `slide_format` | detailed_deck 1, presenter_slides 2 | detailed_deck |
+| slide `slide_length` | short **2**, default 3 (report elements; regular Studio slide decks use short 1) | default |
+| audio `audio_format` | deep_dive 1, brief 2, critique 3, debate 4 | brief |
+| video `video_format` | explainer 1, cinematic 3, short 4 | cinematic |
+
+Report elements expose **no** audio length and **no** video style in the UI;
+the tool uses the Customize mask with the fixed values the page sends
+(length 2, style 1) and does not let agents set them. Short videos are sent
+without the style field, exactly as the page does.
+
+Sources: a plain "Generate" in the web UI sends every source currently
+selected in the notebook's source panel, even when the report was built from
+fewer. The client deliberately sends the **report's** sources instead, so
+elements stay scoped to what the report covers (verified 2026-09-24).
+
+> **Correction (2026-09-24).** An earlier version of this section said the
+> `Rytqqe` kickoff only works from the web page. That was wrong: the kickoff was
+> being sent with the element id wrapped in a list (`[element_id]`), which the
+> server rejects with `INVALID_ARGUMENT`. The `[2, null, [1], [..., [1, 3]]]`
+> value previously listed as the mind-map kickoff config is the page's
+> `x-goog-ext-525006520-jspb` request **header**, not part of the body. With the
+> plain-string id, the kickoff succeeds from the plain HTTP client.
+
+After generation the element also appears in the notebook Studio panel while
+remaining referenced by the report's embed block.
+
+### Related observed RPCs
+
+| RPC | Purpose | Notes |
+|-----|---------|-------|
+| `Fxmvse` | Set artifact read state | `[config, artifact_id, [null, null, null, null, 0], [["is_unread"]]]`; response echoes the flag |
+| `HpN0Ub` | Mark artifact viewed / session bookkeeping | `[config, [artifact_id]]`, empty response |
+| `EylDcb` | AI usage meter / pre-generation estimate | Called when the create dialog or element dialog opens |
+| `sODAg` | Fired alongside `EylDcb` when generation dialogs open | Empty params, response `[true]`; purpose unidentified |
 
 ## Flashcard RPCs
 
@@ -1076,11 +1376,18 @@ params = [
 
 **Key Difference from Flashcards:** Quiz uses format code `2` at the first position of the options array, while Flashcards use `1`.
 
+**Mind maps share type code 4 too:** newer mind maps are stored as type-4 studio artifacts with format code `4` at `artifact[9][1][0]` (older mind maps live in the notes store via the `cFji9` RPC). The status parser classifies format code 4 as `mind_map`, and downloading one fetches the artifact's interactive HTML (`v9rmvd`) and extracts the mind map JSON (`{"name": ..., "children": [...]}`) from the `data-app-data` attribute — the same mechanism quiz/flashcards use.
+
 ---
 
 ## Data Table RPCs
 
 Data Tables use the `R7cb6c` RPC with **type code 9** (STUDIO_TYPE_DATA_TABLE).
+
+Excel exports of data tables are returned by the same status RPC with **type
+code 10** (`STUDIO_TYPE_DATA_TABLE_XLSX`). Their file metadata is at
+`artifact[24]` as `[filename, mime_type, viewer_url, download_url]`. The
+download path streams `download_url` as binary XLSX without CSV parsing.
 
 ### Data Table Request Structure
 ```python
@@ -1389,11 +1696,12 @@ null  # Null on success
 | 1 | Audio Overview | `R7cb6c` |
 | 2 | Report | `R7cb6c` |
 | 3 | Video Overview | `R7cb6c` |
-| 4 | Flashcards | `R7cb6c` |
-| 5 | Quiz | `R7cb6c` (not yet documented) |
-| 6 | Data Table | `R7cb6c` (not yet documented) |
+| 4 | Flashcards / Quiz / Mind Map (subtype at `[9][1][0]`: 1=cards, 2=quiz, 4=mind map) | `R7cb6c` |
 | 7 | Infographic | `R7cb6c` |
 | 8 | Slide Deck | `R7cb6c` |
+| 9 | Data Table | `R7cb6c` |
+| 10 | Data Table file export (XLSX/CSV/...) | `R7cb6c` |
+| 11 | Interactive Report (embeds Studio elements; options at index 34) | `R7cb6c` + `v9rmvd` + `rc3d8d`/`Rytqqe` |
 | N/A | Mind Map | `yyryJe` + `CYK0Xb` (separate RPCs) |
 
 ---
@@ -1419,7 +1727,7 @@ null  # Null on success
 ## Drive Source Sync
 
 ### Problem
-NotebookLM doesn't auto-update Google Drive sources when the underlying document changes. Users must manually click each source > "Check freshness" > "Click to sync with Google Drive".
+Gemini Notebook doesn't auto-update Google Drive sources when the underlying document changes. Users must manually click each source > "Check freshness" > "Click to sync with Google Drive".
 
 ### Solution
 The `source_list_drive` and `source_sync_drive` tools automate this process.
@@ -1516,7 +1824,7 @@ The MCP needs these cookies (automatically filtered from the full cookie header)
    - Saves to cache for reuse
 
 2. **From page fetch (slower first time):**
-   - Client fetches `notebooklm.google.com` using cookies
+   - Client fetches `notebook.google.com` using cookies
    - Extracts `SNlM0e` (CSRF) and `FdrFJe` (session ID) from HTML
    - Saves to cache for reuse
    - ~1-2 seconds one-time delay
@@ -1713,7 +2021,7 @@ GyzE7e([[2], notebook_id, [label_id_to_remove]])
 
 ### `ozz5Z` — Get User Subscription Tier
 
-Returns the user's current NotebookLM subscription tier. Fires on the homepage (`source-path=/`) during page load.
+Returns the user's current Gemini Notebook subscription tier. Fires on the homepage (`source-path=/`) during page load.
 
 **Captured request params (2026-04-27, `source-path=/`):**
 ```python
@@ -1790,6 +2098,59 @@ Also fires on every page load. Returns app settings including what appear to be 
 | Slide Decks | Limited | More | Higher | Highest |
 
 **Notes:**
-- Daily quotas reset after 24 hours; monthly quotas reset after 30 days
 - Auto-generated artifacts (on first source add) do NOT count toward limits
-- There is no API endpoint to query current usage counts — limits are enforced server-side
+- **Superseded for chat and Studio as of 2026-09-02** — see the compute-based
+  windows below. The per-notebook and per-source structural caps still apply.
+
+### `EylDcb` — Get Remaining Usage (compute windows)
+
+On 2026-09-02 Gemini Notebook replaced fixed daily caps for chat and Studio with
+a compute-based allowance. Consumption depends on prompt complexity and the
+features used, not on a count of requests, so the client cannot derive what is
+left by counting its own calls. This RPC reports it directly. Fires when the
+usage dialog is opened from the Settings menu.
+
+**Captured request params (2026-09-12):**
+```python
+# The standard RPC header is the only parameter:
+[[2, null, [1], [1, null, null, null, null, null, null, null, null, null, [1, 3]]]]
+```
+
+**Captured response (decoded, 2026-09-12):**
+```python
+[1,
+ [[null, null, null, null, 2, [1789697670, 16986000], 8.703406947222222, 91.29659305277778],
+  [null, null, null, null, 1, [1789200870, 16877000], null, 100]],
+ null,
+ [[1, true, 6, 3, 1, 11.177083333333334], ...]]   # 24 entries, appears to be recent activity
+```
+
+Each entry in `response[1]` describes one window:
+
+| Index | Meaning |
+|-------|---------|
+| 4 | Window type: `1` = short rolling window (~5h), `2` = weekly window |
+| 5 | Reset time as `[epoch_seconds, nanoseconds]` |
+| 6 | Percent of the allowance **used**; `null` when nothing has been consumed |
+| 7 | Percent of the allowance **remaining** |
+
+**Index 6 is "used" and index 7 is "remaining"**, confirmed two ways: the web
+dialog read "0% used" while the payload carried `100`, and a partly consumed
+account returned `8.703406947222222` beside `91.29659305277778`, which sum to
+exactly `100`.
+
+**⚠️ The two entries are NOT returned in a stable order.** Observed as `[2, 1]`
+in one call and `[1, 2]` in the next, for the same account. Always select a
+window by its type code at index 4; reading by position silently swaps the
+5-hour budget with the weekly one.
+
+**⚠️ An expired session is not an exhausted quota.** When the saved session has
+aged out, this RPC returns RPC error code 16 (`UNAUTHENTICATED`) and `ozz5Z`
+returns a well-formed but empty entitlement. Neither may be read as "out of
+quota" or as a free-tier account. Run `nlm auth refresh` and retry.
+
+**The `authuser` query parameter has no effect here.** Omitting it and passing
+`0`, `1` or `2` all returned byte-identical payloads for the same account.
+
+**Implementation:** `core/usage.py` (`UsageMixin`), `services/usage.py`,
+`nlm usage`, MCP tool `usage_get`.

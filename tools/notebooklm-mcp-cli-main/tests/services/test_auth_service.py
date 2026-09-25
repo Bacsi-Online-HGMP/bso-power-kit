@@ -14,8 +14,8 @@ def test_shim_reexports_expected_auth_symbols():
     the four data/auth helpers (check_auth, load_cached_tokens,
     save_tokens_to_cache, get_cache_path, validate_cookies), the two
     class symbols re-exported from core (AuthTokens, AuthManager), the
-    AuthHealthChecker family owned by this module, the mtime helper, and
-    the singleton accessor.
+    AuthHealthChecker family owned by this module, the auth replay diagnostic
+    helpers, the mtime helper, and the singleton accessor.
     """
     assert sorted(services_auth.__all__) == sorted(
         [
@@ -23,10 +23,13 @@ def test_shim_reexports_expected_auth_symbols():
             "AuthHealthReport",
             "AuthManager",
             "AuthProbeResult",
+            "AuthReplayDiagnostic",
+            "AuthReplayProbe",
             "AuthTokens",
             "check_auth",
             "confirm_auth_via_api",
             "credentials_are_usable",
+            "diagnose_auth_replay",
             "get_active_auth_mtime",
             "get_auth_health_checker",
             "get_cache_path",
@@ -96,6 +99,24 @@ def test_shim_save_tokens_to_cache_forwards_kwargs(monkeypatch):
     monkeypatch.setattr(core_auth, "save_tokens_to_cache", _fake_save, raising=True)
     services_auth.save_tokens_to_cache(sentinel_tokens, silent=True)
     assert captured == {"tokens": sentinel_tokens, "silent": True}
+
+
+def test_shim_auth_cache_helpers_forward_explicit_profile(monkeypatch):
+    captured = {}
+
+    def _fake_load(*, profile_name):
+        captured["loaded"] = profile_name
+        return "tokens"
+
+    def _fake_save(tokens, silent=False, profile_name=None):
+        captured["saved"] = (tokens, silent, profile_name)
+
+    monkeypatch.setattr(core_auth, "load_cached_tokens", _fake_load, raising=True)
+    monkeypatch.setattr(core_auth, "save_tokens_to_cache", _fake_save, raising=True)
+
+    assert services_auth.load_cached_tokens("tsm") == "tokens"
+    services_auth.save_tokens_to_cache("tokens", silent=True, profile_name="tsm")
+    assert captured == {"loaded": "tsm", "saved": ("tokens", True, "tsm")}
 
 
 def test_shim_validate_cookies_forwards_to_core(monkeypatch):

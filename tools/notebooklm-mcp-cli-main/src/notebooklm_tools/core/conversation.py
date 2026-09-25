@@ -8,6 +8,7 @@ and conversation-related operations.
 import json
 import logging
 import os
+import time
 import urllib.parse
 from typing import Any, Protocol, cast
 
@@ -18,6 +19,8 @@ from .data_types import ConversationTurn
 from .errors import NotebookLMError
 
 logger = logging.getLogger("notebooklm_mcp.api")
+
+DEFAULT_QUERY_TIMEOUT = 120.0
 
 GOOGLE_ERROR_CODES = {
     1: "CANCELLED",
@@ -49,7 +52,7 @@ class QueryRejectedError(NotebookLMError):
 
 
 class _NotebookLookupProtocol(Protocol):
-    def get_notebook(self, notebook_id: str) -> Any: ...
+    def get_notebook(self, notebook_id: str, timeout: float | None = None) -> Any: ...
 
 
 class ConversationMixin(BaseClient):
@@ -197,7 +200,7 @@ class ConversationMixin(BaseClient):
             "max_chars_per_turn": self._max_chars_per_turn,
         }
 
-    def get_conversation_id(self, notebook_id: str) -> str | None:
+    def get_conversation_id(self, notebook_id: str, timeout: float | None = None) -> str | None:
         """Fetch the persistent conversation ID for a notebook from the server.
 
         NotebookLM assigns each notebook a persistent conversation ID that tracks
@@ -211,10 +214,12 @@ class ConversationMixin(BaseClient):
             The conversation UUID string if one exists, or None for new notebooks.
         """
         try:
+            kwargs = {"timeout": timeout} if timeout is not None else {}
             result = self._call_rpc(
                 self.RPC_GET_CONVERSATIONS,
                 [[], None, notebook_id, 20],
                 path=f"/notebook/{notebook_id}",
+                **kwargs,
             )
         except Exception:
             # Non-critical: fall back to generating a new UUID
@@ -236,6 +241,92 @@ class ConversationMixin(BaseClient):
             except (IndexError, TypeError):
                 pass
         return None
+
+    def get_conversation_turns(
+        self, notebook_id: str, conversation_id: str, limit: int = 20
+    ) -> list[dict[str, str | int]] | None:
+        """Fetch the full Q&A turn history for a conversation from the server.
+
+        Unlike get_conversation_history() (which only returns turns cached in
+        this process's memory), this calls NotebookLM's server-side
+        conversation-turns RPC, so past chat turns are visible even from a
+        fresh CLI invocation or MCP session that hasn't run any queries yet
+        (e.g. for `nlm chats get` / `chat_get`).
+
+        Args:
+            notebook_id: The notebook UUID (used for the source-path request
+                param only; NotebookLM keys the lookup by conversation_id)
+            conversation_id: The conversation UUID (from get_conversation_id)
+            limit: Max number of turns to fetch from the server (default: 20)
+
+        Returns:
+            List of {"turn": int, "query": str, "answer": str} dicts in
+            chronological order (oldest first), or None if the server
+            returned no turns (new/empty conversation) or the call failed.
+        """
+        try:
+            result = self._call_rpc(
+                self.RPC_GET_CONVERSATION_TURNS,
+                [
+                    [
+                        2,
+                        None,
+                        [1],
+                        [1, None, None, None, None, None, None, None, None, None, [1, 3]],
+                    ],
+                    None,
+                    None,
+                    conversation_id,
+                    limit,
+                ],
+                path=f"/notebook/{notebook_id}",
+            )
+        except Exception:
+            logger.debug(
+                "Failed to fetch server conversation turns for conversation %s",
+                conversation_id,
+            )
+            return None
+
+        # Response format: [[turn, turn, ...], continuation_token]. Turns
+        # alternate newest-first: [answer_turn, query_turn, answer_turn, ...]
+        #   answer_turn = [turn_id, [sec, nsec], 2, None, [[answer_text, ...], ...]]
+        #   query_turn  = [turn_id, [sec, nsec], 1, query_text]
+        # The answer text is nested one level inside content[0] (itself
+        # [answer_text, None, [conv_id, conv_id, num]]), not content[0] directly.
+        if not result or not isinstance(result, list):
+            return None
+        raw_turns = result[0] if result else None
+        if not isinstance(raw_turns, list) or not raw_turns:
+            return None
+
+        pairs: list[tuple[str, str]] = []  # (query, answer), newest first
+        pending_answer: str | None = None
+        for entry in raw_turns:
+            if not isinstance(entry, list) or len(entry) < 3:
+                continue
+            turn_type = entry[2]
+            if turn_type == 2 and len(entry) > 4 and isinstance(entry[4], list) and entry[4]:
+                answer_wrapper = entry[4][0]
+                if (
+                    isinstance(answer_wrapper, list)
+                    and answer_wrapper
+                    and isinstance(answer_wrapper[0], str)
+                ):
+                    pending_answer = answer_wrapper[0]
+                else:
+                    pending_answer = ""
+            elif turn_type == 1 and len(entry) > 3 and isinstance(entry[3], str):
+                if pending_answer is not None:
+                    pairs.append((entry[3], pending_answer))
+                    pending_answer = None
+
+        if not pairs:
+            return None
+
+        # Server returns newest-first; reverse to chronological order.
+        pairs.reverse()
+        return [{"turn": i, "query": q, "answer": a} for i, (q, a) in enumerate(pairs, start=1)]
 
     def delete_chat_history(self, notebook_id: str, conversation_id: str) -> bool:
         """Delete the chat history for a notebook.
@@ -267,7 +358,8 @@ class ConversationMixin(BaseClient):
         query_text: str,
         source_ids: list[str] | None = None,
         conversation_id: str | None = None,
-        timeout: float = 120.0,
+        timeout: float | None = DEFAULT_QUERY_TIMEOUT,
+        new_conversation: bool = False,
     ) -> dict[str, Any] | None:
         """Query the notebook with a question.
 
@@ -279,9 +371,12 @@ class ConversationMixin(BaseClient):
             query_text: The question to ask
             source_ids: Optional list of source IDs to query (default: all sources)
             conversation_id: Optional conversation ID for follow-up questions.
-                           If None, starts a new conversation.
+                           If None, reuses the notebook's persistent server
+                           conversation when one exists.
                            If provided and exists in cache, includes conversation history.
-            timeout: Request timeout in seconds (default: 120.0)
+            timeout: Wall-clock query budget in seconds (default: 120.0)
+            new_conversation: If True and conversation_id is omitted, always
+                              starts a fresh conversation with a generated UUID.
 
         Returns:
             Dict with:
@@ -296,25 +391,55 @@ class ConversationMixin(BaseClient):
         """
         import uuid
 
+        deadline = time.monotonic() + timeout if timeout is not None else None
+
+        def remaining_timeout() -> float | None:
+            if deadline is None:
+                return None
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise _httpx.ReadTimeout("The query deadline expired before the next request")
+            return remaining
+
         # If no source_ids provided, get them from the notebook
         if source_ids is None:
-            notebook_client = cast(_NotebookLookupProtocol, self)
-            notebook_data = notebook_client.get_notebook(notebook_id)
-            source_ids = self._extract_source_ids_from_notebook(notebook_data)
+            if getattr(self, "_is_enterprise", lambda: False)():
+                all_nbs = cast(_NotebookLookupProtocol, self).list_notebooks()
+                target_nb = next((nb for nb in all_nbs if nb.id == notebook_id), None)
+                source_ids = (
+                    [s["id"] for s in target_nb.sources] if target_nb and target_nb.sources else []
+                )
+            else:
+                notebook_client = cast(_NotebookLookupProtocol, self)
+                notebook_data = notebook_client.get_notebook(
+                    notebook_id, timeout=remaining_timeout()
+                )
+                source_ids = self._extract_source_ids_from_notebook(notebook_data)
 
         # Determine if this is a new conversation or follow-up
         is_new_conversation = conversation_id is None
         if is_new_conversation:
-            # Try to get the persistent conversation ID from the server first.
-            # This is what makes CLI/MCP chats appear in the web UI's chat history.
-            server_conv_id = self.get_conversation_id(notebook_id)
-            if server_conv_id:
-                conversation_id = server_conv_id
-                # Build history from local cache if we have it
-                conversation_history = self._build_conversation_history(conversation_id)
-            else:
+            if new_conversation:
                 conversation_id = str(uuid.uuid4())
                 conversation_history = None
+            else:
+                # Enterprise's streamed route does not expose the consumer
+                # conversation lookup RPC. Start with a local ID there.
+                if self._is_enterprise():
+                    conversation_id = str(uuid.uuid4())
+                    conversation_history = None
+                else:
+                    # This is what makes consumer CLI/MCP chats appear in the
+                    # web UI's chat history.
+                    server_conv_id = self.get_conversation_id(
+                        notebook_id, timeout=remaining_timeout()
+                    )
+                    if server_conv_id:
+                        conversation_id = server_conv_id
+                        conversation_history = self._build_conversation_history(conversation_id)
+                    else:
+                        conversation_id = str(uuid.uuid4())
+                        conversation_history = None
         else:
             # Check if we have cached history for this conversation
             assert conversation_id is not None
@@ -322,25 +447,58 @@ class ConversationMixin(BaseClient):
 
         assert conversation_id is not None
 
+        request_timeout = remaining_timeout()
+
+        if self._cdp_rpc_transport_enabled():
+            self._prepare_cdp_transport(request_timeout)
+
         # Build source IDs structure: [[[sid]]] for each source (3 brackets, not 4!)
         sources_array = [[[sid]] for sid in source_ids] if source_ids else []
 
-        # Query params structure (from network capture)
-        # For new conversations: params[2] = None
-        # For follow-ups: params[2] = [[answer, null, 2], [query, null, 1], ...]
-        params = [
-            sources_array,
-            query_text,
-            conversation_history,  # None for new, history array for follow-ups
-            [2, None, [1]],
-            conversation_id,
-        ]
+        if getattr(self, "_is_enterprise", lambda: False)():
+            # Enterprise query params structure:
+            # [[[[sid]]], query, {"70000": "projects/{project_id}/locations/{location}/notebooks/{notebook_id}"}]
+            from notebooklm_tools.utils.config import (
+                get_enterprise_location,
+                get_enterprise_project_id,
+            )
+
+            project_id = getattr(self, "_enterprise_project_id", "") or get_enterprise_project_id()
+            loc = getattr(self, "_location", "") or get_enterprise_location()
+            project_prefix = f"projects/{project_id}/" if project_id else ""
+            resource_name = f"{project_prefix}locations/{loc}/notebooks/{notebook_id}"
+            params = [
+                sources_array,
+                query_text,
+                {"70000": resource_name},
+            ]
+        else:
+            # Query params structure (from network capture)
+            # For new conversations: params[2] = None
+            # For follow-ups: params[2] = [[answer, null, 2], [query, null, 1], ...]
+            params = [
+                sources_array,
+                query_text,
+                conversation_history,  # None for new, history array for follow-ups
+                [2, None, [1]],
+                conversation_id,
+            ]
 
         # Use compact JSON format matching Chrome (no spaces)
         params_json = json.dumps(params, separators=(",", ":"), ensure_ascii=False)
 
         f_req = [None, params_json]
         f_req_json = json.dumps(f_req, separators=(",", ":"), ensure_ascii=False)
+
+        if (
+            not self.csrf_token
+            or (getattr(self, "_is_enterprise", lambda: False)() and not self._session_id)
+        ) and not self._cdp_rpc_transport_enabled():
+            try:
+                self._refresh_auth_tokens()
+            except Exception:
+                if not self.csrf_token:
+                    raise
 
         # URL encode with safe='' to encode all characters including /
         body_parts = [f"f.req={urllib.parse.quote(f_req_json, safe='')}"]
@@ -352,8 +510,13 @@ class ConversationMixin(BaseClient):
         with self._state_lock:
             self._reqid_counter += 100000
             reqid = self._reqid_counter
+        fallback_bl = (
+            getattr(self, "_BL_FALLBACK_ENTERPRISE", self._BL_FALLBACK)
+            if getattr(self, "_is_enterprise", lambda: False)()
+            else self._BL_FALLBACK
+        )
         url_params = {
-            "bl": os.environ.get("NOTEBOOKLM_BL") or getattr(self, "_bl", "") or self._BL_FALLBACK,
+            "bl": os.environ.get("NOTEBOOKLM_BL") or getattr(self, "_bl", "") or fallback_bl,
             "hl": os.environ.get("NOTEBOOKLM_HL", "en"),
             "_reqid": str(reqid),
             "rt": "c",
@@ -362,20 +525,25 @@ class ConversationMixin(BaseClient):
             url_params["f.sid"] = self._session_id
 
         query_string = urllib.parse.urlencode(url_params)
-        url = f"{self._get_base_url()}{self.QUERY_ENDPOINT}?{query_string}"
+        endpoint = getattr(self, "_get_query_endpoint", lambda: self.QUERY_ENDPOINT)()
+        url = f"{self._get_base_url()}{endpoint}?{query_string}"
 
         cookies = self._get_httpx_cookies()
         # The streamed query endpoint is stricter than batchexecute and rejects
         # form-encoded payloads without an explicit Content-Type header.
         headers = {"Content-Type": "application/x-www-form-urlencoded;charset=UTF-8"}
-        with _httpx.Client(timeout=timeout, cookies=cookies, headers=headers) as client:
-            response = client.post(url, content=body)
-            response.raise_for_status()
+        if self._cdp_rpc_transport_enabled():
+            response_text = self._post_form_via_cdp(url, body, request_timeout)
+        else:
+            with _httpx.Client(timeout=request_timeout, cookies=cookies, headers=headers) as client:
+                response = client.post(url, content=body)
+                response.raise_for_status()
+                response_text = response.text
 
-        logger.debug("Raw query response (first 2000 chars): %s", response.text[:2000])
+        logger.debug("Raw query response (first 2000 chars): %s", response_text[:2000])
 
         # Parse streaming response
-        answer_text, citation_data, server_conv_id = self._parse_query_response(response.text)
+        answer_text, citation_data, server_conv_id = self._parse_query_response(response_text)
 
         # If the server assigned a conversation ID in the response, use it.
         # This is the key mechanism for chat history persistence — the server
@@ -459,10 +627,20 @@ class ConversationMixin(BaseClient):
             backend (used for persistent chat history), or None if not found.
         """
         # Remove anti-XSSI prefix
-        if response_text.startswith(")]}'"):
-            response_text = response_text[4:]
+        start_offset = 4 if response_text.startswith(")]}'") else 0
 
-        lines = response_text.strip().split("\n")
+        def _iter_lines():
+            """Yield response lines without materializing the full body."""
+            line_start = start_offset
+            response_length = len(response_text)
+            while line_start < response_length:
+                line_end = response_text.find("\n", line_start)
+                if line_end == -1:
+                    yield response_text[line_start:]
+                    return
+                yield response_text[line_start:line_end]
+                line_start = line_end + 1
+
         longest_answer = ""
         longest_thinking = ""
         answer_citation_data: dict[str, Any] = {}
@@ -487,23 +665,20 @@ class ConversationMixin(BaseClient):
                     longest_thinking = text
 
         # Parse chunks - prioritize type 1 (answers) over type 2 (thinking)
-        i = 0
-        while i < len(lines):
-            line = lines[i].strip()
+        lines = iter(_iter_lines())
+        for raw_line in lines:
+            line = raw_line.strip()
             if not line:
-                i += 1
                 continue
 
             # Try to parse as byte count (indicates next line is JSON)
             try:
                 int(line)
-                i += 1
-                if i < len(lines):
-                    _process_chunk(lines[i])
-                i += 1
+                json_line = next(lines, None)
+                if json_line is not None:
+                    _process_chunk(json_line)
             except ValueError:
                 _process_chunk(line)
-                i += 1
 
         result = longest_answer if longest_answer else longest_thinking
 
