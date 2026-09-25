@@ -17,6 +17,10 @@ Three things keep this honest:
   `build-standalone.sh`, and that is exactly how `claude-blog` and `claude-ads`
   arrived carrying broken paths.
 - Every script here is idempotent, so running one by hand is always safe.
+- `.github/workflows/verify-vendored.yml` runs `revendor.sh --verify`: it rebuilds
+  every vendored directory from upstream at its locked commit, runs these scripts
+  over it, and fails if the result differs from what is committed. A hand edit
+  that is not captured here fails CI instead of vanishing at the next re-vendor.
 
 ---
 
@@ -148,7 +152,7 @@ after every pull.
 The Gemini patch exits 1 when the README row it anchors to is gone, because
 guessing a new spot would bury the note. That stops the weekly job, and a person
 chooses the new spot. **Any new local edit to vendored code belongs here too**, or
-the next re-vendor will delete it.
+the next re-vendor will delete it. `verify-vendored` in CI enforces that.
 
 ---
 

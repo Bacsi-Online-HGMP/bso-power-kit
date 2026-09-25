@@ -1,0 +1,4 @@
+schema_version: "1.1"
+name: reports-split-warning
+context:
+  scaffold_script: fixture.sh

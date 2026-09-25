@@ -4,6 +4,13 @@
 #   bash revendor.sh                    # check only: report upstream drift, write nothing
 #   bash revendor.sh --apply            # re-vendor every row that has a confirmed source
 #   bash revendor.sh --apply ui-ux-pro-max-skill tools/design.md    # ...or just these
+#   bash revendor.sh --verify           # rebuild from the lock + patches/, fail on any other change
+#
+# --verify is the guard for local changes. It rebuilds every vendored directory from
+# upstream at the exact commit in sources.lock.tsv, runs patches/ over it, and compares
+# the result with what git tracks. Any difference is a hand edit that the next
+# re-vendor would delete without a word -- how the Gemini fallback in
+# mcp-video-analyzer was lost on 2026-09-21. CI runs it on every change to vendored code.
 #
 # Reads sources.tsv (the upstream map) and writes sources.lock.tsv (what was actually
 # pulled: <dir> <repo> <ref> <date pulled> <commit>, tab separated; check mode writes
@@ -27,7 +34,11 @@ LOCK="$HERE/sources.lock.tsv"
 TODAY="$(date '+%Y-%m-%d')"
 
 APPLY=0
-[ "${1:-}" = "--apply" ] && { APPLY=1; shift; }
+VERIFY=0
+case "${1:-}" in
+  --apply)  APPLY=1;  shift ;;
+  --verify) VERIFY=1; shift ;;
+esac
 ONLY="$*"
 
 [ -f "$MAP" ] || { echo "ERROR: $MAP missing."; exit 1; }
@@ -43,7 +54,9 @@ fi
 # unreachable -- `latest` resolves to the newest version tag over plain git, and the
 # report marks each such row `[via tag]`.
 USE_GH=0
-if command -v gh >/dev/null 2>&1 && gh api rate_limit >/dev/null 2>&1; then
+if [ "$VERIFY" -eq 1 ]; then
+  :  # verify reads the lock; it never resolves a ref
+elif command -v gh >/dev/null 2>&1 && gh api rate_limit >/dev/null 2>&1; then
   USE_GH=1
 else
   echo "NOTE: gh is unavailable, so \`latest\` resolves to the newest version tag, not the latest release."
@@ -167,12 +180,97 @@ force_add_ignored() {  # <file listing the copied paths, repo-relative, one per 
   printf '%s\n' "$hidden" | git -C "$HERE" --literal-pathspecs add -f --pathspec-from-file=-
 }
 
+# Exactly one commit, by hash. verify rebuilds what the lock recorded, not whatever the
+# branch or tag points at today.
+fetch_commit() {  # <owner/repo> <commit> <dir>
+  git init -q "$3" 2>/dev/null \
+    && git -C "$3" fetch -q --depth 1 "$(url "$1")" "$2" 2>/dev/null \
+    && git -C "$3" checkout -q FETCH_HEAD 2>/dev/null
+}
+
+# Mirror the upstream checkout in $1 into $2. A whole-repo row takes the entire tree. A
+# directory row takes only $3, at the same relative path, plus the licence files, and
+# leaves everything else in $2 alone. Writes the copied paths, relative to $2, to $4.
+# Returns 1 when the directory is not in the checkout.
+copy_upstream() {  # <checkout> <dest> <path> <list out>
+  if [ "$3" = "." ]; then
+    git -C "$1" -c core.quotePath=false ls-files > "$4"
+    rm -rf "$1/.git"
+    rsync -a --delete "$1/" "$2/"
+    return 0
+  fi
+  [ -d "$1/$3" ] || return 1
+  git -C "$1" -c core.quotePath=false ls-files -- "$3" > "$4"
+  mkdir -p "$2/$3"
+  rsync -a --delete "$1/$3/" "$2/$3/"
+  # The licence travels with any piece of the work.
+  for f in "$1"/LICEN[CS]E* "$1"/COPYING* "$1"/NOTICE*; do
+    [ -f "$f" ] || continue
+    cp "$f" "$2/"
+    basename "$f" >> "$4"
+  done
+  return 0
+}
+
+# Compare a rebuilt directory with the files git tracks for it. Prints one line per
+# difference and exits 1 if there is any. For a directory row only that directory and
+# the licence files are compared; the rest of the vendored directory is ours.
+compare_tree() {  # <rebuilt dir> <repo-relative dir> <path>
+  python3 - "$1" "$HERE" "$2" "$3" <<'PY'
+import os, re, subprocess, sys
+
+built, root, rel, path = sys.argv[1:5]
+licence = re.compile(r'(LICEN[CS]E|COPYING|NOTICE)[^/]*$')
+
+def in_scope(f):
+    return (path == '.' or f == path or f.startswith(path + '/')
+            or ('/' not in f and bool(licence.match(f))))
+
+def rebuilt_files():
+    out = set()
+    for dp, dirs, files in os.walk(built):
+        for name in files + [d for d in dirs if os.path.islink(os.path.join(dp, d))]:
+            out.add(os.path.relpath(os.path.join(dp, name), built))
+    return out
+
+def content(p):
+    if os.path.islink(p):
+        return ('link', os.readlink(p))
+    if os.path.isfile(p):
+        with open(p, 'rb') as fh:
+            return ('file', fh.read())
+    return None
+
+raw = subprocess.run(['git', '--literal-pathspecs', '-C', root, 'ls-files', '-z', '--', rel],
+                     capture_output=True, check=True).stdout
+prefix = rel.rstrip('/') + '/'
+tracked = {p.decode('utf-8', 'surrogateescape')[len(prefix):] for p in raw.split(b'\0') if p}
+
+expected = {f for f in rebuilt_files() if in_scope(f)}
+actual = {f for f in tracked if in_scope(f)}
+rows = [('missing', f) for f in sorted(expected - actual)]
+rows += [('extra', f) for f in sorted(actual - expected)]
+rows += [('changed', f) for f in sorted(expected & actual)
+         if content(os.path.join(built, f)) != content(os.path.join(root, rel, f))]
+for kind, f in rows[:15]:
+    print(f'          {kind:8} {f}')
+if len(rows) > 15:
+    print(f'          ... and {len(rows) - 15} more')
+sys.exit(1 if rows else 0)
+PY
+}
+
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 touched=0
 skipped=0
 failed=0
+edited=0
+verified=0
 : > "$TMP/lock.new"
+: > "$TMP/verify.list"
+SCRATCH="$TMP/tree"
+mkdir -p "$SCRATCH"
 
 fail() { printf '  FAIL  %-40s %s\n' "$1" "$2"; failed=$((failed + 1)); }
 
@@ -186,6 +284,35 @@ while IFS=$'\t' read -r dir repo ref path note || [ -n "$dir" ]; do
     continue
   fi
   case "$path" in ''|'-') path="." ;; esac
+
+  if [ "$VERIFY" -eq 1 ]; then
+    # Rebuild into the scratch tree; the comparison runs once patches/ has been applied.
+    commit="$(locked "$dir" 5)"
+    dest="$(dest_of "$dir")"
+    rel="${dest#"$HERE"/}"
+    if [ -z "$commit" ]; then
+      fail "$dir" "no commit in sources.lock.tsv -- re-vendor it with --apply first"
+      continue
+    fi
+    if [ ! -d "$dest" ]; then
+      fail "$dir" "$rel does not exist"
+      continue
+    fi
+    src="$TMP/src"
+    rm -rf "$src"
+    if ! fetch_commit "$repo" "$commit" "$src"; then
+      fail "$dir" "cannot fetch $repo at $commit"
+      continue
+    fi
+    mkdir -p "$(dirname "$SCRATCH/$rel")"
+    cp -R "$dest" "$SCRATCH/$rel"
+    if ! copy_upstream "$src" "$SCRATCH/$rel" "$path" "$TMP/files"; then
+      fail "$dir" "no $path in $repo at $commit"
+      continue
+    fi
+    printf '%s\t%s\t%s\n' "$dir" "$rel" "$path" >> "$TMP/verify.list"
+    continue
+  fi
 
   have="$(locked "$dir" 3)"
   have_commit="$(locked "$dir" 5)"
@@ -251,26 +378,9 @@ while IFS=$'\t' read -r dir repo ref path note || [ -n "$dir" ]; do
   fi
   commit="$(git -C "$src" rev-parse HEAD)"
 
-  if [ "$path" = "." ]; then
-    git -C "$src" -c core.quotePath=false ls-files > "$TMP/files"
-    rm -rf "$src/.git"
-    rsync -a --delete "$src/" "$dest/"
-  else
-    # One directory of a larger repository. It lands at the same relative path under
-    # $dest; everything else in $dest (its plugin.json, say) is ours and left alone.
-    if [ ! -d "$src/$path" ]; then
-      fail "$dir" "no $path in $repo@$want"
-      continue
-    fi
-    git -C "$src" -c core.quotePath=false ls-files -- "$path" > "$TMP/files"
-    mkdir -p "$dest/$path"
-    rsync -a --delete "$src/$path/" "$dest/$path/"
-    # The licence travels with any piece of the work.
-    for f in "$src"/LICEN[CS]E* "$src"/COPYING* "$src"/NOTICE*; do
-      [ -f "$f" ] || continue
-      cp "$f" "$dest/"
-      basename "$f" >> "$TMP/files"
-    done
+  if ! copy_upstream "$src" "$dest" "$path" "$TMP/files"; then
+    fail "$dir" "no $path in $repo@$want"
+    continue
   fi
   sed "s#^#$rel/#" "$TMP/files" > "$TMP/files.rel"
   force_add_ignored "$TMP/files.rel"
@@ -295,8 +405,43 @@ if [ "$APPLY" -eq 1 ] && [ "$touched" -gt 0 ]; then
   [ -f "$HERE/check-skill-refs.sh" ] && bash "$HERE/check-skill-refs.sh"
 fi
 
+if [ "$VERIFY" -eq 1 ] && [ -s "$TMP/verify.list" ]; then
+  # The same patches, run over the rebuilt tree. Each one finds plugins relative to its
+  # own directory, so a copy of patches/ inside the scratch tree patches the scratch tree.
+  cp -R "$HERE/patches" "$SCRATCH/patches"
+  for p in "$SCRATCH"/patches/*.sh; do
+    [ -f "$p" ] || continue
+    if ! bash "$p" > "$TMP/patch.log" 2>&1; then
+      fail "patches/$(basename "$p")" "failed on the rebuilt tree:"
+      tail -5 "$TMP/patch.log" | sed 's/^/          /'
+    fi
+  done
+  while IFS=$'\t' read -r dir rel path; do
+    if report="$(compare_tree "$SCRATCH/$rel" "$rel" "$path")"; then
+      printf '  ok    %s\n' "$dir"
+      verified=$((verified + 1))
+    else
+      printf '  EDIT  %-40s differs from upstream at its locked commit + patches/\n' "$dir"
+      printf '%s\n' "$report"
+      edited=$((edited + 1))
+    fi
+  done < "$TMP/verify.list"
+fi
+
 echo
-if [ "$APPLY" -eq 1 ]; then
+if [ "$VERIFY" -eq 1 ]; then
+  echo "Verified $verified, differing $edited, skipped $skipped, failed $failed."
+  if [ "$edited" -gt 0 ]; then
+    echo
+    echo "  changed  the file differs from what upstream + patches/ produce"
+    echo "  extra    committed here, but neither upstream nor patches/ makes it"
+    echo "  missing  upstream ships it, but it is not committed here"
+    echo
+    echo "The next re-vendor would silently undo each of these. Keep a local change by"
+    echo "turning it into a script in patches/ (see patches/README.md); otherwise revert it."
+    exit 1
+  fi
+elif [ "$APPLY" -eq 1 ]; then
   echo "Re-vendored $touched, skipped $skipped, failed $failed. Lock file: sources.lock.tsv"
   echo "Review before committing:  git -C \"$HERE\" status --short | head -40"
 else
