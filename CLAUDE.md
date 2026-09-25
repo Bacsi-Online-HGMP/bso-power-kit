@@ -19,8 +19,10 @@ goes to `bso-marketing` instead.
 ## Two things to know before editing
 
 **`tools/` and `plugins/` are vendored third-party code.** Do not translate, reformat or "improve"
-them. Where an upstream file has been edited (see `bootstrap-device/scoring-layer-2.md`), that edit
-is recorded so it can be reconciled on the next upstream update.
+them, and never edit them in place: the weekly re-vendor replaces each directory with upstream's
+tree and deletes anything else. A local change is a script in `patches/` that re-applies it after
+every re-vendor (see `patches/README.md`). CI (`verify-vendored`) rebuilds every vendored directory
+from upstream plus `patches/` and fails on any other difference.
 
 **`skills/` holds first-party skills, not vendored ones.** A skill lands here only when it
 carries no operator-specific rules, claims, disclaimers or brand identity. `vietnamese-anti-slop`
