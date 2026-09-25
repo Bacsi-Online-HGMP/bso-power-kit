@@ -1,6 +1,10 @@
 ---
 name: verification-before-completion
 description: Use when about to claim work is complete, fixed, or passing, before committing or creating PRs - requires running verification commands and confirming output before making any success claims; evidence before assertions always
+license: MIT
+source: https://github.com/obra/superpowers — skills/verification-before-completion
+author: Jesse Vincent
+note: Copied verbatim from the superpowers plugin by revendor.sh. Only this frontmatter was added (patches/add-verification-attribution.sh). Do not edit the body.
 ---
 
 # Verification Before Completion

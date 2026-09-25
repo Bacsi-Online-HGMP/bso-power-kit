@@ -259,6 +259,8 @@ Keeping all of `superpowers` for one skill in fourteen is not worth it, so it wa
 `plugins/verification-before-completion/`: **verbatim, with only frontmatter added for attribution**
 (`license: MIT` · `source` · `author: Jesse Vincent`) plus a `LICENSE`. The body carries a
 do-not-edit line — to update it, copy again from the source rather than patching by hand.
+`revendor.sh` does that copy (its `sources.tsv` row names the one directory to take), and
+`patches/add-verification-attribution.sh` re-adds the frontmatter afterwards.
 
 `superpowers` and `ecc` now live in `plugins-loai.tsv`.
 
@@ -397,8 +399,10 @@ captionless video with no Whisper backend — where the transcript comes back em
 a **public YouTube URL natively**, no download, so it fills exactly those gaps.
 
 **This is an edit into a third party's plugin, recorded here so it can be reconciled the next time
-upstream is updated.** One new file plus two in-place edits (a clean re-vendor drops the new file and
-reverts the edits — re-apply all three):
+upstream is updated.** One new file plus two in-place edits. A clean re-vendor drops the new file and
+reverts the edits — the weekly job of 2026-09-21 did exactly that — so all three now live in
+`patches/mcp-video-analyzer/` and `patches/add-gemini-youtube-fallback.sh` re-applies them after every
+re-vendor:
 
 1. `plugins/mcp-video-analyzer/scripts/gemini_youtube_fallback.py` — **new file.** Stdlib-only script;
    native YouTube → transcript, or `--ask "<q>"` → answer. Resolves the key from `GEMINI_API_KEY` in

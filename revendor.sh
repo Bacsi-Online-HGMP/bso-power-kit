@@ -1,15 +1,21 @@
 #!/usr/bin/env bash
-# Re-vendor plugins from their upstream repositories.
+# Re-vendor plugins and tools from their upstream repositories.
 #
 #   bash revendor.sh                    # check only: report upstream drift, write nothing
-#   bash revendor.sh --apply            # re-vendor every plugin that has a confirmed source
-#   bash revendor.sh --apply ui-ux-pro-max-skill caveman-main    # ...or just these
+#   bash revendor.sh --apply            # re-vendor every row that has a confirmed source
+#   bash revendor.sh --apply ui-ux-pro-max-skill tools/design.md    # ...or just these
 #
 # Reads sources.tsv (the upstream map) and writes sources.lock.tsv (what was actually
-# pulled). Never commits: it leaves the diff for you to review, same as build-standalone.sh.
+# pulled: <dir> <repo> <ref> <date pulled> <commit>, tab separated; check mode writes
+# nothing). Never commits: it leaves the diff for you to review, same
+# as build-standalone.sh. The one thing it stages is an upstream file that .gitignore
+# would otherwise drop -- see force_add_ignored.
+#
+# Exits 1 when any row cannot be resolved or pulled. The weekly workflow depends on
+# that: a plugin that quietly fails to update is how vendored code goes stale unseen.
 #
 # Why this is not build-standalone.sh: that script copies from a local sibling folder and
-# opens with `rm -rf plugins tools`. This one fetches from GitHub, replaces one plugin
+# opens with `rm -rf plugins tools`. This one fetches from GitHub, replaces one vendored
 # directory at a time, and refuses to touch a dirty working tree.
 #
 # bash 3.2 (macOS default) — no mapfile, no associative arrays.
@@ -24,132 +30,280 @@ APPLY=0
 [ "${1:-}" = "--apply" ] && { APPLY=1; shift; }
 ONLY="$*"
 
-command -v gh >/dev/null 2>&1 || { echo "ERROR: gh not found — needed to resolve release tags."; exit 1; }
 [ -f "$MAP" ] || { echo "ERROR: $MAP missing."; exit 1; }
 
 if [ "$APPLY" -eq 1 ] && [ -d "$HERE/.git" ] && [ -n "$(git -C "$HERE" status --porcelain)" ]; then
   echo "REFUSING TO RUN — working tree is dirty."
-  echo "Re-vendoring overwrites plugin directories. Commit or stash first, so the diff is readable."
+  echo "Re-vendoring overwrites vendored directories. Commit or stash first, so the diff is readable."
   exit 1
 fi
 
-# Resolve `latest` to something reproducible, in order: newest release, newest tag,
-# default branch. RESOLVED_VIA records which, because a silent downgrade is the bug
-# this function already caused once.
-#
-# Two lessons are baked in here. First, gh prints its 404 body to stdout as well as
-# failing, so an `||` chain concatenates error JSON onto the fallback -- every call is
-# captured and screened. Second, a branch is NOT an acceptable stand-in for a release:
-# nextlevelbuilder/ui-ux-pro-max-skill ships v2.15.0 while its main branch still reads
-# 2.13.0, so falling through to `main` on a transient API blip pulls OLDER code than
-# the release it was asked for. Releases and tags are each tried twice before a branch.
-# Prints "<ref><TAB><how it was resolved>", empty on total failure. It returns the
-# source rather than setting a global because resolve_ref runs inside $( ), and a
-# global assigned in a subshell never reaches the caller -- which is how the first
-# version reported every resolution as "pinned".
+# Only the GitHub API knows which tag is the latest *release*, so gh is used when it
+# works. It is not required: without it -- not installed, not logged in, or the API
+# unreachable -- `latest` resolves to the newest version tag over plain git, and the
+# report marks each such row `[via tag]`.
+USE_GH=0
+if command -v gh >/dev/null 2>&1 && gh api rate_limit >/dev/null 2>&1; then
+  USE_GH=1
+else
+  echo "NOTE: gh is unavailable, so \`latest\` resolves to the newest version tag, not the latest release."
+  echo
+fi
+
+url() { printf 'https://github.com/%s.git' "$1"; }
+
 _gh_value() {
   out="$(gh api "$1" --jq "$2" 2>/dev/null || true)"
   case "$out" in ''|'{'*|'['*|*'Not Found'*) out="" ;; esac
   printf '%s' "$out"
 }
 
-resolve_ref() {
+# A plain version tag, optionally behind a letter prefix: v2.7.0, skill-v4.3.1, 0.4.0.
+# Anything after the numbers (v2.0.0-rc1) makes it a pre-release, and it never matches.
+VERSION_RE='[0-9]+(\.[0-9]+)*'
+is_version() { printf '%s\n' "$1" | grep -Eq "^([A-Za-z][A-Za-z_-]*)?$VERSION_RE\$"; }
+
+# The prefix a version tag shares with its siblings: skill-v4.3.1 -> skill-v, 0.4.0 -> "".
+tag_family() { printf '%s\n' "$1" | sed -E "s/$VERSION_RE\$//"; }
+
+# True when version tag $1 sorts strictly before $2.
+older_than() { [ "$1" != "$2" ] && [ "$(printf '%s\n%s\n' "$1" "$2" | sort -V | head -1)" = "$1" ]; }
+
+# Every tag name, one per line. Fails -- rather than printing nothing -- when the
+# repository cannot be reached, so "no tags" and "no network" stay distinguishable.
+list_tags() {
+  out="$(git ls-remote --tags --refs "$(url "$1")" 2>/dev/null)" || return 1
+  printf '%s\n' "$out" | sed 's#.*refs/tags/##'
+}
+
+# Newest version tag on stdin whose prefix matches the family regex.
+pick_newest() { grep -E "^$1$VERSION_RE\$" | sort -V | tail -1 || true; }
+
+default_branch() {
+  git ls-remote --symref "$(url "$1")" HEAD 2>/dev/null \
+    | awk '$1 == "ref:" { sub("refs/heads/", "", $2); print $2; exit }' || true
+}
+
+# Resolve `latest` to something reproducible, in order: newest release, newest version
+# tag, default branch. The second field says which, because a silent downgrade is the
+# bug this function already caused once.
+#
+# Three lessons are baked in. First, gh prints its 404 body to stdout as well as failing,
+# so every gh call is captured and screened. Second, a branch is NOT an acceptable
+# stand-in for a release: nextlevelbuilder/ui-ux-pro-max-skill ships v2.15.0 while its
+# main branch still reads 2.13.0, so falling through to `main` because the network
+# blinked pulls OLDER code than the release it was asked for. Releases are tried twice,
+# and when the tag list cannot be fetched at all this gives up rather than fall through.
+# Third, tags are compared as versions within one family: impeccable tags `cli-v*`,
+# `engine-v*`, `ext-v*` and `skill-v*` side by side, and caveman once shipped `bin-v*`
+# next to its `v*` releases. The family comes from the ref locked last time.
+#
+# Prints "<ref><TAB><how it was resolved>", empty on total failure. It returns the source
+# rather than setting a global because resolve_ref runs inside $( ), and a global
+# assigned in a subshell never reaches the caller -- which is how the first version
+# reported every resolution as "pinned".
+resolve_ref() {  # <owner/repo> <ref locked last time, may be empty>
+  if [ "$USE_GH" -eq 1 ]; then
+    for attempt in 1 2; do
+      got="$(_gh_value "repos/$1/releases/latest" .tag_name)"
+      [ -n "$got" ] && { printf '%s\trelease\n' "$got"; return; }
+    done
+  fi
+  reached=0
   for attempt in 1 2; do
-    got="$(_gh_value "repos/$1/releases/latest" .tag_name)"
-    [ -n "$got" ] && { printf '%s\trelease\n' "$got"; return; }
+    if tags="$(list_tags "$1")"; then reached=1; break; fi
   done
-  for attempt in 1 2; do
-    got="$(_gh_value "repos/$1/tags?per_page=1" '.[0].name')"
-    [ -n "$got" ] && { printf '%s\ttag\n' "$got"; return; }
-  done
-  got="$(_gh_value "repos/$1" .default_branch)"
+  [ "$reached" -eq 1 ] || { echo ""; return; }
+
+  family='v?'
+  if is_version "$2"; then family="$(tag_family "$2")"; fi
+  got="$(printf '%s\n' "$tags" | pick_newest "$family")"
+  if [ -z "$got" ] && [ "$family" != 'v?' ]; then
+    got="$(printf '%s\n' "$tags" | pick_newest 'v?')"
+  fi
+  [ -n "$got" ] && { printf '%s\ttag\n' "$got"; return; }
+
+  got="$(default_branch "$1")"
   [ -n "$got" ] && { printf '%s\tbranch - no release or tag found\n' "$got"; return; }
   echo ""
 }
 
-# What the lock file recorded for this plugin last time, if anything.
-locked_ref() {
-  [ -f "$LOCK" ] || { echo ""; return; }
-  awk -F'\t' -v d="$1" '$1==d {print $3; exit}' "$LOCK"
+# The commit a tag or branch points at, peeled through annotated tags. A branch lock is
+# unverifiable without it: `main` last month and `main` today are the same string.
+ref_commit() {  # <owner/repo> <ref>
+  out="$(git ls-remote "$(url "$1")" "refs/tags/$2" "refs/tags/$2^{}" "refs/heads/$2" 2>/dev/null)" || return 1
+  printf '%s\n' "$out" | awk -v t="refs/tags/$2" -v h="refs/heads/$2" '
+    { c[$2] = $1 }
+    END { if ((t "^{}") in c) print c[t "^{}"]; else if (t in c) print c[t]; else if (h in c) print c[h] }'
+}
+
+# One field of this entry's lock row: 3 = ref, 5 = commit. Rows written before commits
+# were recorded have no field 5.
+locked() {  # <dir> <field>
+  [ -f "$LOCK" ] || return 0
+  awk -F'\t' -v d="$1" -v f="$2" '$1 == d { print $f; exit }' "$LOCK"
+}
+
+# A bare name is a plugin; anything with a slash is a path from the repo root (tools/x).
+dest_of() {
+  case "$1" in
+    */*) printf '%s/%s' "$HERE" "$1" ;;
+    *)   printf '%s/plugins/%s' "$HERE" "$1" ;;
+  esac
+}
+
+# Stage upstream files that .gitignore would drop. A vendored repo's own .gitignore can
+# ignore files it nevertheless ships (youtuber ignores `.obsidian/` and still tracks two
+# vaults' worth of it), and this repo's secret globs once hid 36 source files
+# (f386b3f0). Either way `git add -A` leaves them out without a word and the vendored
+# copy is quietly incomplete. Upstream publishes these files, so staging them exposes
+# nothing that is not already public.
+force_add_ignored() {  # <file listing the copied paths, repo-relative, one per line>
+  [ -d "$HERE/.git" ] || return 0
+  hidden="$(git -C "$HERE" check-ignore --stdin < "$1" || true)"
+  [ -n "$hidden" ] || return 0
+  printf '        %s upstream file(s) hidden by .gitignore -- staged with add -f\n' \
+    "$(printf '%s\n' "$hidden" | wc -l | tr -d ' ')"
+  printf '%s\n' "$hidden" | git -C "$HERE" --literal-pathspecs add -f --pathspec-from-file=-
 }
 
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 touched=0
 skipped=0
+failed=0
 : > "$TMP/lock.new"
 
-while IFS=$'\t' read -r dir repo ref note || [ -n "$dir" ]; do
+fail() { printf '  FAIL  %-40s %s\n' "$1" "$2"; failed=$((failed + 1)); }
+
+while IFS=$'\t' read -r dir repo ref path note || [ -n "$dir" ]; do
   case "$dir" in ''|'#'*) continue ;; esac
   [ -n "$ONLY" ] && case " $ONLY " in *" $dir "*) ;; *) continue ;; esac
 
   if [ "$repo" = "-" ] || [ -z "$repo" ]; then
-    printf '  SKIP  %-34s %s\n' "$dir" "${note:-no upstream recorded}"
+    printf '  SKIP  %-40s %s\n' "$dir" "${note:-no upstream recorded}"
     skipped=$((skipped + 1))
     continue
   fi
+  case "$path" in ''|'-') path="." ;; esac
+
+  have="$(locked "$dir" 3)"
+  have_commit="$(locked "$dir" 5)"
 
   want="$ref"
   via=""
   if [ "$ref" = "latest" ]; then
-    resolved="$(resolve_ref "$repo")"
+    resolved="$(resolve_ref "$repo" "$have")"
     want="$(printf '%s' "$resolved" | cut -f1)"
     how="$(printf '%s' "$resolved" | cut -f2)"
-    # Anything but a release is worth saying out loud: a tag may be a pre-release,
-    # and a branch is a moving target that can be older than the newest release.
+    # Anything but a release is worth saying out loud: a tag may never have been
+    # released, and a branch is a moving target that can be older than the newest release.
     [ "$how" = "release" ] || via=" [via ${how:-unknown}]"
   fi
   if [ -z "$want" ]; then
-    printf '  FAIL  %-34s cannot reach %s\n' "$dir" "$repo"
-    skipped=$((skipped + 1))
+    fail "$dir" "cannot reach $repo"
     continue
   fi
 
-  have="$(locked_ref "$dir")"
+  # Never step backwards. Without gh, `latest` is the newest tag, which can run ahead of
+  # the latest release; the next run with gh would otherwise "update" the plugin back
+  # down to that release. Keep what is vendored and say so.
+  if [ -n "$have" ] && is_version "$have" && is_version "$want" \
+     && [ "$(tag_family "$have")" = "$(tag_family "$want")" ] && older_than "$want" "$have"; then
+    printf '  ahead %-40s vendored=%s upstream=%s%s -- kept\n' "$dir" "$have" "$want" "$via"
+    continue
+  fi
+
   if [ "$APPLY" -eq 0 ]; then
-    if [ "$have" = "$want" ]; then printf '  ok    %-34s %s%s\n' "$dir" "$want" "$via"
-    else printf '  DRIFT %-34s vendored=%s upstream=%s%s\n' "$dir" "${have:-unrecorded}" "$want" "$via"; fi
-    # Only --apply may write a row. Recording `$want` here would claim a version
-    # nobody pulled, and the next check would then report a stale plugin as `ok`.
-    [ -n "$have" ] && printf '%s\t%s\t%s\t%s\n' "$dir" "$repo" "$have" "$TODAY" >> "$TMP/lock.new"
+    if [ "$have" != "$want" ]; then
+      printf '  DRIFT %-40s vendored=%s upstream=%s%s\n' "$dir" "${have:-unrecorded}" "$want" "$via"
+      continue
+    fi
+    # Same ref name. A tag that has not moved is current; a branch can only be judged by
+    # its commit, and a lock row written before commits were recorded cannot be judged.
+    if ! now="$(ref_commit "$repo" "$want")" || [ -z "$now" ]; then
+      fail "$dir" "cannot resolve $want in $repo"
+      continue
+    fi
+    if [ -n "$have_commit" ] && [ "$have_commit" != "$now" ]; then
+      printf '  DRIFT %-40s %s moved: vendored=%.10s upstream=%.10s%s\n' "$dir" "$want" "$have_commit" "$now" "$via"
+    elif [ -z "$have_commit" ] && ! is_version "$want"; then
+      printf '  DRIFT %-40s %s, vendored commit not recorded%s\n' "$dir" "$want" "$via"
+    else
+      printf '  ok    %-40s %s%s\n' "$dir" "$want" "$via"
+    fi
     continue
   fi
 
-  [ -d "$HERE/plugins/$dir" ] || { printf '  FAIL  %-34s not in plugins/\n' "$dir"; skipped=$((skipped + 1)); continue; }
-
-  printf '  pull  %-34s %s@%s%s\n' "$dir" "$repo" "$want" "$via"
-  rm -rf "$TMP/$dir"
-  if ! git clone --quiet --depth 1 --branch "$want" "https://github.com/$repo.git" "$TMP/$dir" 2>/dev/null; then
-    printf '  FAIL  %-34s clone failed (ref %s)\n' "$dir" "$want"
-    skipped=$((skipped + 1))
+  dest="$(dest_of "$dir")"
+  rel="${dest#"$HERE"/}"
+  if [ ! -d "$dest" ]; then
+    fail "$dir" "$rel does not exist"
     continue
   fi
-  rm -rf "$TMP/$dir/.git"
-  rsync -a --delete "$TMP/$dir/" "$HERE/plugins/$dir/"
-  printf '%s\t%s\t%s\t%s\n' "$dir" "$repo" "$want" "$TODAY" >> "$TMP/lock.new"
+
+  printf '  pull  %-40s %s@%s%s\n' "$dir" "$repo" "$want" "$via"
+  src="$TMP/src"
+  rm -rf "$src"
+  if ! git clone --quiet --depth 1 --branch "$want" "$(url "$repo")" "$src" 2>/dev/null; then
+    fail "$dir" "clone failed (ref $want)"
+    continue
+  fi
+  commit="$(git -C "$src" rev-parse HEAD)"
+
+  if [ "$path" = "." ]; then
+    git -C "$src" -c core.quotePath=false ls-files > "$TMP/files"
+    rm -rf "$src/.git"
+    rsync -a --delete "$src/" "$dest/"
+  else
+    # One directory of a larger repository. It lands at the same relative path under
+    # $dest; everything else in $dest (its plugin.json, say) is ours and left alone.
+    if [ ! -d "$src/$path" ]; then
+      fail "$dir" "no $path in $repo@$want"
+      continue
+    fi
+    git -C "$src" -c core.quotePath=false ls-files -- "$path" > "$TMP/files"
+    mkdir -p "$dest/$path"
+    rsync -a --delete "$src/$path/" "$dest/$path/"
+    # The licence travels with any piece of the work.
+    for f in "$src"/LICEN[CS]E* "$src"/COPYING* "$src"/NOTICE*; do
+      [ -f "$f" ] || continue
+      cp "$f" "$dest/"
+      basename "$f" >> "$TMP/files"
+    done
+  fi
+  sed "s#^#$rel/#" "$TMP/files" > "$TMP/files.rel"
+  force_add_ignored "$TMP/files.rel"
+
+  printf '%s\t%s\t%s\t%s\t%s\n' "$dir" "$repo" "$want" "$TODAY" "$commit" >> "$TMP/lock.new"
   touched=$((touched + 1))
 done < "$MAP"
 
 if [ "$APPLY" -eq 1 ] && [ "$touched" -gt 0 ]; then
-  # Re-vendoring restores upstream's broken reference paths — same reason
-  # build-standalone.sh runs these. Both are idempotent.
+  # Written before the patches run, so the lock matches the tree even if a patch fails.
+  # Rows for entries this run did not pull keep their old line.
+  if [ -f "$LOCK" ]; then
+    awk -F'\t' 'NR==FNR {seen[$1]=1; next} !($1 in seen)' "$TMP/lock.new" "$LOCK" >> "$TMP/lock.new"
+  fi
+  LC_ALL=C sort -o "$LOCK" "$TMP/lock.new"
+
+  # Re-vendoring restores upstream's broken reference paths and drops our local
+  # additions -- same reason build-standalone.sh runs these. All are idempotent.
   echo; echo "Applying vendor patches"
   for p in "$HERE"/patches/*.sh; do [ -f "$p" ] && bash "$p"; done
   echo "Checking skill reference paths"
   [ -f "$HERE/check-skill-refs.sh" ] && bash "$HERE/check-skill-refs.sh"
 fi
 
-# Merge: rows for plugins this run did not visit keep their old entry.
-if [ -f "$LOCK" ]; then
-  awk -F'\t' 'NR==FNR {seen[$1]=1; next} !($1 in seen)' "$TMP/lock.new" "$LOCK" >> "$TMP/lock.new"
-fi
-sort -o "$LOCK" "$TMP/lock.new"
-
 echo
 if [ "$APPLY" -eq 1 ]; then
-  echo "Re-vendored $touched, skipped $skipped. Lock file: sources.lock.tsv"
+  echo "Re-vendored $touched, skipped $skipped, failed $failed. Lock file: sources.lock.tsv"
   echo "Review before committing:  git -C \"$HERE\" status --short | head -40"
 else
   echo "Checked. $skipped without a confirmed upstream — fix those rows in sources.tsv."
   echo "To pull:  bash revendor.sh --apply"
+fi
+if [ "$failed" -gt 0 ]; then
+  echo "$failed row(s) failed -- see FAIL above. Nothing that failed was changed."
+  exit 1
 fi

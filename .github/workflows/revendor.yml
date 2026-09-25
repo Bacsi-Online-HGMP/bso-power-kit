@@ -1,11 +1,14 @@
 name: revendor
 
-# Weekly upstream drift check for the vendored plugins.
+# Weekly upstream drift check for everything vendored under plugins/ and tools/.
 #
-# Vendored plugins are snapshots: an upstream fix never arrives on its own, and
+# Vendored code is a snapshot: an upstream fix never arrives on its own, and
 # nobody notices a plugin is two releases behind until they read its code. This job
-# runs revendor.sh in check mode every Monday, and only when something has actually
-# drifted does it pull, apply the vendor patches, and open a pull request.
+# runs revendor.sh in check mode every Monday. When something has drifted it pulls
+# exactly those entries, applies the vendor patches, and opens a pull request.
+#
+# A row that cannot be checked or pulled fails the run. The job used to skip it and
+# go green, which is how a plugin can sit behind for weeks with nobody told.
 #
 # A PR rather than a commit, on purpose. Re-vendoring replaces whole plugin
 # directories -- that diff gets reviewed, same rule as running the script by hand.
@@ -19,7 +22,7 @@ on:
   workflow_dispatch:
     inputs:
       plugins:
-        description: 'Plugin dirs to re-vendor, space separated. Empty = every drifted plugin.'
+        description: 'Entries to re-vendor (sources.tsv first column), space separated. Empty = every drifted one.'
         required: false
         default: ''
 
@@ -46,22 +49,21 @@ jobs:
         run: |
           set -o pipefail
           bash revendor.sh | tee "$RUNNER_TEMP/drift.txt"
-          # Check mode stamps today's date into every sources.lock.tsv row it keeps, so
-          # the tree is now dirty -- and --apply refuses to run on a dirty tree. Put the
-          # lock file back; only the pull below is allowed to rewrite it.
-          git checkout -- sources.lock.tsv
-          if [ -n "$PLUGINS" ] || grep -q '^  DRIFT' "$RUNNER_TEMP/drift.txt"; then
-            echo 'run=true' >> "$GITHUB_OUTPUT"
-          fi
+          # Pull only what drifted, so the pull request carries nothing else. A manual
+          # run can name entries instead.
+          drifted="$(awk '$1 == "DRIFT" {print $2}' "$RUNNER_TEMP/drift.txt" | tr '\n' ' ')"
+          echo "targets=${PLUGINS:-$drifted}" >> "$GITHUB_OUTPUT"
 
       # No continue-on-error here: a failed pull, a failed vendor patch, or a broken
       # skill reference must not become a pull request. Fix it, then re-run.
       - name: Re-vendor
-        if: steps.check.outputs.run == 'true'
-        run: bash revendor.sh --apply $PLUGINS
+        if: steps.check.outputs.targets != ''
+        env:
+          TARGETS: ${{ steps.check.outputs.targets }}
+        run: bash revendor.sh --apply $TARGETS
 
       - name: Open or update the pull request
-        if: steps.check.outputs.run == 'true'
+        if: steps.check.outputs.targets != ''
         run: |
           if [ -z "$(git status --porcelain)" ]; then
             echo "Upstream drifted but the pull changed nothing tracked. No PR."
