@@ -13,6 +13,7 @@ description: >-
 > **Language note (English).** This skill's body stays in Vietnamese deliberately: it is a set of
 > rules *about writing Vietnamese prose*, and its examples of good and bad Vietnamese are the
 > content. Translated, it would teach nothing. Headings are in English so the file can be navigated.
+> Its output is Vietnamese, headings included: the template is under *Returning the result*.
 >
 > **What this skill does:** it edits or audits Vietnamese copy to strip out cliché and machine-sounding
 > phrasing. It complements `no-ai-slop` and `stop-slop`, which only catch English tells. It does NOT
@@ -128,14 +129,16 @@ trước cho văn đẹp; `supplement-compliance` chạy sau và có quyền ph�
 ## Returning the result
 
 ```
-## The revised version
+## Bản đã sửa
 <toàn văn>
 
-## What changed
+## Đã đổi gì
 - <lỗi> — "<trích câu gốc>" → "<câu mới>"
 
-## Needs a human decision
+## Cần người quyết định
 - <chỗ đụng claim / chỗ không rõ ý, không tự sửa>
 ```
+
+Khi trả bản sửa, luôn có đủ ba mục, đúng thứ tự trên. Không có gì cần người quyết định thì ghi *Không có.*
 
 Không tự bịa số liệu, ví dụ, trích dẫn. Không rõ thì hỏi.

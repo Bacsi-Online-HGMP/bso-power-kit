@@ -1,4 +1,4 @@
 ---
 type: regex
-pattern: '(## The revised version|## Bản đã sửa)[\s\S]*(## What changed|## Đã đổi gì)'
+pattern: '## Bản đã sửa[\s\S]*## Đã đổi gì[\s\S]*## Cần người quyết định'
 ---
