@@ -33,7 +33,7 @@ Env:
     GEMINI_MODEL     optional; the cascade's PRIMARY model (default
                      "gemini-flash-latest"). The built-in fallbacks follow it.
     GEMINI_MODELS    optional; comma-separated list that REPLACES the whole
-                     cascade, in order (e.g. "gemini-3.5-flash,gemini-2.5-flash").
+                     cascade, in order (e.g. "gemini-3.7-flash,gemini-3.5-flash").
 
 Stdlib only — no pip install. Exits non-zero (with a reason on stderr) on any
 failure so the caller can tell "Gemini could not help" from a real transcript.
@@ -49,7 +49,7 @@ import urllib.error
 import urllib.request
 
 # Primary is the floating "latest" alias so it auto-tracks Google's newest Flash
-# (currently gemini-3.7-flash) without a code edit.
+# (gemini-3.8-flash since 2026-09-02) without a code edit.
 DEFAULT_MODEL = "gemini-flash-latest"
 
 # CASCADE of DISTINCT video-capable models, best -> lite. Free-tier RPM/RPD limits
@@ -61,14 +61,16 @@ DEFAULT_MODEL = "gemini-flash-latest"
 # This list is deliberately version-pinned (the whole point is distinct buckets);
 # refresh it when Google adds/removes Flash models, or override per-run with the
 # GEMINI_MODELS env var (comma-separated) — no code edit needed.
+# Left out as well: gemini-2.5-flash (closed to new users, retiring in October
+# 2026) and gemini-3.1-flash-lite-preview (shut down 2026-05-25). gemini-3.7-flash
+# was added on 2026-09-26 from its model card (video input), not a live call.
 FALLBACK_MODELS = (
+    "gemini-3.7-flash",
     "gemini-3.6-flash",
     "gemini-3.5-flash",
     "gemini-3-flash-preview",
-    "gemini-2.5-flash",
     "gemini-3.5-flash-lite",
     "gemini-3.1-flash-lite",
-    "gemini-3.1-flash-lite-preview",
 )
 
 

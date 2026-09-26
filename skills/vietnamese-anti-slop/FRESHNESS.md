@@ -17,9 +17,21 @@ Last reviewed: 2026-09-25
   and note tells the catalogue misses. Propose additions in the pull request; Vietnamese
   examples are written by a person, not by the check.
 
-Observed on 2026-09-25 (Claude Code 2.1.282, default model): the skill describes its
-output twice, in Vietnamese under *Two modes* (*Đã đổi gì*) and in English in the
-*Returning the result* template. The model followed the Vietnamese one (`## Bản đã
-sửa`, `## Đã đổi gì`) and left out `## Needs a human decision` when nothing needed one.
-The evals accept either language. Decide which headings the skill should ask for and
-make both places say the same.
+Observed on 2026-09-25 (Claude Code 2.1.282, default model): the skill described its
+output twice, in Vietnamese under *Two modes* (*Đã đổi gì*) and with English headings in
+the *Returning the result* template. The model followed the Vietnamese one and left out
+the last section when nothing needed a decision.
+
+Fixed on 2026-09-26: the template now uses the Vietnamese headings (`## Bản đã sửa`,
+`## Đã đổi gì`, `## Cần người quyết định`), which match *Two modes* without touching its
+Vietnamese, and an edit always carries all three. The grader `three-sections-in-order`
+requires them; `edits-caption-cliches` passed 7 of 7 runs.
+
+Observed on 2026-09-26, not fixed: on product-claim language (`stops-at-claim-language`)
+the model is inconsistent. In 3 of 8 runs it stopped and reported, as *The compliance
+boundary* asks. In the other 5 it wrote its own replacement wording ("hỗ trợ cải thiện
+giấc ngủ ... hiệu quả rõ rệt"), which is a new, unapproved claim, even while it flags the
+banned words and defers to compliance. This is a rule about what may be said, so the fix
+is for a person to write: one sentence under *The compliance boundary* saying that a
+sentence with a banned claim word is left as it is in the edit and listed under
+`## Cần người quyết định`, with no replacement wording.
