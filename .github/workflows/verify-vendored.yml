@@ -1,0 +1,41 @@
+name: verify-vendored
+
+# Fails when vendored code differs from what revendor.sh would rebuild: each upstream
+# at the exact commit in sources.lock.tsv, plus patches/.
+#
+# Any other difference is a hand edit, and the next re-vendor deletes it without a
+# word. That is how the Gemini fallback in mcp-video-analyzer was lost on 2026-09-21.
+# A local change to a vendored plugin belongs in patches/, where every re-vendor
+# re-applies it (see patches/README.md).
+#
+# Rebuilding all 33 entries takes about a minute, so this runs only when vendored code,
+# the patches, or the source map change.
+
+on:
+  pull_request:
+    paths:
+      - 'plugins/**'
+      - 'tools/**'
+      - 'patches/**'
+      - 'sources.tsv'
+      - 'sources.lock.tsv'
+      - 'revendor.sh'
+  push:
+    branches: [main]
+    paths:
+      - 'plugins/**'
+      - 'tools/**'
+      - 'patches/**'
+      - 'sources.tsv'
+      - 'sources.lock.tsv'
+      - 'revendor.sh'
+  workflow_dispatch:
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Vendored code is upstream plus patches/, nothing else
+        run: bash revendor.sh --verify

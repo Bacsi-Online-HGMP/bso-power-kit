@@ -105,8 +105,10 @@ detector defaults to `./plugins ./tools`). Run them from the repo root.
 - `scripts/fix-skill-ref-paths.sh [path]` — repair broken citations by the rules
   above. Idempotent.
 - `scripts/fix-plugin-manifests.sh [path]` — fix `plugin.json` shape errors that
-  fail validation: `author` as a string, and `skills` entries pointing at a
-  `SKILL.md` file rather than the directory containing it. Idempotent.
+  fail validation: `author` as a string, `skills` entries pointing at a
+  `SKILL.md` file rather than the directory containing it, and relative
+  `agents`/`commands`/`skills` entries missing their leading `./` (the validator
+  reports those only as `Invalid input`). Idempotent.
 
 Read [references/hardening.md](references/hardening.md) before wiring the CI
 workflow or documenting the divergence from upstream — vendored plugins that

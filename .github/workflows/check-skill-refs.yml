@@ -20,6 +20,9 @@ jobs:
       - name: Skill reference paths resolve
         run: bash check-skill-refs.sh --strict
 
+      - name: First-party skills say what can go stale
+        run: bash check-freshness.sh
+
       - name: Marketplace manifest is valid and complete
         run: |
           python3 - <<'PY'
