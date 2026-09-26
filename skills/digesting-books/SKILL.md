@@ -1,6 +1,6 @@
 ---
 name: digesting-books
-description: Use when a book, textbook, guideline, thesis, long report or other long PDF, EPUB or DOCX has to be read and kept as reusable notes, when the user asks to digest, ingest, load or take notes on a book or reference material, or when later work needs a long source that was read in an earlier session.
+description: Use when a book, textbook, guideline, thesis, long report or other long PDF, EPUB or DOCX has to be read and kept as reusable notes, or when the user asks to digest, ingest, load or take notes on a book or reference material. Also use it for every question about a source digested earlier ("from my ... digest", "in my notes on ...") and whenever later work needs a long source whose notes are under `digests/notes/`.
 ---
 
 # Digesting books
@@ -62,8 +62,10 @@ read-only, such as `sources/`.
 
 ## Later work
 
-Read `00-overview.md`, then only the notes files that the task needs. Open a part file in
-`digests/text/` only to check a quote. Do not read the whole book again.
+Read `00-overview.md` first, even when a file name already points at the answer: it says where
+each key number is and what the source does not contain, so the answer stays within the book.
+Then read only the notes files that the task needs. Open a part file in `digests/text/` only to
+check a quote. Do not read the whole book again.
 
 ## Common mistakes
 
