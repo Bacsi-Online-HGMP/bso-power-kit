@@ -164,3 +164,68 @@ installed. The binary's `CLI_VERSION` moves from `3.6.0` to `4.0.0` with the
 CLI 4.0.0 release; it is what the binary prints when run directly.
 
 - `cli-version`.
+
+## Recorded 2026-09-11: comp regions no longer include neighbouring pixels
+
+The `comp-diff-no-spec` golden now measures the automatic bands at their actual
+bounds rather than enlarging bands under 48px. Reviewed changes are confined to
+regional scores and ink boxes: the second band's overall is 0.6755 (was 0.6951),
+the fourth is 1.0 (was 0.9468), and narrow-band ink boxes use the corrected crop
+coordinates. Whole-frame scores, verdicts, region definitions, exit status, and
+stderr are unchanged. The golden was updated to enforce these exact results;
+this is not an open-ended accepted delta. Frozen function call vectors remain
+unchanged. The Rust narrow-region regression independently checks that changing
+only neighbouring pixels leaves the measured crop identical.
+
+## Recorded 2026-09-17: reference-bound typography reuse
+
+- `comp-spec-regions`: the written spec adds `compSha256`, a SHA-256 of decoded dimensions and pixels. This binds retained typography to the exact reference when regions are remeasured. Structured comparison verified that only this field changed; stdout, stderr, exit status, regions, palettes and bounds are identical. The failing/passing regression separately verifies preservation and invalidation.
+
+## Recorded 2026-09-17: exact reference bounds and non-destructive plate candidates
+
+Reviewed the three CLI differences before updating their goldens:
+`comp-spec-grid` appends coordinate guidance, `comp-spec-usage` explains grid,
+normalized box and exact pixelBox units, and `build-phase-usage` advertises the
+read-only candidate check. Only those stdout strings changed. Existing image
+files, measurements, exit codes and frozen function vectors were not replaced.
+The plate gate applies reference UI exclusions symmetrically after alignment;
+regressions separately verify hidden-pixel invariance, visible missing-art
+rejection, raw comp-copy rejection and unchanged candidate-check state.
+
+## Recorded 2026-09-18: draft region authoring and source binding
+
+`comp-spec-usage` now describes --auto as a draft writer. In
+`comp-spec-regions`, the only file-content addition is regionsSource with the
+input path and fixture-derived SHA-256; all existing fields and measurements
+were compared unchanged. No frozen function vectors changed. New Rust
+regressions verify automatic drafts do not overwrite specs or existing drafts,
+cannot be submitted unchanged, and a rejected/missing region-source revision
+cannot advance the build using the last successful measurements.
+
+## Recorded 2026-09-18: read-only map inspection
+
+`comp-spec-usage` adds one help line for --inspect-map, --out-dir and --json.
+Only that stdout line was edited; existing measurements and frozen function
+vectors remain unchanged. Rust regressions cover consolidated invalid-input
+findings, fully masked references, container and child masks, preservation of
+review group members, reference PNG provenance, HTML escaping, and refusal to
+overwrite an existing report. Inspection does not change specs or build state.
+
+## Recorded 2026-09-24: build session identity and nested italic headings
+
+`build-phase-start-status`: the written state adds `"sessionId": "oracle-build"`
+after `finish`, from the new `--session-id` start option. No other state field,
+stdout, stderr or exit status changed. `build-phase-usage` advertises
+`[--artifact <entry file>] [--session-id <id>]` on start and the new
+`completion [--session-id <id>]` verb; only those usage strings changed.
+
+The italic-serif-display correction adds exactly one finding per golden that
+scans `tests/fixtures/antipatterns/italic-serif-display.html`: `italic serif h1
+(fraunces) at 72px "Inline Em Inside Roman"`, a roman h1 whose visible text is
+an `<em>` set in the same serif. The fixture moved this case from should-pass to
+should-flag. `detect-fixture-{json,text}-italic-serif-display-html` go from 7 to
+8 findings, and the aggregate corpus goldens (`detect-dir-*-all-fixtures`,
+`detect-no-advisory-*`, `detect-scope-both`, `detect-scope-type`) go from 419 to
+420. Every other finding, count, snippet and exit status is unchanged. Hidden
+heading descendants and sans-serif or small italics stay exempt; Rust
+regressions in `crates/html/tests/italic_heading.rs` pin both sides.

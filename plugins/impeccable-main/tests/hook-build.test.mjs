@@ -17,6 +17,7 @@ import {
   buildCursorHooksManifest,
   buildGitHubHooksManifest,
   buildGrokHooksManifest,
+  buildGeminiHooksManifest,
   hooksJsonFor,
 } from '../scripts/lib/transformers/hooks.js';
 
@@ -66,6 +67,19 @@ function manifestCommands(manifest) {
 }
 
 describe('hook manifest builders', () => {
+  it('builds Gemini native session and completion hooks with millisecond timeouts', () => {
+    const manifest = buildGeminiHooksManifest();
+    assert.deepEqual(Object.keys(manifest.hooks), ['BeforeTool', 'AfterAgent']);
+    assert.equal(manifest.hooks.BeforeTool[0].matcher, '^run_shell_command$');
+    assert.equal(manifest.hooks.BeforeTool[0].hooks[0].timeout, 5000);
+    assert.equal(manifest.hooks.AfterAgent[0].hooks[0].timeout, 30000);
+    // Gemini substitutes $GEMINI_PROJECT_DIR with a shell-escaped path before
+    // bash runs the command, so the token is bare, not double-quoted.
+    const launcher = '$GEMINI_PROJECT_DIR/.gemini/skills/impeccable/scripts/impeccable';
+    for (const event of ['BeforeTool', 'AfterAgent']) {
+      assert.equal(manifest.hooks[event][0].hooks[0].command, `[ ! -f ${launcher} ] || ${launcher} hook`);
+    }
+  });
   it('builds Claude project settings for the real detector hook', () => {
     const manifest = buildClaudeSettingsManifest();
     const group = manifest.hooks.PostToolUse[0];
@@ -79,7 +93,8 @@ describe('hook manifest builders', () => {
     expectCommand(handler.command, '.claude/skills/impeccable/scripts');
     assert.ok(handler.command.includes('${CLAUDE_PROJECT_DIR}'));
     assert.equal(handler.args, undefined);
-    assert.equal(manifest.hooks.SessionStart, undefined);
+    expectCommand(manifest.hooks.SessionStart[0].hooks[0].command, '.claude/skills/impeccable/scripts');
+    assert.equal(manifest.hooks.SessionStart[0].hooks[0].timeout, 5);
 
     // Stop deep pass: same script, no matcher, longer budget.
     const stop = manifest.hooks.Stop[0].hooks[0];
@@ -245,7 +260,8 @@ describe('hook manifest builders', () => {
     assert.ok(hooksJsonFor('cursor'));
     assert.ok(hooksJsonFor('github'));
     assert.ok(hooksJsonFor('grok'));
-    assert.equal(hooksJsonFor('gemini'), null);
+    assert.ok(hooksJsonFor('gemini'));
+    assert.equal(hooksJsonFor('unrecognized'), null);
   });
 });
 

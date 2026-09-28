@@ -185,7 +185,7 @@ pub fn step_copy_ignored(
                         .strip_prefix(&source_path)
                         .unwrap_or(src_entry.as_path());
                     serde_json::json!({
-                        "path": relative,
+                        "path": relative.to_string_lossy(),
                         "kind": if *is_dir { "dir" } else { "file" },
                     })
                 })
@@ -303,7 +303,7 @@ pub fn step_copy_ignored(
                     .strip_prefix(&source_path)
                     .unwrap_or(src_entry.as_path());
                 serde_json::json!({
-                    "path": relative,
+                    "path": relative.to_string_lossy(),
                     "kind": if *is_dir { "dir" } else { "file" },
                 })
             })
