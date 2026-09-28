@@ -12,6 +12,7 @@ use impeccable_comp::raster::{self as r, Image};
 use once_cell::sync::Lazy;
 use regex::Regex;
 use serde_json::{json, Map, Value};
+use sha2::{Digest, Sha256};
 
 use crate::util::{self, arg, arg_or, flag, num, r4, r4f, round};
 
@@ -24,10 +25,10 @@ const COLS: &[u8] = b"ABCDEFGHIJ";
 pub const MAX_CODE_REGION_AREA: f64 = 0.25;
 pub const EDGE_CONTACT_MIN: f64 = 0.35;
 
-fn is_raster_kind(k: &str) -> bool {
+pub(crate) fn is_raster_kind(k: &str) -> bool {
     matches!(k, "plate" | "image" | "texture")
 }
-fn is_kind(k: &str) -> bool {
+pub(crate) fn is_kind(k: &str) -> bool {
     matches!(k, "plate" | "image" | "texture" | "text" | "control" | "chrome" | "band")
 }
 
@@ -339,6 +340,29 @@ pub fn snap_box_to_ink(comp: &Image, boxf: (f64, f64, f64, f64), ground: f64) ->
     ))
 }
 
+/// Automatic narrowing must not discard separate words/lines from a compound
+/// control. The original largest-cluster helper remains available to explicit
+/// callers; region measurement uses this conservative wrapper.
+fn snap_preserving_ink(comp: &Image, boxf: (f64, f64, f64, f64), ground: f64) -> Option<(f64, f64, f64, f64)> {
+    let snapped = snap_box_to_ink(comp, boxf, ground)?;
+    let original = r::clamp_rect(comp, boxf.0 * comp.width as f64, boxf.1 * comp.height as f64,
+        boxf.2 * comp.width as f64, boxf.3 * comp.height as f64);
+    let keep = r::clamp_rect(comp, snapped.0 * comp.width as f64, snapped.1 * comp.height as f64,
+        snapped.2 * comp.width as f64, snapped.3 * comp.height as f64);
+    let (mut total, mut lost) = (0u64, 0u64);
+    for y in original.y..original.y + original.h {
+        for x in original.x..original.x + original.w {
+            if (gray_no_alpha(&comp.data, (y * comp.width + x) * 4) - ground).abs() > 60. {
+                total += 1;
+                if x < keep.x || x >= keep.x + keep.w || y < keep.y || y >= keep.y + keep.h { lost += 1; }
+            }
+        }
+    }
+    // At most incidental noise may disappear. Preserve the supplied span when
+    // the algorithm cannot distinguish a second label from unrelated content.
+    (lost * 100 <= total * 5).then_some(snapped)
+}
+
 /// JS: uncoveredInkCells(comp, regions).
 fn uncovered_ink_cells(comp: &Image, regions: &[Value]) -> Vec<String> {
     let grid = m::detail_grid(comp, 10, 10, 512);
@@ -403,10 +427,10 @@ pub fn measure_regions(comp: &Image, regions_input: &Value, comp_path: &str) -> 
         let raw_kind = raw.get("kind").and_then(Value::as_str);
         let kind = match raw_kind {
             Some(k) if is_kind(k) => k.to_string(),
-            _ => "band".to_string(),
+            _ => return Err(format!("region {id} has kind {}; use one of plate, image, texture, text, control, chrome, band", raw.get("kind").map_or("(missing)".into(), Value::to_string))),
         };
         let note = raw.get("note").and_then(Value::as_str);
-        if kind != "band" && !note.map(|n| n.trim().chars().count() >= 8).unwrap_or(false) {
+        if !note.map(|n| n.trim().chars().count() >= 8).unwrap_or(false) {
             return Err(format!(
                 "region {id} has no note. Say in a few words what the comp shows there (the element, its material, its role): the note drives the plate prompt and the gate's messages, and a drawing named as chrome is only caught by what its note says."
             ));
@@ -432,19 +456,35 @@ pub fn measure_regions(comp: &Image, regions_input: &Value, comp_path: &str) -> 
             }
         }
         // box: explicit raw.box (x is number) else gridToBox(raw.grid)
-        let has_box = raw
+        let has_normalized_box = raw
             .get("box")
             .and_then(|b| b.get("x"))
             .map(|x| x.is_number())
             .unwrap_or(false);
-        let mut boxf: (f64, f64, f64, f64) = if has_box {
-            let b = raw.get("box").unwrap();
-            (
-                b.get("x").and_then(Value::as_f64).unwrap_or(0.0),
-                b.get("y").and_then(Value::as_f64).unwrap_or(0.0),
-                b.get("w").and_then(Value::as_f64).unwrap_or(0.0),
-                b.get("h").and_then(Value::as_f64).unwrap_or(0.0),
-            )
+        let has_pixel_box = raw.get("pixelBox").is_some();
+        let has_box = has_normalized_box || has_pixel_box;
+        let mut boxf: (f64, f64, f64, f64) = if has_pixel_box {
+            if raw.get("box").is_some() || raw.get("grid").is_some() {
+                return Err(format!("region {id}: use pixelBox, box, or grid, not multiple coordinate formats"));
+            }
+            let b = &raw["pixelBox"];
+            let coords: Option<Vec<f64>> = ["x", "y", "w", "h"].iter().map(|key| b[*key].as_f64()).collect();
+            let Some(v) = coords else { return Err(format!("region {id}: pixelBox requires numeric x, y, w, h in original comp pixels")); };
+            if v.iter().any(|v| !v.is_finite() || v.fract() != 0.) || v[0] < 0. || v[1] < 0.
+                || v[2] <= 0. || v[3] <= 0. || v[0] + v[2] > w || v[1] + v[3] > h {
+                return Err(format!("region {id}: pixelBox must use whole pixels within the {w}x{h} comp with positive width and height"));
+            }
+            (v[0] / w, v[1] / h, v[2] / w, v[3] / h)
+        } else if has_normalized_box {
+            let b = &raw["box"];
+            let coords: Option<Vec<f64>> = ["x", "y", "w", "h"].iter().map(|key| b[*key].as_f64()).collect();
+            // Same geometry contract as pixelBox and --inspect-map: a region is at least one real comp pixel inside the frame.
+            match coords {
+                Some(v) if v.iter().all(|v| v.is_finite()) && v[0] >= 0. && v[1] >= 0. && v[2] > 0. && v[3] > 0.
+                    && v[0] + v[2] <= 1. + 1e-9 && v[1] + v[3] <= 1. + 1e-9
+                    && round(v[2] * w) >= 1. && round(v[3] * h) >= 1. => (v[0], v[1], v[2], v[3]),
+                _ => return Err(format!("region {id}: box must use numeric x, y, w, h within 0..1 of the comp, with positive size of at least one comp pixel")),
+            }
         } else {
             let grid = raw.get("grid").and_then(Value::as_str).unwrap_or("");
             grid_to_box(grid)?
@@ -453,7 +493,7 @@ pub fn measure_regions(comp: &Image, regions_input: &Value, comp_path: &str) -> 
         let grid_str = raw.get("grid").and_then(Value::as_str);
         let snap_not_false = raw.get("snap").and_then(Value::as_bool) != Some(false);
         if !has_box && grid_str.is_some() && (kind == "text" || kind == "control") && snap_not_false {
-            if let Some(snapped) = snap_box_to_ink(comp, boxf, page_ground) {
+            if let Some(snapped) = snap_preserving_ink(comp, boxf, page_ground) {
                 cover_box = Some(boxf);
                 boxf = snapped;
             }
@@ -510,6 +550,9 @@ pub fn measure_regions(comp: &Image, regions_input: &Value, comp_path: &str) -> 
         }
         if raw.get("snap").and_then(Value::as_bool) == Some(false) {
             obj.insert("snap".into(), json!(false));
+        }
+        for key in ["parentId", "reviewGroup"] {
+            if let Some(value) = raw.get(key) { obj.insert(key.into(), value.clone()); }
         }
         if let Some(cb) = cover_box {
             obj.insert("coverBox".into(), box_json(cb));
@@ -604,11 +647,49 @@ fn hex_to_rgb(hex: &str) -> Option<[u8; 3]> {
     ])
 }
 
-/// JS: plateReference(comp, spec, region).
+/// The exclusions are evidence about the reference, not an asset verdict.
+/// Count the union of rasterized rectangles, including already-ground pixels.
+pub struct PlateReference {
+    pub image: Image,
+    pub excluded_pixels: usize,
+    pub total_pixels: usize,
+    pub excluded_regions: Vec<Value>,
+    pub ignored_containers: Vec<String>,
+}
+
+impl PlateReference {
+    pub fn fully_excluded(&self) -> bool {
+        self.excluded_pixels == self.total_pixels
+    }
+
+    pub fn audit(&self) -> Value {
+        json!({"policy":"plate-reference-v2", "excludedPixels":self.excluded_pixels,
+            "totalPixels":self.total_pixels, "remainingPixels":self.total_pixels-self.excluded_pixels,
+            "excludedFraction":self.excluded_pixels as f64 / self.total_pixels.max(1) as f64,
+            "fullyExcluded":self.fully_excluded(), "regions":self.excluded_regions,
+            "ignoredContainers":self.ignored_containers})
+    }
+
+    pub fn issue(&self, id: &str) -> Option<String> {
+        if !self.fully_excluded() { return None; }
+        let ids = self.excluded_regions.iter().filter_map(|r|r["id"].as_str()).collect::<Vec<_>>().join(", ");
+        Some(format!("reference for {id} has no visible pixels after excluding {ids}; correct the overlapping region geometry or container roles in the comp spec before evaluating this asset"))
+    }
+}
+
+/// JS: plateReference(comp, spec, region). Kept for pure image consumers.
 pub fn plate_reference(comp: &Image, spec: &Value, region: &Value) -> Image {
+    prepare_plate_reference(comp, spec, region).image
+}
+
+pub fn prepare_plate_reference(comp: &Image, spec: &Value, region: &Value) -> PlateReference {
     let px = |k: &str| region.pointer(&format!("/px/{k}")).and_then(Value::as_f64).unwrap_or(0.0);
     let (rx, ry, rw, rh) = (px("x"), px("y"), px("w"), px("h"));
     let mut c = r::crop(comp, rx, ry, rw, rh);
+    let total_pixels = c.width * c.height;
+    let mut excluded = vec![false; total_pixels];
+    let mut excluded_regions = Vec::new();
+    let mut ignored_containers = Vec::new();
     let ground = region
         .get("palette")
         .and_then(Value::as_array)
@@ -634,10 +715,25 @@ pub fn plate_reference(comp: &Image, spec: &Value, region: &Value) -> Image {
             if ox2 <= ox || oy2 <= oy {
                 continue;
             }
+            // Containers describe layout/background extent, not foreground ink.
+            // Their actual child text/control regions remain independently masked.
+            if other.get("container").and_then(Value::as_bool) == Some(true) {
+                ignored_containers.push(oid.to_string());
+                continue;
+            }
+            let rect = r::clamp_rect(&c, ox, oy, ox2-ox, oy2-oy);
+            if rect.w == 0 || rect.h == 0 { continue; }
+            for y in rect.y..rect.y+rect.h {
+                for x in rect.x..rect.x+rect.w { excluded[y*c.width+x] = true; }
+            }
+            excluded_regions.push(json!({"id":oid,"kind":okind,
+                "cropPx":{"x":rect.x,"y":rect.y,"w":rect.w,"h":rect.h},
+                "pixels":rect.w*rect.h}));
             r::fill_rect(&mut c, ox, oy, ox2 - ox, oy2 - oy, [ground[0] as f64, ground[1] as f64, ground[2] as f64, 255.0]);
         }
     }
-    c
+    PlateReference { image:c, excluded_pixels:excluded.iter().filter(|v|**v).count(),
+        total_pixels, excluded_regions, ignored_containers }
 }
 
 /// JS: platePrompt(spec, region).
@@ -802,10 +898,29 @@ fn resolve(io: &Io, p: &str) -> PathBuf {
 // ---- CLI -------------------------------------------------------------------
 
 /// `impeccable comp-spec ...`
+/// A failed edit leaves the last valid measurements intact, but they cannot
+/// authorize a build against different source geometry.
+pub fn region_source_issue(io: &Io, spec: &Value) -> Option<String> {
+    let source = spec.get("regionsSource")?;
+    let Some(path) = source["path"].as_str() else {
+        return Some("spec has invalid region source evidence; re-run comp-spec --regions".into());
+    };
+    let current = std::fs::read(resolve(io,path)).ok()
+        .map(|bytes| format!("{:x}",Sha256::digest(&bytes)));
+    if current.as_deref().is_some_and(|hash| Some(hash) == source["sha256"].as_str()) { return None; }
+    Some(format!("region source {path} changed or is missing since measurement; fix it and re-run comp-spec --regions {path} before continuing"))
+}
+
 pub fn run(argv: &[String], io: &mut Io) -> i32 {
     let spec_path = arg_or(argv, "spec", SPEC_PATH).to_string();
+    if flag(argv, "schema") {
+        io.out(include_str!("region-map.schema.json"));
+        return 0;
+    }
     if flag(argv, "help") || argv.is_empty() {
-        io.out("usage: comp-spec.mjs --comp <png> --grid            write .impeccable/build/comp-grid.png (10x10 labeled grid) + palette + bands\n       comp-spec.mjs --comp <png> --regions <json>  measure regions -> .impeccable/build/spec.json\n         regions json: { \"regions\": [ { \"id\": \"art\", \"kind\": \"plate|image|texture|text|control|chrome\", \"grid\": \"E0:J4\", \"note\": \"...\" } ] }\n       comp-spec.mjs --comp <png> --auto            band regions when you have no regions file\n       comp-spec.mjs --print                        the compact spec\n       comp-spec.mjs --crop <id> [--out f] [--scale n]   reference crop of a region (never a shipping asset)\n       comp-spec.mjs --plate-prompt <id> [--background transparent|opaque|auto]  the regeneration prompt for a raster region\n");
+        io.out("MAP WORKFLOW: open --grid, author regions.json, run --regions regions.json --inspect-map, inspect its crops, then correct the map. Stop here for a mapping-only task.\nSCHEMA: comp-spec --schema lists required fields, coordinates, parentId and reviewGroup. Default inspection output is concise; --json prints the full report.\n");
+        io.out("REGION COORDINATES: use one of grid (coarse inclusive cells), box {x,y,w,h} (fractions of the comp, 0..1), or pixelBox {x,y,w,h} (whole pixels in the original comp). Use exact bounds when an element ends inside a grid cell; do not include neighbouring content.\n");
+        io.out("usage: comp-spec.mjs --comp <png> --grid            write .impeccable/build/comp-grid.png (10x10 labeled grid) + palette + bands\n       comp-spec.mjs --comp <png> --regions <json>  measure regions -> .impeccable/build/spec.json\n         regions json: { \"regions\": [ { \"id\": \"art\", \"kind\": \"plate|image|texture|text|control|chrome\", \"grid\": \"E0:J4\", \"note\": \"...\" } ] }\n       comp-spec.mjs --comp <png> --auto [--out f]  write a band draft; refine into elements before --regions\n       comp-spec.mjs --comp <png> --regions <json> --inspect-map [--out-dir dir] [--json]  inspect all crops and masks without writing a spec\n       comp-spec.mjs --print                        the compact spec\n       comp-spec.mjs --crop <id> [--out f] [--scale n]   reference crop of a region (never a shipping asset)\n       comp-spec.mjs --plate-prompt <id> [--background transparent|opaque|auto]  the regeneration prompt for a raster region\n");
         return 0;
     }
     if flag(argv, "print") {
@@ -854,8 +969,15 @@ pub fn run(argv: &[String], io: &mut Io) -> i32 {
             }
         };
         let medium = region.get("medium").and_then(Value::as_str).unwrap_or("");
+        let mut reference_audit = None;
         let mut c = if medium == "raster" && !flag(argv, "raw") {
-            plate_reference(&comp, &spec, &region)
+            let reference = prepare_plate_reference(&comp, &spec, &region);
+            if let Some(issue) = reference.issue(id) {
+                io.err(&format!("comp-spec: {issue}.\n"));
+                return 2;
+            }
+            reference_audit = Some(reference.audit());
+            reference.image
         } else {
             let px = |k: &str| region.pointer(&format!("/px/{k}")).and_then(Value::as_f64).unwrap_or(0.0);
             r::crop(&comp, px("x"), px("y"), px("w"), px("h"))
@@ -870,7 +992,10 @@ pub fn run(argv: &[String], io: &mut Io) -> i32 {
         if let Some(parent) = out_path.parent() {
             let _ = std::fs::create_dir_all(parent);
         }
-        let text = vec![("impeccable:crop-of".to_string(), format!("{comp_file}#{id}"))];
+        let mut text = vec![("impeccable:crop-of".to_string(), format!("{comp_file}#{id}"))];
+        if let Some(audit) = reference_audit {
+            text.push(("impeccable:reference-audit".into(), audit.to_string()));
+        }
         match png_io::encode_png(&c, &text) {
             Ok(bytes) => {
                 let _ = std::fs::write(&out_path, bytes);
@@ -896,6 +1021,10 @@ pub fn run(argv: &[String], io: &mut Io) -> i32 {
             return 1;
         }
     };
+
+    if flag(argv, "inspect-map") {
+        return crate::map_inspection::run(argv, io, &comp, comp_path);
+    }
 
     if flag(argv, "grid") {
         let grid_out = resolve(io, GRID_PATH);
@@ -931,13 +1060,43 @@ pub fn run(argv: &[String], io: &mut Io) -> i32 {
         io.out("  { \"regions\": [ { \"id\": \"exploded-plate\", \"kind\": \"plate\", \"grid\": \"E0:H4\", \"note\": \"exploded carburetor drawing\" }, { \"id\": \"masthead\", \"kind\": \"chrome\", \"grid\": \"A0:J0\", \"note\": \"navy bar\" } ] }\n");
         io.out("  kind: plate | image | texture (painted material: every illustration, photograph, figure, product object, texture; each ships as a raster plate) or text | control | chrome (code draws it). grid: <colrow>:<colrow>, A0 top-left to J9 bottom-right, inclusive.\n");
         io.out("  A texture region is a clean sample cell of the material (ground with no ink on it), not the whole band it covers; the page tiles it. Ink that sits on the material gets its own text/control region.\n");
+        io.out("  For exact edges, replace grid with pixelBox: {\"x\": <left>, \"y\": <top>, \"w\": <width>, \"h\": <height>} in original comp pixels, or box with fractions 0..1. Grid cells are approximate; an asset crop must not include the next section. comp-spec --help lists the command forms.\n");
         return 0;
     }
 
+    if flag(argv,"auto") && arg(argv,"regions").is_none() {
+        if flag(argv,"spec") {
+            io.err("comp-spec: --auto writes a draft, not a measured spec; use --out <draft.json> instead of --spec\n");
+            return 1;
+        }
+        let draft_path = arg_or(argv,"out",".impeccable/build/regions.draft.json");
+        let dest = resolve(io,draft_path);
+        if dest == resolve(io,SPEC_PATH) {
+            io.err("comp-spec: an automatic draft cannot replace the measured spec\n");
+            return 1;
+        }
+        let mut draft = auto_regions(&comp);
+        draft["draft"] = json!(true);
+        draft["comp"] = json!(comp_path);
+        if let Some(parent) = dest.parent() { let _ = std::fs::create_dir_all(parent); }
+        use std::io::Write;
+        let written = std::fs::OpenOptions::new().write(true).create_new(true).open(&dest)
+            .and_then(|mut file| file.write_all(util::json_pretty(&draft).as_bytes()));
+        if let Err(error) = written {
+            io.err(&format!("comp-spec: cannot write draft {draft_path}: {error}; use a new --out path to preserve existing work\n"));
+            return 1;
+        }
+        io.out(&format!("DRAFT {draft_path}: {} approximate horizontal bands, not an element map.\nRefine the bands into the visible elements, remove the draft flag, then run comp-spec --comp {comp_path} --regions {draft_path}. The measured spec and build state are unchanged.\n",draft["regions"].as_array().map_or(0,Vec::len)));
+        return 0;
+    }
+    let regions_source;
     let regions_input: Value = if let Some(rf) = arg(argv, "regions") {
         match std::fs::read_to_string(resolve(io, rf)) {
             Ok(raw) => match serde_json::from_str(&raw) {
-                Ok(v) => v,
+                Ok(v) => {
+                    regions_source = json!({"path":rf,"sha256":format!("{:x}",Sha256::digest(raw.as_bytes()))});
+                    v
+                },
                 Err(e) => {
                     io.err(&format!("comp-spec: cannot read regions {rf}: {e}\n"));
                     return 1;
@@ -948,13 +1107,20 @@ pub fn run(argv: &[String], io: &mut Io) -> i32 {
                 return 1;
             }
         }
-    } else if flag(argv, "auto") {
-        auto_regions(&comp)
     } else {
         io.err("comp-spec: pass --grid to get the coordinate grid, then --regions <json> (or --auto for band regions)\n");
         return 1;
     };
-    let spec = match measure_regions(&comp, &regions_input, comp_path) {
+    if regions_input["draft"] == true {
+        io.err("comp-spec: this is an automatic draft, not a measured element map; refine its bands into the visible elements before removing the draft flag\n");
+        return 1;
+    }
+    let group_issues = impeccable_comp::review_groups::issues(regions_input["regions"].as_array().unwrap_or(&Vec::new()));
+    if !group_issues.is_empty() {
+        for (id, message) in group_issues { io.err(&format!("comp-spec: region {id}: {message}\n")); }
+        return 1;
+    }
+    let mut spec = match measure_regions(&comp, &regions_input, comp_path) {
         Ok(s) => s,
         Err(e) => {
             io.err(&format!("comp-spec: {e}\n"));
@@ -962,6 +1128,18 @@ pub fn run(argv: &[String], io: &mut Io) -> i32 {
         }
     };
     let spec_out = resolve(io, &spec_path);
+    // Bind cached font evidence to the decoded reference, including dimensions.
+    // Legacy specs without this identity are deliberately remeasured once.
+    let mut hasher = Sha256::new();
+    hasher.update(comp.width.to_le_bytes());
+    hasher.update(comp.height.to_le_bytes());
+    hasher.update(&comp.data);
+    spec["compSha256"] = json!(format!("{:x}", hasher.finalize()));
+    spec["regionsSource"] = regions_source;
+    if let Some(previous) = std::fs::read(&spec_out).ok()
+        .and_then(|bytes| serde_json::from_slice::<Value>(&bytes).ok()) {
+        preserve_typography(&mut spec, &previous);
+    }
     if let Some(parent) = spec_out.parent() {
         let _ = std::fs::create_dir_all(parent);
     }
@@ -970,4 +1148,122 @@ pub fn run(argv: &[String], io: &mut Io) -> i32 {
     io.out(&format!("{}\n", print_spec(&spec)));
     let _ = r4f(0.0); // silence unused if optimized away
     0
+}
+
+/// Remeasuring an unrelated region must not erase measured font work. Reuse
+/// only the existing spec's evidence, never a `type` claim in the input file.
+fn preserve_typography(spec: &mut Value, previous: &Value) {
+    if !spec["compSha256"].is_string() || spec["compSha256"] != previous["compSha256"] {
+        return;
+    }
+    let Some(old_regions) = previous["regions"].as_array() else { return; };
+    let Some(regions) = spec["regions"].as_array_mut() else { return; };
+    for region in regions {
+        if !matches!(region["kind"].as_str(), Some("text" | "control")) { continue; }
+        let Some(old) = old_regions.iter().find(|old| old["id"] == region["id"]) else { continue; };
+        if ["kind", "medium", "box", "px", "text"].iter().all(|key| old[*key] == region[*key]) {
+            if let Some(ty) = old.get("type").filter(|ty| ty.is_object()) {
+                region["type"] = ty.clone();
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod reference_tests {
+    use super::*;
+    #[test]
+    fn mapping_schema_is_available_without_a_comp_or_workspace() {
+        let schema: Value = serde_json::from_str(include_str!("region-map.schema.json")).unwrap();
+        assert_eq!(schema["properties"]["regions"]["items"]["required"], json!(["id","kind","note"]));
+        assert_eq!(schema["properties"]["regions"]["items"]["oneOf"].as_array().unwrap().len(),3);
+        let mut io = Io::stdio();
+        io.cwd = std::path::PathBuf::from("/nonexistent/map-schema-test");
+        io.stdout = Box::new(Vec::<u8>::new());
+        assert_eq!(run(&["--schema".into()], &mut io),0);
+    }
+
+
+    #[test]
+    fn automatic_snap_preserves_separated_navigation_and_multiline_copy() {
+        let mut comp = r::create_image(300, 100, [255,255,255,255]);
+        r::fill_rect(&mut comp, 25., 30., 70., 12., [0.,0.,0.,255.]);
+        r::fill_rect(&mut comp, 185., 30., 45., 12., [0.,0.,0.,255.]);
+        assert!(snap_box_to_ink(&comp, (0.,0.,1.,1.), 255.).is_some());
+        assert!(snap_preserving_ink(&comp, (0.,0.,1.,1.), 255.).is_none());
+        let mut single = r::create_image(300, 100, [255,255,255,255]);
+        r::fill_rect(&mut single, 25., 30., 70., 12., [0.,0.,0.,255.]);
+        assert!(snap_preserving_ink(&single, (0.,0.,1.,1.), 255.).is_some());
+    }
+
+    fn fixture() -> (Image, Value) {
+        let mut comp = r::create_image(16, 16, [230, 220, 210, 255]);
+        r::fill_rect(&mut comp, 4., 4., 8., 8., [30., 70., 110., 255.]);
+        let region = json!({"id":"art","kind":"plate","medium":"raster",
+            "px":{"x":0,"y":0,"w":16,"h":16},"palette":[{"hex":"#e6dcd2"}]});
+        (comp, region)
+    }
+
+    #[test]
+    fn exact_pixel_box_excludes_the_neighbouring_section() {
+        let mut comp = r::create_image(301, 101, [20, 70, 110, 255]);
+        r::fill_rect(&mut comp, 0., 61., 301., 40., [240., 180., 10., 255.]);
+        let input = json!({"allowUncovered":true,"regions":[{"id":"photo","kind":"image",
+            "note":"Wide photograph","bleed":true,"pixelBox":{"x":0,"y":0,"w":301,"h":61}}]});
+        let spec = measure_regions(&comp, &input, "comp.png").unwrap();
+        assert_eq!(spec["regions"][0]["px"], json!({"x":0,"y":0,"w":301,"h":61}));
+        let reference = prepare_plate_reference(&comp, &spec, &spec["regions"][0]);
+        assert_eq!((reference.image.width, reference.image.height), (301, 61));
+        assert!(reference.image.data.chunks_exact(4).all(|px| px == [20,70,110,255]));
+        for bad in [json!({"x":0,"y":0,"w":302,"h":61}), json!({"x":0.5,"y":0,"w":300,"h":61}),
+            json!({"x":0,"y":0,"w":0,"h":61}), json!({"x":0,"y":0,"w":301})] {
+            let mut broken = input.clone();
+            broken["regions"][0]["pixelBox"] = bad;
+            assert!(measure_regions(&comp, &broken, "comp.png").unwrap_err().contains("pixelBox"));
+        }
+        let mut ambiguous = input;
+        ambiguous["regions"][0]["grid"] = json!("A0:J5");
+        assert!(measure_regions(&comp, &ambiguous, "comp.png").unwrap_err().contains("multiple"));
+    }
+
+    #[test]
+    fn container_background_preserves_art_but_foreground_control_still_masks() {
+        let (comp, region) = fixture();
+        let container = json!({"id":"background","kind":"chrome","container":true,
+            "px":{"x":0,"y":0,"w":16,"h":16}});
+        let spec = json!({"regions":[region,container]});
+        assert_eq!(plate_reference(&comp, &spec, &spec["regions"][0]).data, comp.data);
+        let mut spec = spec;
+        spec["regions"].as_array_mut().unwrap().push(json!({"id":"button","kind":"control",
+            "px":{"x":0,"y":0,"w":8,"h":8}}));
+        let mut expected = comp.clone();
+        r::fill_rect(&mut expected, 0., 0., 8., 8., [230.,220.,210.,255.]);
+        assert_eq!(plate_reference(&comp, &spec, &spec["regions"][0]).data, expected.data);
+    }
+
+    #[test]
+    fn exclusion_audit_counts_union_and_clips_to_crop() {
+        let (comp, region) = fixture();
+        let spec = json!({"regions":[region,
+            {"id":"left","kind":"text","px":{"x":-8,"y":0,"w":20,"h":16}},
+            {"id":"right","kind":"control","px":{"x":8,"y":0,"w":20,"h":16}}]});
+        let reference = prepare_plate_reference(&comp, &spec, &spec["regions"][0]);
+        assert_eq!(reference.excluded_pixels, 256);
+        assert_eq!(reference.excluded_regions[0]["pixels"], 192);
+        assert_eq!(reference.excluded_regions[1]["pixels"], 128);
+        assert!(reference.fully_excluded());
+        assert_eq!(reference.audit()["remainingPixels"], 0);
+        assert!(reference.issue("art").unwrap().contains("left, right"));
+    }
+
+    #[test]
+    fn uniform_reference_without_exclusions_is_not_an_exclusion_failure() {
+        let (_, region) = fixture();
+        let comp = r::create_image(16, 16, [230, 220, 210, 255]);
+        let spec = json!({"regions":[region]});
+        let reference = prepare_plate_reference(&comp, &spec, &spec["regions"][0]);
+        assert_eq!(reference.excluded_pixels, 0);
+        assert!(!reference.fully_excluded());
+        assert!(reference.issue("art").is_none());
+    }
 }

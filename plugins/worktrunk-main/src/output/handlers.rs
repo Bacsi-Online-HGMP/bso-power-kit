@@ -87,7 +87,7 @@ struct BackgroundRemoval<'a> {
     force_worktree: bool,
     changed_directory: bool,
     /// `true` when the planner already decided the branch would be retained
-    /// (unmerged, or `--no-delete-branch`) — `print_hints` has explained why,
+    /// (unmerged, or a `Keep` plan) — `print_hints` has explained why,
     /// so [`warn_if_branch_retained`] stays silent on the expected
     /// `NotDeleted` outcome and only fires when the deletion command errors.
     /// `false` means the planner predicted deletion; a `NotDeleted` here is a
@@ -1275,15 +1275,19 @@ fn handle_branch_only_output(
     } else {
         false
     };
+    // A stale entry's directory may remain (only its `.git` went), so the line
+    // names the entry rather than a missing directory.
     let branch_info = if pruned {
-        cformat!("Worktree directory missing for <bold>{branch_name}</>; pruned")
+        success_message(cformat!("Pruned stale worktree for <bold>{branch_name}</>"))
     } else {
-        cformat!("No worktree found for branch <bold>{branch_name}</>")
+        info_message(cformat!(
+            "No worktree found for branch <bold>{branch_name}</>"
+        ))
     };
 
     // If we won't delete the branch, show info and return early
     if deletion_mode.should_keep() {
-        eprintln!("{}", info_message(&branch_info));
+        eprintln!("{branch_info}");
         // A sibling `--force` checkout kept the branch alive; name it so the
         // user knows why the pruned branch survived rather than being deleted.
         if let Some(shared) = branch_checked_out_at {
@@ -1338,7 +1342,7 @@ fn handle_branch_only_output(
 
     let retained = match &deletion.result.outcome {
         BranchDeletionOutcome::RetainedCheckedOut { path } => {
-            eprintln!("{}", info_message(&branch_info));
+            eprintln!("{branch_info}");
             eprintln!(
                 "{}",
                 retained_checked_out_branch_message(branch_name, path, false)
@@ -1346,12 +1350,12 @@ fn handle_branch_only_output(
             true
         }
         BranchDeletionOutcome::RetainedRaced => {
-            eprintln!("{}", info_message(&branch_info));
+            eprintln!("{branch_info}");
             eprintln!("{}", retained_raced_branch_message(branch_name, false));
             true
         }
         BranchDeletionOutcome::NotDeleted => {
-            eprintln!("{}", info_message(&branch_info));
+            eprintln!("{branch_info}");
             if deletion.show_unmerged_hint {
                 print_retained_unmerged_branch(branch_name);
             }
@@ -1379,7 +1383,7 @@ fn handle_branch_only_output(
             );
         } else {
             if !quiet {
-                eprintln!("{}", info_message(&branch_info));
+                eprintln!("{branch_info}");
             }
             eprintln!(
                 "{}",
@@ -1416,13 +1420,12 @@ fn spawn_hooks_after_remove(
 ) -> anyhow::Result<()> {
     // The worktree is gone (or, on the fallback path, being deleted by the
     // detached `git worktree remove` this call follows), so a pipeline anchored
-    // on it must not be spawned into it. Recorded before the config load, which
-    // returns early on an unreadable user config.
+    // on it must not be spawned into it.
     announcer.mark_worktree_removed(ctx.worktree_path);
 
-    let Ok(config) = UserConfig::load() else {
-        return Ok(());
-    };
+    // The startup snapshot, not a reload: `pre-remove` and the removal itself
+    // may have rewritten the user config since the approval gate read it.
+    let config = repo.user_config();
 
     // When removing the current worktree, user cd's to main_path → use post_hook logic
     // (suppresses path if shell integration will cd there).
@@ -1441,7 +1444,7 @@ fn spawn_hooks_after_remove(
 
     // All hooks use remove_ctx for spawning: log files are named after the removed
     // branch since both post-remove and post-switch are consequences of that removal.
-    let remove_ctx = CommandContext::new(repo, &config, removed_branch, ctx.main_path, false);
+    let remove_ctx = CommandContext::new(repo, config, removed_branch, ctx.main_path, false);
 
     // `post-remove` is *about* the removed worktree (gone by now); it was
     // selected and frozen into `hook_plan` at the gate, anchored at the removed
@@ -1461,7 +1464,7 @@ fn spawn_hooks_after_remove(
     if ctx.changed_directory {
         let dest_branch = repo.worktree_at(ctx.main_path).branch()?;
         let switch_ctx =
-            CommandContext::new(repo, &config, dest_branch.as_deref(), ctx.main_path, false);
+            CommandContext::new(repo, config, dest_branch.as_deref(), ctx.main_path, false);
         register_planned(
             announcer,
             ctx.hook_plan,
@@ -1749,10 +1752,6 @@ fn execute_pre_remove_hooks_if_needed(
     repo: &Repository,
     ctx: &WorktreeRemovalContext<'_>,
 ) -> anyhow::Result<()> {
-    let Ok(config) = UserConfig::load() else {
-        return Ok(());
-    };
-
     // `pre-remove` runs in the worktree being removed (still on disk here).
     // `pre_remove_repo` roots the *render* context there for template vars;
     // the command set is the frozen `hook_plan` selected at the gate, so no
@@ -1760,7 +1759,7 @@ fn execute_pre_remove_hooks_if_needed(
     let pre_remove_repo = Repository::at(ctx.worktree_path)?;
     let command_ctx = CommandContext::new(
         &pre_remove_repo,
-        &config,
+        pre_remove_repo.user_config(),
         ctx.branch_name,
         ctx.worktree_path,
         false, // yes=false for CommandContext (not approval-related)

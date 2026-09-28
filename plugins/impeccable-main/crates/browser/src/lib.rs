@@ -16,6 +16,8 @@
 //! (`createBrowserDetector()`: `waitUntil: 'load'`, `settleMs: 100`).
 
 pub mod cdp;
+pub mod response_capture;
+pub mod html_snapshot;
 pub mod discovery;
 pub mod screenshot_contrast;
 pub mod snapshot_engine;
@@ -224,6 +226,7 @@ pub fn serialize_design_system_for_browser(ds: Option<&DesignSystem>) -> Value {
         "hasRadii": ds.has_radii,
         "allowedRadii": radii,
         "hasPillRadius": ds.has_pill_radius,
+        "declaredSelectors": ds.declared_selectors,
     })
 }
 

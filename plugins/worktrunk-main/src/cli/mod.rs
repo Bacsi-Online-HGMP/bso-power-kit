@@ -795,9 +795,9 @@ List all worktrees:
 $ wt list
   Branch       Status      HEAD±     main↕    main…±    Remote⇅  Commit    Age  Message
 @ feature-api  +   ↕⇡     +54   -5   ↑4  ↓1  +234  -24   ⇡3      6814f02   30m  Add API tests
-^ main             ^⇅                                    ⇡1  ⇣1  41ee083    4d  Merge fix-auth: h…
-+ fix-auth         ↕|                ↑2  ↓1   +25  -11     |     b772e68    5h  Add secure token…
-+ fix-typos        _|                                      |     41ee083    4d  Merge fix-auth: h…
+^ main             ^⇅                                    ⇡1  ⇣1  41ee083    4d  Merge fix-auth: ha…
++ fix-auth         ↕|                ↑2  ↓1   +25  -11     |     b772e68    5h  Add secure token s…
++ fix-typos        _|                                      |     41ee083    4d  Merge fix-auth: ha…
 
 ○ Showing 4 worktrees, 1 with changes, 2 ahead, hidden: Path
 ```
@@ -807,11 +807,11 @@ Include CI status and LLM summaries:
 <!-- wt list --full -->
 ```console
 $ wt list --full
-  Branch       Status      HEAD±     main↕    main…±    Summary                      Remote⇅  CI
-@ feature-api  +   ↕⇡     +54   -5   ↑4  ↓1  +234  -24  Refactor API to REST archi…   ⇡3      #412
-^ main             ^⇅                                                                 ⇡1  ⇣1  #
-+ fix-auth         ↕|                ↑2  ↓1   +25  -11  Harden auth with constant-…     |     #408
-+ fix-typos        _|                                                                   |     #410
+  Branch       Status      HEAD±     main↕    main…±    Summary                       Remote⇅  CI
+@ feature-api  +   ↕⇡     +54   -5   ↑4  ↓1  +234  -24  Refactor API to REST archit…   ⇡3      #412
+^ main             ^⇅                                                                  ⇡1  ⇣1  #
++ fix-auth         ↕|                ↑2  ↓1   +25  -11  Harden auth with constant-t…     |     #408
++ fix-typos        _|                                                                    |     #410
 
 ○ Showing 4 worktrees, 1 with changes, 2 ahead, hidden: Path, Commit, Age, Message
 ```
@@ -821,11 +821,11 @@ Include branches that don't have worktrees:
 <!-- wt list --branches --full -->
 ```console
 $ wt list --branches --full
-  Branch       Status      HEAD±     main↕    main…±    Summary                      Remote⇅  CI
-@ feature-api  +   ↕⇡     +54   -5   ↑4  ↓1  +234  -24  Refactor API to REST archi…   ⇡3      #412
-^ main             ^⇅                                                                 ⇡1  ⇣1  #
-+ fix-auth         ↕|                ↑2  ↓1   +25  -11  Harden auth with constant-…     |     #408
-+ fix-typos        _|                                                                   |     #410
+  Branch       Status      HEAD±     main↕    main…±    Summary                       Remote⇅  CI
+@ feature-api  +   ↕⇡     +54   -5   ↑4  ↓1  +234  -24  Refactor API to REST archit…   ⇡3      #412
+^ main             ^⇅                                                                  ⇡1  ⇣1  #
++ fix-auth         ↕|                ↑2  ↓1   +25  -11  Harden auth with constant-t…     |     #408
++ fix-typos        _|                                                                    |     #410
 / exp             /↕                 ↑2  ↓1  +137       Explore GraphQL schema and…
 / wip             /↕                 ↑1  ↓1   +33       Start API documentation
 
@@ -887,7 +887,7 @@ The CI column shows the branch's open PR/MR — `#3035` on GitHub, Gitea, and Az
 | `⚠` yellow | `"error"` | CI status could not be fetched (rate limit, network, etc.) |
 | `#` magenta | `"changes_requested"` | A reviewer requested changes |
 | `#` cyan | `"pending"` | A review is required (e.g. branch protection) but not yet given |
-| (blank) | `pr` and `checks` absent | No upstream, or no PR/MR and no branch workflow |
+| (blank) | `pr` and `checks` absent | Branch never pushed, or no PR/MR and no branch workflow |
 
 The two remaining review states have no indicator of their own: `"draft"` only dims the cell and `"approved"` leaves the color unchanged.
 
@@ -935,7 +935,7 @@ An in-progress git operation, a worktree-location attribute, or a branch with no
 |--------|------|---------|
 | `✘` | `worktree.changes.conflicted` | Merge conflicts |
 | `↻` | `worktree.operation` `"rebase"`, `"merge"`, `"cherry_pick"`, `"revert"`, `"bisect"` | A git operation is in progress; `git status` names it |
-| `⊟` | `worktree.prunable` | Prunable (worktree directory missing) |
+| `⊟` | `worktree.prunable` | Prunable (worktree directory or its `.git` gone) |
 | `⊞` | `worktree.locked` | Locked worktree |
 | `⊘` | `worktree.detached` | Detached HEAD |
 | `⚑` | `worktree.duplicate_branch` | Branch checked out in more than one worktree |
@@ -2090,9 +2090,11 @@ command = "MAX_THINKING_TOKENS=0 claude -p --no-session-persistence --model=haik
 
 ### Codex
 
+Create `~/.codex/worktrunk-commit-instructions.txt` containing just `.` (no newline). Accepting Worktrunk's first-run Codex setup creates the file for you.
+
 ```toml
 [commit.generation]
-command = "codex exec -m gpt-5.6-luna -c model_reasoning_effort='low' -c system_prompt='' --sandbox=read-only --json - | jq -sr '[.[] | select(.item.type? == \"agent_message\")] | last.item.text'"
+command = "codex exec -m gpt-6-luna -c model_reasoning_effort='none' -c project_doc_max_bytes=0 -c skills.max_context_tokens=1 -c agents.enabled=false -c features.goals=false -c web_search=disabled -c 'model_instructions_file=\"~/.codex/worktrunk-commit-instructions.txt\"' -c features.shell_tool=false -c features.unified_exec=false -c features.apps=false -c features.plugins=false --ephemeral --sandbox=read-only --json - | jq -sr '[.[] | select(.item.type? == \"agent_message\")] | last.item.text'"
 ```
 
 ### OpenCode

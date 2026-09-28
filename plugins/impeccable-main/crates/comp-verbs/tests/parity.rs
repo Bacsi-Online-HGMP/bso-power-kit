@@ -120,3 +120,44 @@ fn measure_regions_refuses_oversized_code_region() {
     let err = comp_spec::measure_regions(&comp, &input, "comp.png").unwrap_err();
     assert!(err.contains("covers 100% of the comp") || err.contains("% of the comp"), "got: {err}");
 }
+
+#[test]
+fn remeasure_keeps_only_unchanged_reference_typography() {
+    let dir = std::env::temp_dir().join(format!("impeccable-remeasure-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::copy(fixtures().join("comp.png"), dir.join("comp.png")).unwrap();
+    let mut input = json!({"allowUncovered":true,"regions":[
+        {"id":"heading","kind":"text","note":"Main heading text","text":"Welcome","box":{"x":0.1,"y":0.1,"w":0.5,"h":0.1},"snap":false},
+        {"id":"other","kind":"text","note":"Other small text","text":"Details","box":{"x":0.1,"y":0.4,"w":0.5,"h":0.1},"snap":false}
+    ]});
+    let run = |input: &Value| {
+        std::fs::write(dir.join("regions.json"), input.to_string()).unwrap();
+        let (mut io, _) = impeccable_common::Io::captured("", dir.clone(), Default::default());
+        let args = ["--comp","comp.png","--regions","regions.json","--spec","spec.json"].map(String::from);
+        assert_eq!(comp_spec::run(&args, &mut io), 0);
+        serde_json::from_slice::<Value>(&std::fs::read(dir.join("spec.json")).unwrap()).unwrap()
+    };
+    let mut first = run(&input);
+    let measured = json!({"comp":{"capHeightPx":12},"chosen":{"family":"Example","stamp":"existing-stamp"}});
+    first["regions"][0]["type"] = measured.clone();
+    first["regions"][1]["type"] = measured.clone();
+    std::fs::write(dir.join("spec.json"), first.to_string()).unwrap();
+    input["regions"][1]["box"]["y"] = json!(0.5);
+    let next = run(&input);
+    assert_eq!(next["regions"][0]["type"], measured, "unrelated region edit erased typography");
+    assert!(next["regions"][1]["type"].is_null(), "moved region reused stale measurement");
+    input["regions"][0]["text"] = json!("Different");
+    assert!(run(&input)["regions"][0]["type"].is_null());
+    let mut prior = run(&input);
+    prior["regions"][0]["type"] = measured.clone();
+    std::fs::write(dir.join("spec.json"), prior.to_string()).unwrap();
+    std::fs::copy(fixtures().join("build_flat.png"), dir.join("comp.png")).unwrap();
+    assert!(run(&input)["regions"][0]["type"].is_null(), "replaced comp reused stale measurement");
+    // Unbound legacy records must be remeasured once, never guessed current.
+    let mut legacy = run(&input);
+    legacy.as_object_mut().unwrap().remove("compSha256");
+    legacy["regions"][0]["type"] = measured;
+    std::fs::write(dir.join("spec.json"), legacy.to_string()).unwrap();
+    assert!(run(&input)["regions"][0]["type"].is_null());
+    std::fs::remove_dir_all(dir).unwrap();
+}

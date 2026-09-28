@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.1] - 2026-09-26
+
+### Changed
+- Recommend Claude Code with Opus 5.5 in the README
+- Refreshed the static Star History chart through September 2026
+- Removed a redundant note about editing the canonical skill from the README
+
+### Security
+- Update Next.js and eslint-config-next to 16.3.5 with exact version pins, and refresh vulnerable transitive dependencies. Thanks to @atahan150 for the report in [#117](https://github.com/JCodesMore/ai-website-cloner-template/issues/117) and proposed fix in [#118](https://github.com/JCodesMore/ai-website-cloner-template/pull/118).
+
 ## [0.5.0] - 2026-09-17
 
 ### Added
@@ -119,7 +129,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - MIT license
 - README with badges, demo section, quick start, and star history
 
-[Unreleased]: https://github.com/JCodesMore/ai-website-cloner-template/compare/v0.5.0...HEAD
+[Unreleased]: https://github.com/JCodesMore/ai-website-cloner-template/compare/v0.5.1...HEAD
+[0.5.1]: https://github.com/JCodesMore/ai-website-cloner-template/compare/v0.5.0...v0.5.1
 [0.5.0]: https://github.com/JCodesMore/ai-website-cloner-template/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/JCodesMore/ai-website-cloner-template/compare/v0.3.1...v0.4.0
 [0.3.1]: https://github.com/JCodesMore/ai-website-cloner-template/compare/v0.3.0...v0.3.1
