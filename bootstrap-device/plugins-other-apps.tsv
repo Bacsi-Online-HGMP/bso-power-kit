@@ -1,0 +1,16 @@
+# Which vendored plugins each AI app other than Claude gets, read by install_ai_skills.py.
+# Claude gets plugins whole from the marketplaces (bootstrap-plugins.sh). The other apps load
+# SKILL.md folders only, so they get a plugin's skills, linked as plain skills; its commands,
+# agents and hooks do not come along. The first-party skills (skills/, tools/skills/) always go.
+#
+# yes = link the plugin's skills into that app; anything else = no. Edited by hand. The first
+# column is the plugin's name in .claude-plugin/marketplace.json. Keep the list short: every
+# skill's description sits in the app's context before any work starts.
+#
+# Default of 2026-10-01: the discipline and writing plugins the Claude setup runs with.
+plugin	gemini-cli	qwen-code	codex
+verification-before-completion	yes	yes	yes
+andrej-karpathy-skills	yes	yes	yes
+anti-slop	yes	yes	yes
+ponytail	yes	yes	yes
+mattpocock-skills	yes	yes	yes

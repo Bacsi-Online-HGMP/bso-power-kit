@@ -20,6 +20,7 @@ open -n -a "Claude.app" --args --user-data-dir="$HOME/.claude-instances/pro2"
 ```bash
 git clone <your-remote> bso-power-kit
 cd bso-power-kit && bash bootstrap.sh
+python3 bootstrap-device/install_ai_skills.py    # skills into every AI app on the machine
 ```
 
 ## Publishing (enables device sync)
@@ -38,6 +39,10 @@ Keep it **private** — dotfiles include your CLAUDE.md and settings.
 2. On each machine/account: `git pull`, then inside claude:
    `/plugin marketplace update bso-power-kit`
 3. Re-run `bash bootstrap.sh [config-dir]` if dotfiles changed.
+4. Run `python3 bootstrap-device/install_ai_skills.py`. It links new skills into every AI app
+   (Gemini CLI, Qwen Code, Codex), skips the current ones, and updates the plugins and extensions
+   each app already has. `update.sh` runs it daily on the Mac. Which plugins each app gets is in
+   `bootstrap-device/plugins-other-apps.tsv`.
 
 ## What does NOT sync via this repo
 

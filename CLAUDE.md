@@ -5,12 +5,15 @@ description: Rules for AI in the shared plugin and skill marketplace repo.
 tags: [agent, rules]
 authority: binding
 status: stable
-generated: { by: claude/opus-5, at: 2026-08-20T04:10:00Z }
+generated: { by: claude/opus-5.5, at: 2026-10-01T01:39:01Z }
 ---
 
 <!-- lang-exception: documents the carve-out, which names Vietnamese paths. -->
 
 # bso-power-kit — house rules for AI
+
+**These rules bind every AI that works here, not only Claude.** Codex reads `AGENTS.md`; Gemini CLI
+and Qwen Code read `GEMINI.md` and `QWEN.md`, which import this file.
 
 The shared plugin and skill marketplace. **Nothing BSO-specific belongs here** — no claims, no
 disclaimers, no brand identity, no production procedures. Anything carrying BSO rules or identity
@@ -33,6 +36,26 @@ each embeds the HGMP identity or the Vietnamese claim rules. See ADR-0012 in `bs
 **Every first-party skill has a `FRESHNESS.md`** next to its `SKILL.md`: the facts it depends on
 that can change without an edit here (a UI, an API, a model name). Change the skill, update that
 file in the same commit. A monthly routine checks every fact; `MAINTENANCE.md` has the procedure.
+
+**Skills and plugins in every AI app go through one installer** (2026-10-01):
+`bootstrap-device/install_ai_skills.py`. Each AI app loads skills and plugins its own way, and
+the installer holds those differences, so no document has to repeat them. Its rules:
+
+- **Link, do not copy.** A skill folder is linked into each app's skills folder, so `git pull` is
+  the update. A copy is the fallback where no link can be made.
+- **Skip what is current, update what changed.** A second run changes nothing. A changed copy is
+  replaced, and the old one is moved aside. Nothing is deleted.
+- **Never touch a folder this installer did not make.** Another installer's copy is reported.
+- **Per-app plugin sets live in `bootstrap-device/plugins-other-apps.tsv`.** Apps other than
+  Claude load skills only, so each gets the listed plugins' skills as plain skills. Keep it short:
+  every description sits in the app's context before any work.
+- **Update what the apps already have** with each app's own command (`claude plugin update`,
+  `gemini extensions update --all`, `qwen extensions update --all`). The installer installs no
+  new plugin; `bootstrap-plugins.sh` does that for the Claude Code command line.
+- **A new AI app is one line in `targets()`**, once its skills folder is seen on a real machine.
+
+Which skills a BSO machine needs is a bso-marketing rule (its memory `skills-marketplace`). The
+steps stay here, beside the script.
 
 **`bootstrap-device/plugins-claude-code.tsv` is generated.** Only the `pack` column is edited by
 hand; `export-plugins.sh` preserves it and regenerates everything else. Rejections live in

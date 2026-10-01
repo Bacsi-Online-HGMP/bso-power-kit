@@ -147,6 +147,31 @@ Do this by hand. Background auto-update drops the git credential helper on HTTPS
 
 **`./tools` items install their own way:** `notebooklm-mcp-cli` (pip) · `Agent-Reach` (read its `docs/install.md` first — it auto-runs installers) · `ai-website-cloner` (fork → `/clone-website`) · `agentskills` (skill-authoring spec, read-only) · `agency-agents` (agent definitions, copy what you need) · `design.md` · `vercel-labs-skills` (see each README).
 
+### Other AI apps: Gemini CLI, Qwen Code, Codex
+
+The plugins above are Claude plugins. The other apps load skills only (`SKILL.md` folders), so they
+get skills, not plugins. One command does it for every app on the machine:
+
+```bash
+python3 bootstrap-device/install_ai_skills.py            # --dry-run first to see what it would do
+```
+
+| App | Instruction file it reads | Skills folder it gets linked into |
+|---|---|---|
+| Codex | `AGENTS.md` | `~/.codex/skills` |
+| Gemini CLI | `GEMINI.md` (imports `AGENTS.md` and `CLAUDE.md`) | `~/.agents/skills` |
+| Qwen Code | `QWEN.md` (imports `AGENTS.md` and `CLAUDE.md`) | `~/.qwen/skills` |
+| Claude Code | `CLAUDE.md` | the marketplace above (`--claude` also links into `~/.claude/skills`) |
+
+- **Which skills:** every first-party skill (`skills/`, and `tools/skills/` in each repo beside this
+  one), plus the plugins that `bootstrap-device/plugins-other-apps.tsv` gives each app. Edit that
+  file to change an app's set: one row per plugin, `yes` per app.
+- **Links, not copies,** so `git pull` updates every app at once. What is current is skipped, a
+  folder another installer made is reported and left alone, and nothing is deleted.
+- **It also updates** what each app already has: `claude plugin update`, `gemini extensions update
+  --all`, `qwen extensions update --all`.
+- **Codex** also takes this kit's commands as prompts: `bash build-codex.sh --install`.
+
 ### Do not run `build-standalone.sh`
 
 It was the one-time bootstrapper from when this folder was empty and the plugin repos lived in a sibling directory. It opens with `rm -rf plugins tools` and rebuilds both from that local folder — which no longer exists. Run it on a clone and you delete vendored plugins that exist nowhere else.

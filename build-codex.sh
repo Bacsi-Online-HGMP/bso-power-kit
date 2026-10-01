@@ -1,10 +1,12 @@
 #!/usr/bin/env bash
-# Export this kit to Codex CLI, which has no plugin or skill system of its own.
+# Export this kit to Codex: a map of every skill, and the plugin commands as prompts.
 #
 # Codex reads AGENTS.md natively and takes reusable prompts as plain markdown in
-# ~/.codex/prompts/. It has no skill loader -- nothing scans a folder and pulls a
-# SKILL.md in when the task matches. So the skills are not copied anywhere; they
-# stay where they are and Codex is handed a map to them.
+# ~/.codex/prompts/. When this script was written it had no skill loader. It has one
+# now (seen 2026-10-01: ~/.codex/skills holds SKILL.md folders), and
+# bootstrap-device/install_ai_skills.py links the chosen skills there. This map stays
+# useful for the rest: it points Codex at every skill in the kit, and the prompts carry
+# the plugin commands, which no skill folder does.
 #
 # Three artefacts, under integrations/codex/:
 #   AGENTS.md         small, always in context: house rules + the 33-plugin map

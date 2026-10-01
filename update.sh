@@ -52,4 +52,8 @@ if command -v claude >/dev/null 2>&1; then
   done
 fi
 
+# Skills into every AI app, and each app's own plugin and extension updates. It skips what is
+# current, so a daily run costs little. Non-fatal: one app failing must not stop the rest.
+python3 "$HERE/bootstrap-device/install_ai_skills.py" || echo "==> install_ai_skills.py reported a problem"
+
 echo "==> update complete $(date '+%Y-%m-%d %H:%M')"
