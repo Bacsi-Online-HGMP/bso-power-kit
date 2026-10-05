@@ -72,6 +72,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "95832e849adfb21180ccb6826a99da14e5d266ae5c2e668e1602cf234f153797"
 
 [[package]]
+name = "byteorder"
+version = "1.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1fd0f2584146f6f2ef48085050886acf353beff7305ebd1ae69500e27c67f64b"
+
+[[package]]
 name = "byteorder-lite"
 version = "0.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -525,7 +531,7 @@ dependencies = [
 
 [[package]]
 name = "impeccable"
-version = "0.1.5"
+version = "0.1.11"
 dependencies = [
  "base64",
  "impeccable-browser",
@@ -540,25 +546,28 @@ dependencies = [
  "impeccable-live",
  "impeccable-skills",
  "serde_json",
+ "sha2",
 ]
 
 [[package]]
 name = "impeccable-browser"
-version = "0.1.5"
+version = "0.1.11"
 dependencies = [
  "base64",
+ "impeccable-common",
  "impeccable-core",
  "impeccable-detect",
  "percent-encoding",
  "png",
  "serde_json",
+ "sha2",
  "tungstenite",
  "url",
 ]
 
 [[package]]
 name = "impeccable-bundle"
-version = "0.1.5"
+version = "0.1.11"
 dependencies = [
  "base64",
  "impeccable-core",
@@ -567,14 +576,14 @@ dependencies = [
 
 [[package]]
 name = "impeccable-common"
-version = "0.1.5"
+version = "0.1.11"
 dependencies = [
  "libc",
 ]
 
 [[package]]
 name = "impeccable-comp"
-version = "0.1.5"
+version = "0.1.11"
 dependencies = [
  "image",
  "once_cell",
@@ -586,23 +595,26 @@ dependencies = [
 
 [[package]]
 name = "impeccable-comp-verbs"
-version = "0.1.5"
+version = "0.1.11"
 dependencies = [
  "impeccable-common",
  "impeccable-comp",
+ "impeccable-context",
  "once_cell",
  "regex",
  "serde",
  "serde_json",
  "sha1",
+ "sha2",
 ]
 
 [[package]]
 name = "impeccable-context"
-version = "0.1.5"
+version = "0.1.11"
 dependencies = [
  "flate2",
  "impeccable-common",
+ "impeccable-comp",
  "impeccable-core",
  "once_cell",
  "regex",
@@ -618,7 +630,7 @@ dependencies = [
 
 [[package]]
 name = "impeccable-core"
-version = "0.1.5"
+version = "0.1.11"
 dependencies = [
  "impeccable-core",
  "impeccable-foundation",
@@ -630,7 +642,7 @@ dependencies = [
 
 [[package]]
 name = "impeccable-detect"
-version = "0.1.5"
+version = "0.1.11"
 dependencies = [
  "impeccable-common",
  "impeccable-core",
@@ -642,7 +654,7 @@ dependencies = [
 
 [[package]]
 name = "impeccable-foundation"
-version = "0.1.5"
+version = "0.1.11"
 dependencies = [
  "cssparser",
  "once_cell",
@@ -655,9 +667,10 @@ dependencies = [
 
 [[package]]
 name = "impeccable-hook"
-version = "0.1.5"
+version = "0.1.11"
 dependencies = [
  "impeccable-common",
+ "impeccable-comp-verbs",
  "impeccable-context",
  "impeccable-core",
  "impeccable-detect",
@@ -669,7 +682,7 @@ dependencies = [
 
 [[package]]
 name = "impeccable-html"
-version = "0.1.5"
+version = "0.1.11"
 dependencies = [
  "cssparser",
  "ego-tree",
@@ -690,7 +703,7 @@ dependencies = [
 
 [[package]]
 name = "impeccable-live"
-version = "0.1.5"
+version = "0.1.11"
 dependencies = [
  "getrandom 0.2.17",
  "impeccable-common",
@@ -708,7 +721,7 @@ dependencies = [
 
 [[package]]
 name = "impeccable-skills"
-version = "0.1.5"
+version = "0.1.11"
 dependencies = [
  "impeccable-common",
  "impeccable-context",
@@ -727,7 +740,7 @@ dependencies = [
 
 [[package]]
 name = "impeccable-wasm"
-version = "0.1.5"
+version = "0.1.11"
 dependencies = [
  "impeccable-core",
  "impeccable-detect",
@@ -1335,6 +1348,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b9be42f50aa861c555654aa3a37f52f4b1074bacf4e48fe0ef7fa584e80f1f0f"
 
 [[package]]
+name = "socks"
+version = "0.3.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f0c3dbbd9ae980613c6dd8e28a9407b50509d3803b57624d5dfe8315218cd58b"
+dependencies = [
+ "byteorder",
+ "libc",
+ "winapi",
+]
+
+[[package]]
 name = "stable_deref_trait"
 version = "1.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1526,6 +1550,7 @@ dependencies = [
  "rustls-pki-types",
  "serde",
  "serde_json",
+ "socks",
  "url",
  "webpki-roots 0.26.11",
 ]
@@ -1657,6 +1682,28 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a28ac98ddc8b9274cb41bb4d9d4d5c425b6020c50c46f25559911905610b4a88"
 
 [[package]]
+name = "winapi"
+version = "0.3.9"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5c839a674fcd7a98952e593242ea400abe93992746761e38641405d28b00f419"
+dependencies = [
+ "winapi-i686-pc-windows-gnu",
+ "winapi-x86_64-pc-windows-gnu",
+]
+
+[[package]]
+name = "winapi-i686-pc-windows-gnu"
+version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ac3b87c63620426dd9b991e5ce0329eff545bccbbb34f3be09ff6fb6ab51b7b6"
+
+[[package]]
+name = "winapi-x86_64-pc-windows-gnu"
+version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "712e227841d057c1ee1cd2fb22fa7e5a5461ae8e48fa2ca79ec42cfc1931183f"
+
+[[package]]
 name = "windows-link"
 version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1758,7 +1805,7 @@ checksum = "3ad82d2a33cdc9674dc7465672f271e096168fcdbe0f799d9e6db8c5892679dc"
 
 [[package]]
 name = "xtask"
-version = "0.1.5"
+version = "0.1.11"
 dependencies = [
  "impeccable-bundle",
 ]

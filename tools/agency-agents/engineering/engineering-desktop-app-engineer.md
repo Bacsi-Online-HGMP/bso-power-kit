@@ -73,7 +73,12 @@ ipcMain.handle('project:export', async (event, raw) => {
 import { contextBridge, ipcRenderer } from 'electron';
 contextBridge.exposeInMainWorld('app', {
   exportProject: (req: unknown) => ipcRenderer.invoke('project:export', req),
-  onUpdateReady: (cb: () => void) => ipcRenderer.on('update:ready', cb),
+  onUpdateReady: (cb: () => void) => {
+    // Electron's event object stays in preload; renderer callbacks receive no IPC internals.
+    const listener = () => cb();
+    ipcRenderer.on('update:ready', listener);
+    return () => { ipcRenderer.removeListener('update:ready', listener); };
+  },
 });
 ```
 

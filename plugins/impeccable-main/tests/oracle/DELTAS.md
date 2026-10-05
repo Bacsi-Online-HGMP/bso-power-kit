@@ -164,3 +164,145 @@ installed. The binary's `CLI_VERSION` moves from `3.6.0` to `4.0.0` with the
 CLI 4.0.0 release; it is what the binary prints when run directly.
 
 - `cli-version`.
+
+## Recorded 2026-09-11: comp regions no longer include neighbouring pixels
+
+The `comp-diff-no-spec` golden now measures the automatic bands at their actual
+bounds rather than enlarging bands under 48px. Reviewed changes are confined to
+regional scores and ink boxes: the second band's overall is 0.6755 (was 0.6951),
+the fourth is 1.0 (was 0.9468), and narrow-band ink boxes use the corrected crop
+coordinates. Whole-frame scores, verdicts, region definitions, exit status, and
+stderr are unchanged. The golden was updated to enforce these exact results;
+this is not an open-ended accepted delta. Frozen function call vectors remain
+unchanged. The Rust narrow-region regression independently checks that changing
+only neighbouring pixels leaves the measured crop identical.
+
+## Recorded 2026-09-17: reference-bound typography reuse
+
+- `comp-spec-regions`: the written spec adds `compSha256`, a SHA-256 of decoded dimensions and pixels. This binds retained typography to the exact reference when regions are remeasured. Structured comparison verified that only this field changed; stdout, stderr, exit status, regions, palettes and bounds are identical. The failing/passing regression separately verifies preservation and invalidation.
+
+## Recorded 2026-09-17: exact reference bounds and non-destructive plate candidates
+
+Reviewed the three CLI differences before updating their goldens:
+`comp-spec-grid` appends coordinate guidance, `comp-spec-usage` explains grid,
+normalized box and exact pixelBox units, and `build-phase-usage` advertises the
+read-only candidate check. Only those stdout strings changed. Existing image
+files, measurements, exit codes and frozen function vectors were not replaced.
+The plate gate applies reference UI exclusions symmetrically after alignment;
+regressions separately verify hidden-pixel invariance, visible missing-art
+rejection, raw comp-copy rejection and unchanged candidate-check state.
+
+## Recorded 2026-09-18: draft region authoring and source binding
+
+`comp-spec-usage` now describes --auto as a draft writer. In
+`comp-spec-regions`, the only file-content addition is regionsSource with the
+input path and fixture-derived SHA-256; all existing fields and measurements
+were compared unchanged. No frozen function vectors changed. New Rust
+regressions verify automatic drafts do not overwrite specs or existing drafts,
+cannot be submitted unchanged, and a rejected/missing region-source revision
+cannot advance the build using the last successful measurements.
+
+## Recorded 2026-09-18: read-only map inspection
+
+`comp-spec-usage` adds one help line for --inspect-map, --out-dir and --json.
+Only that stdout line was edited; existing measurements and frozen function
+vectors remain unchanged. Rust regressions cover consolidated invalid-input
+findings, fully masked references, container and child masks, preservation of
+review group members, reference PNG provenance, HTML escaping, and refusal to
+overwrite an existing report. Inspection does not change specs or build state.
+
+## Recorded 2026-09-24: build session identity and nested italic headings
+
+`build-phase-start-status`: the written state adds `"sessionId": "oracle-build"`
+after `finish`, from the new `--session-id` start option. No other state field,
+stdout, stderr or exit status changed. `build-phase-usage` advertises
+`[--artifact <entry file>] [--session-id <id>]` on start and the new
+`completion [--session-id <id>]` verb; only those usage strings changed.
+
+The italic-serif-display correction adds exactly one finding per golden that
+scans `tests/fixtures/antipatterns/italic-serif-display.html`: `italic serif h1
+(fraunces) at 72px "Inline Em Inside Roman"`, a roman h1 whose visible text is
+an `<em>` set in the same serif. The fixture moved this case from should-pass to
+should-flag. `detect-fixture-{json,text}-italic-serif-display-html` go from 7 to
+8 findings, and the aggregate corpus goldens (`detect-dir-*-all-fixtures`,
+`detect-no-advisory-*`, `detect-scope-both`, `detect-scope-type`) go from 419 to
+420. Every other finding, count, snippet and exit status is unchanged. Hidden
+heading descendants and sans-serif or small italics stay exempt; Rust
+regressions in `crates/html/tests/italic_heading.rs` pin both sides.
+
+## Recorded 2026-09-25: plan and asset review (component review v3)
+
+Three new cases, recorded from the binary and reviewed by hand; no existing
+golden changed. `component-review-usage` is the usage refusal, which now leads
+with `plan [--out .impeccable/review/components.json]`. `component-review-plan-missing-plates`
+runs `plan` on the comp-basic spec before its one plate exists: exit 1, the
+missing plate listed, nothing written. `component-review-plan` adds the plate
+and pins the written v3 packet: `art` as an asset previewed by its plate, `top`
+(non-container chrome) as a plan item with a `comp-crop` preview, `body` in
+`codeRegions`, and `specSha256` of the fixture spec. Contract:
+`docs/PLAN-REVIEW.md`. The build-phase plates next-step text gained one
+sentence naming the review; no golden prints it.
+
+## Recorded 2026-09-25: surface reading on code regions
+
+`comp-spec-regions`: the written spec adds `"surface": {"flat": false, "rules": false}` to the two code regions (`top`, `body`). The raster region, every other field, measurement, stdout, stderr and exit status are unchanged, and no region in the fixture reads painted, so no `flags` entry or `FLAG` line appears. No frozen function vectors changed. Rust regressions cover the readings: a painted patch reads the same in tight and generous boxes, containers flag only on unmapped painted material, and grounds and rules separate from marks.
+
+## Recorded 2026-09-29: visualize.md before decision comps
+
+Agents wrote decision comp prompts before opening `reference/visualize.md`, which holds every comp-prompt rule, while they followed the engine's printed NEXT lines reliably. `serve-question` now prints a `NEXT read <skill>/reference/visualize.md now, before writing any decision comp prompt; ...` line when a round's comps are due, and `--wait` names landed decision comps that have no prompt sidecar.
+
+- `question-wait-flip`: after the unchanged `BUILD PATH FLIPPED` line, one added `NEXT read <REPO>/skill/reference/visualize.md now, ...` line (a flip to comp is the moment a code-led round's comps start). Exit status and files are unchanged.
+
+New cases, recorded from the binary and reviewed by hand: `question-wait-comp-sidecar-missing` (WAITING plus `COMP SIDECAR MISSING` naming only the landed comp without a sidecar), `question-wait-answer-comp-sidecar-missing` (the same line after the ANSWER block), `question-update-comps-next` (the NEXT line after `next round delivered`), `question-update-code-led-no-next` (a code-led round prints no NEXT line). `--start` is not in the corpus because it binds a port; Rust tests in `crates/context/src/serve_question.rs` cover its trigger.
+
+Follow-up on the same branch: the NEXT line now also requires a declared comp that is not on disk yet (a comp-round page serves comps that already exist, so "before writing any decision comp prompt" was stale there), and a comp-round pick no longer prints the decision-round `CHOSEN COMP` line ("compositional option one ... adds two variations"), which predates this branch. It prints `APPROVED COMP: ...` instead, keyed on the comp sitting directly in `.impeccable/mocks/`. No existing golden changed. New cases: `question-update-comps-landed-no-next` (every declared comp exists, no NEXT line) and `question-wait-answer-comp-round` (`APPROVED COMP` in place of `CHOSEN COMP`).
+
+Provenance by hand timestamp (same branch): deciding whether a comp is owed by existence alone misread files an earlier round left at reused slot paths. Every served hand now records `handAt` and `handDigest` in the state file, and a declared comp counts for the hand only when written at or after `handAt` (comp-round comps directly in `.impeccable/mocks/` excepted). A restart is `--start` with the same key and payload, so the dead-server message now names the key:
+
+- `question-wait-no-server`, `question-wait-dead-pid`: `restart it with --start and the same payload` reads `restart it with --start --key k1 and the same payload`. Exit status and files are unchanged.
+
+New case `question-wait-comp-stale`: `handAt` in 2100 makes the staged comp one an earlier round left, so WAITING is followed by `COMP STALE: ...` naming it, and no `COMP SIDECAR MISSING`. The other decision-comp goldens carry no `handAt`, which falls back to existence, so they did not move.
+
+Hand file and content fingerprints (same branch, supersedes the `handAt` rule above): `--update` wrote the hand into `<key>.state.json`, which the server rewrites on heartbeat and claim, so an overlapping write could drop the hand; and flooring `handAt` to the second let an old image rewritten in the same second pass. Provenance now lives in `<key>.hand.json` (`digest`, `comps`, `pre` fingerprints), written atomically by `--start` and `--update` only, and a comp is this hand's when its bytes differ from the slot's `pre` fingerprint (or the slot had none).
+
+- `question-wait-comp-stale`: the staged provenance moved from `handAt`/`handDigest` in the state file to a hand file whose `pre` fingerprint matches the staged `a.png`. Stdout and exit are unchanged; the snapshot now lists the hand file, and the state file no longer carries hand fields.
+- `question-update-comps-next`: now snapshots `.impeccable/questions/k1.hand.json`, the new hand `--update` writes (`pre` is empty because neither slot holds a file). Stdout and exit are unchanged.
+
+Generated slots and hand-write failures (same branch): a deterministic generator returns identical bytes for an unchanged prompt, so a re-roll regenerating into a reused slot failed the fingerprint rule forever. `impeccable generate-image` now marks a written `--out` that a recorded hand declares with a marker file in `<key>.generated/`, and such a slot counts as this hand's. A failed hand write now fails `--start` (before spawning) and `--update` (before delivering) with exit 1. No existing golden changed. New case `genimg-fake-marks-hand-slot`: the fake generator writes a declared slot and the snapshot shows the marker beside the untouched hand file. The failure path is covered by Rust tests, not the oracle, because its stderr carries the OS error text, which differs per platform. Follow-up: markers name their hand by `hand` (the hand's per-hand `id`, falling back to `digest` for a hand file without one) instead of `digest`, so `genimg-fake-marks-hand-slot` now shows `"hand":"0123456789abcdef"` where it showed `"digest"`; a new hand prunes other hands' markers only after its own write succeeds, and `--stop` and a closing answer remove the marker folder. `question-update-comps-next` now snapshots the hand file with its per-hand `id`, which mixes the clock and the pid, so that case masks it as `<HAND_ID>` with a case-scoped normalizer.
+
+## Recorded 2026-09-30: hand-tagged generated markers (#886)
+
+`--update` wrote the new hand and then pruned `<key>.generated/` by reading each marker's `hand` and deleting the file, so a parallel `impeccable generate-image` for the new hand that replaced a reused slot's marker between the read and the delete lost its marker, and a byte-identical regeneration then read as stale. Markers now carry the hand in their name, `<16 hex of the slot>-<hand id>.json`, so one hand's markers never share a path with another's, and the prune decides from the name alone: it deletes only names tagged with another hand. Legacy untagged `<16 hex>.json` markers are still read and pruned by their content `hand` (or `digest`).
+
+- `genimg-fake-marks-hand-slot`: the marker file is now `k1.generated/bc804e5cae3cb360-0123456789abcdef.json` where it was `k1.generated/bc804e5cae3cb360.json`. Its content, stdout, stderr and exit are unchanged.
+
+The interleaving itself is covered by Rust tests in `crates/context/src/serve_question.rs`, not the oracle, since it needs two writers.
+
+## Recorded 2026-09-30: sidecar name spelled out
+
+The decision-comp directives said a comp's prompt goes in `<comp>.json`, which an agent read as the comp's name without its extension (`assigned.json`). The engine checks the image's full file name plus `.json` (`a.png.json`), so the wording now says so: `its sidecar, the image's full file name plus .json (a.png gets a.png.json)`. Only that phrase moved in each golden; exit status, files and every other line are unchanged.
+
+- `question-update-comps-next`, `question-wait-flip`: the `NEXT read ... visualize.md` line ends with the new phrase in place of `(<comp>.json)`.
+- `question-wait-comp-sidecar-missing`, `question-wait-answer-comp-sidecar-missing`: `COMP SIDECAR MISSING` names the sidecar the same way, followed by `as {"prompt": "..."} (generate-image writes it itself, a harness image tool does not)`.
+- `question-wait-answer-comp-round`: `APPROVED COMP` says `Set "approved": true in its prompt sidecar, the image's full file name plus .json (a.png gets a.png.json)`.
+Concept-seed richness instruction scoped by mode (fix/operate-directions): the seed's RICHNESS text told every run to commit an interface-language source "across navigation, content, controls, and states", which contradicted the Operate rule in new-work.md and visualize.md at fusion time. It now allows that on Persuade and Experience surfaces, while Operate and Read take the source's type, density, palette, material accents and one signature move and keep the platform's standard navigation and controls. The 12 seed goldens that print the instruction change in that one sentence only; reviewed by hand.
+
+## Recorded 2026-09-30: Operate deals from the graphic tier
+
+`select_approved_challengers` now takes per-mode tier quotas (`TIER_QUOTAS`), in parity with impeccable-site's roll API (renaissance-geek-inc/impeccable-site#77). Operate draws five graphic worlds and one interaction world and no atmosphere, because instrument and atmosphere worlds dealt to working screens became costumes of the tool. For a mode with quotas, a tier the mode filter empties hands its picks to graphic instead of refilling from worlds closed to the mode. Every other mode keeps two per tier with the same salts, so no persuade, read, experience or unscoped roll moved; `crates/context/src/roll_selection.rs` tests replay 136 rolls recorded from the JS to prove it.
+
+- `seed-direction-local-count-5` (`--mode operate`): challengers 3 to 6 were relay desk, dial cabinet (interaction), pine gallery, dusk quarry (atmosphere); they are now placard row, crest register, stamp folio (graphic) and relay desk (interaction). Header, assigned index and every other line are unchanged.
+- `seed-surface-local`, `seed-surface-local-default-scope` (`--mode operate`, surface scope): the atmosphere pair frost arcade and salt terrace and the second interaction pick, signal tower, are gone; folio stand and banner press join placard row and poster wall, with meter row as the one interaction pick. The fixture catalog holds only four graphic duals, so this surface roll deals five challengers where it dealt six: a quota tier reuses its pool when it cannot fill its quota but never borrows another strength. The live catalog holds 16 graphic duals open to operate.
+- `seed-direction-local-operate` (new): an operate direction roll on `oracle-key-1`, five graphic and one interaction, no atmosphere.
+
+## Recorded 2026-10-01: MODE RULES printed by concept-seed
+
+Mode-specific rules for directions and comps moved out of the shared reference files into `skill/reference/mode-persuade.md` (persuade and experience), `mode-operate.md` and `mode-read.md`. With `--mode`, `concept-seed` now prints the bodies of the mode file's `## Directions` and `## Comps` sections inside a `MODE RULES (<mode>, from <path>). ...` block, so the agent gets them in output it already reads instead of a file it can skip. The block sits right after the richness instruction on a full roll and after the authority instruction on a degraded one, and prints on every round, re-rolls and both registers included. An unreadable file or a missing section prints one `MODE RULES unavailable: read <path> before writing directions or comps.` line and the roll still succeeds. The richness instruction lost its Persuade/Experience versus Operate/Read sentence, which now lives in the mode files, and reads `Keep a literal carrier only when it becomes functional.` where it read `Otherwise keep ...`.
+
+Seed cases now set `IMPECCABLE_SKILL_DIR` to `tests/fixtures/mode-rules-skill` (placeholder rule text), so these goldens do not move whenever the real mode prose changes. Nothing else concept-seed prints reads the skill dir while `IMPECCABLE_CATALOG_DIR` is pinned.
+
+- Every seed golden that prints the richness instruction (`seed-direction-local`, `-reroll`, `-reroll-bolder`, `-reroll-safer`, `-unscoped`, `-count-5`, `-operate`, `seed-direction-env-key`, `seed-surface-local`, `-default-scope`, `-grain-flow`, `-compositions`, `-card-base`): the richness sentence change above. Those that pass `--mode` also gain the MODE RULES block after it, naming the fixture file for their mode (`seed-surface-local-card-base` prints `experience` with `mode-persuade.md`). The unscoped and safer cases without `--mode` print no block.
+- `seed-degraded-direction`, `seed-degraded-surface`: the MODE RULES block after the authority instruction (persuade and operate). Degraded output carries no richness instruction, so nothing else moved.
+- `question-update-comps-next`, `question-wait-flip`: the NEXT line reads `it and the MODE RULES block concept-seed printed for this surface govern every card's image` where it read `its comp rules govern every card's image`.
+
+Exit status, stderr and files are unchanged everywhere. New cases: `seed-mode-rules-persuade`, `-experience` (reads `mode-persuade.md`), `-operate`, `-read` (one per mode file, `oracle-key-5`), and `seed-mode-rules-missing-file`, `-missing-section` against `tests/fixtures/mode-rules-skill-partial` (no `mode-read.md`; a `mode-operate.md` without `## Comps`), which print the unavailable line.

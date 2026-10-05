@@ -52,9 +52,14 @@ type mcpScopeScan struct {
 }
 
 // Agent roots resolve local transcript/config dirs and stay env-overridable so
-// tests never read or write a user's real agent data.
+// tests never read or write a user's real agent data. After the CAVEMAN_*
+// test overrides come the agents' own relocation variables: CLAUDE_CONFIG_DIR
+// moves Claude Code's whole config dir, CODEX_HOME moves Codex's.
 func claudeRoot() string {
 	if r := os.Getenv("CAVEMAN_CLAUDE_ROOT"); r != "" {
+		return r
+	}
+	if r := os.Getenv("CLAUDE_CONFIG_DIR"); r != "" {
 		return r
 	}
 	home, err := os.UserHomeDir()
@@ -66,6 +71,9 @@ func claudeRoot() string {
 
 func codexRoot() string {
 	if r := os.Getenv("CAVEMAN_CODEX_ROOT"); r != "" {
+		return r
+	}
+	if r := os.Getenv("CODEX_HOME"); r != "" {
 		return r
 	}
 	home, err := os.UserHomeDir()
@@ -205,6 +213,10 @@ func claudeGlobalConfigPath() string {
 	}
 	if root := os.Getenv("CAVEMAN_CLAUDE_ROOT"); root != "" {
 		// Tests and alternate Claude homes must not fall through to real user config.
+		return filepath.Join(root, ".claude.json")
+	}
+	if root := os.Getenv("CLAUDE_CONFIG_DIR"); root != "" {
+		// A relocated Claude Code keeps its global config inside the config dir.
 		return filepath.Join(root, ".claude.json")
 	}
 	home, err := os.UserHomeDir()

@@ -41,4 +41,33 @@ output="$($INSTALLER --tool claude-code --agent 'Developer Tooling Engineer' --d
   exit 1
 }
 
-echo "PASS: install.sh rejects unknown agent selections and accepts display names"
+# The file stem is the id strategy/runbooks.json uses, and for most agents it is
+# not the install slug (engineering-frontend-developer vs frontend-developer).
+output="$("$INSTALLER" --tool claude-code --agent engineering-frontend-developer --dry-run 2>&1)"
+[[ "$output" == *"Agents:  1"* ]] || {
+  printf 'File-stem selection did not resolve to one agent:\n%s\n' "$output" >&2
+  exit 1
+}
+
+# Every runbook roster, fed to --agents-file as the runbooks list it, resolves
+# to exactly its own agents. On main 35 of the 36 ids were "Unknown agent".
+REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+while IFS=$'\t' read -r runbook count ids; do
+  printf '%s\n' $ids > "$AGENTS_FILE"
+  set +e
+  output="$("$INSTALLER" --tool claude-code --agents-file "$AGENTS_FILE" --dry-run 2>&1)"
+  status=$?
+  set -e
+  [[ "$status" -eq 0 && "$output" == *"Agents:  $count"* ]] || {
+    printf 'Runbook %s roster (%s agents) did not resolve:\n%s\n' "$runbook" "$count" "$output" >&2
+    exit 1
+  }
+done < <(python3 - "$REPO_ROOT/strategy/runbooks.json" <<'PY'
+import json, sys
+for rb in json.load(open(sys.argv[1], encoding="utf-8"))["runbooks"]:
+    ids = sorted({a for group in rb["roster"] for a in group["agents"]})
+    print(f'{rb["slug"]}\t{len(ids)}\t{" ".join(ids)}')
+PY
+)
+
+echo "PASS: install.sh rejects unknown agent selections and accepts display names, file stems, and runbook rosters"

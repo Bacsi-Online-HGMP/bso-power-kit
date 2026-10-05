@@ -53,6 +53,14 @@ const cases = [
   { id: 'comp-spec-plate-prompt', verb: 'comp-spec', workspace: WS, args: ['--plate-prompt', 'art', '--spec', 'spec.json'], env: env() },
   { id: 'comp-spec-usage', verb: 'comp-spec', workspace: WS, args: [], env: env() },
   {
+    id: 'comp-spec-excluded-reference', verb: 'comp-spec', workspace: WS,
+    setup: (ws) => write(ws, 'excluded.json', JSON.stringify({ comp: 'comp.png', regions: [
+      { id: 'art', kind: 'plate', medium: 'raster', px: { x: 0, y: 0, w: 32, h: 32 } },
+      { id: 'nav', kind: 'chrome', px: { x: 0, y: 0, w: 32, h: 32 } },
+    ] })),
+    args: ['--crop', 'art', '--spec', 'excluded.json', '--out', 'excluded.png'], env: env(),
+  },
+  {
     id: 'comp-spec-refuses-painted-chrome', verb: 'comp-spec', workspace: WS,
     setup: (ws) => write(ws, 'bad.json', JSON.stringify({ allowUncovered: true, regions: [{ id: 'x', kind: 'chrome', grid: 'A0:B1', note: 'an exploded diagram illustration' }] })),
     args: ['--comp', 'comp.png', '--regions', 'bad.json'], env: env(),
@@ -74,10 +82,43 @@ const cases = [
   // build-phase: start (reads comp dims) then status, sharing one workspace.
   {
     id: 'build-phase-start-status', verb: 'build-phase', workspace: WS,
-    files: ['.impeccable/build/state.json'], env: env(),
+    files: ['.impeccable/build/state.json'], env: { ...env(), IMPECCABLE_SESSION_ID: 'oracle-build' },
     steps: [{ args: ['start', '--comp', 'comp.png'] }, { args: ['status'] }],
   },
   { id: 'build-phase-usage', verb: 'build-phase', workspace: WS, args: [], env: env() },
+
+  // component-review plan: the v3 packet derives from the measured spec. The
+  // spec fixture has one plate region (art), one non-container chrome (top,
+  // a plan item) and one text region (body, a code region).
+  { id: 'component-review-usage', verb: 'component-review', workspace: WS, args: [], env: env() },
+  {
+    id: 'component-review-plan-missing-plates', verb: 'component-review', workspace: WS,
+    setup: (ws) => write(ws, '.impeccable/build/spec.json', fs.readFileSync(path.join(ws, 'spec.json'))),
+    args: ['plan'], env: env(),
+  },
+  {
+    id: 'component-review-plan', verb: 'component-review', workspace: WS,
+    setup: (ws) => {
+      write(ws, '.impeccable/build/spec.json', fs.readFileSync(path.join(ws, 'spec.json')));
+      write(ws, 'assets/plates/art.png', fs.readFileSync(path.join(ws, 'comp.png')));
+    },
+    args: ['plan'], files: ['.impeccable/review/components.json'], env: env(),
+  },
+  // Absolute paths inside the project and backslashed ones come back project-relative
+  // with forward slashes (comp-spec may record either).
+  {
+    id: 'component-review-plan-absolute-paths', verb: 'component-review', workspace: WS,
+    setup: (ws) => {
+      const spec = JSON.parse(fs.readFileSync(path.join(ws, 'spec.json'), 'utf8'));
+      spec.comp = path.join(fs.realpathSync(ws), 'comp.png');
+      for (const r of spec.regions) if (r.id === 'art') r.plate = 'assets\\plates\\art.png';
+      write(ws, '.impeccable/build/spec.json', JSON.stringify(spec));
+      write(ws, 'assets/plates/art.png', fs.readFileSync(path.join(ws, 'comp.png')));
+    },
+    args: ['plan'], files: ['.impeccable/review/components.json'], env: env(),
+    // The spec names the staged workspace, so its digest is run-dependent.
+    normalize: [['("specSha256": ")[0-9a-f]{64}', 'g', '$1<SHA256>']],
+  },
 ];
 
 export default cases;

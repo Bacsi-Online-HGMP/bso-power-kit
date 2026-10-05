@@ -17,7 +17,8 @@
 | **Backlinks** | `backlinks_*` | $0.02 | Per sub-call |
 | **Content** | `content_analysis_*` | $0.02 | Search, summary, trends |
 | **Business** | `business_data_*` | $0.05 | Listings search |
-| **AI/GEO** | `ai_optimization_chat_gpt_scraper`, `ai_opt_llm_ment_*` | $0.05 | ChatGPT scraper, LLM mentions |
+| **AI/GEO** | `ai_opt_llm_ment_search` | ~$0.103 | LLM mention search (official response example, checked 2026-09-23) |
+| **AI/GEO** | `ai_optimization_chat_gpt_scraper`, other `ai_opt_llm_ment_*` | $0.05 | ChatGPT scraper, LLM mention aggregates |
 | **Merchant** | `merchant_*` | $0.02 | Google Shopping, Amazon |
 | **Domain** | `domain_analytics_whois_*` | $0.005 | WHOIS data |
 | **Domain** | `domain_analytics_technologies_*` | $0.01 | Tech stack |
@@ -39,7 +40,7 @@ Configure with: `"${CLAUDE_PLUGIN_ROOT}/scripts/claude-seo" run dataforseo_costs
 - Batch keywords into single `search_volume` calls instead of individual SERP lookups
 - Use `standard` task queue instead of `live` for non-urgent analysis (60-80% savings)
 - Avoid `site:` and `filetype:` operators in image SERP queries (5x cost multiplier)
-- Cache session results — don't re-fetch the same keyword/domain within a session
+- Cache session results: don't re-fetch the same keyword/domain within a session
 
 ## Approval Flow
 

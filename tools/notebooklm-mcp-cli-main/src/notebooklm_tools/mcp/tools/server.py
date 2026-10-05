@@ -109,6 +109,49 @@ def _runtime_capabilities(
     }
 
 
+def _check_storage_warning() -> str | None:
+    """Return a short one-line storage warning if a conflict or pending operation exists.
+
+    Never touches the OS keystore in file mode and never raises.
+    """
+    try:
+        from notebooklm_tools.services.auth_storage import get_storage_status
+
+        status = get_storage_status()
+        if status.get("has_conflict"):
+            return "Storage conflict detected. Run 'nlm auth storage resolve'."
+        if status.get("has_pending_op"):
+            return "Pending storage operation detected. Run 'nlm auth storage status'."
+        if status.get("protected_residue"):
+            return "Protected storage residue present. Run 'nlm auth storage resolve file'."
+        return None
+    except Exception:
+        return None
+
+
+def _profile_summary() -> dict[str, Any]:
+    """Saved profiles with storage mode and problems - metadata only, never the keystore."""
+    from ...services import profiles as profile_service
+
+    try:
+        rows = []
+        for row in profile_service.list_profiles():
+            try:
+                st = profile_service.profile_storage_status(row["name"])
+            except Exception:
+                st = {}
+            rows.append(
+                {
+                    **row,
+                    "has_conflict": bool(st.get("has_conflict")),
+                    "has_pending_op": bool(st.get("has_pending_op")),
+                }
+            )
+        return {"active_profile": profile_service.get_active_profile(), "profiles": rows}
+    except Exception as exc:
+        return {"active_profile": None, "profiles": [], "profiles_error": str(exc)}
+
+
 @logged_tool()
 def server_info() -> dict[str, Any]:
     """Get version, auth status, and conservative MCP capability visibility.
@@ -143,9 +186,13 @@ def server_info() -> dict[str, Any]:
         - latest_version: Latest version on PyPI (or None if check failed)
         - update_available: True if a newer version is available
         - auth_status: configured | stale | unverified | not_configured | error
+        - storage_warning: Short warning if conflict/pending op exists (or None)
         - update_command: Command to run to update
         - mcp_capabilities: Built-in tool groups visible in this server process
         - provider_capabilities: Explicitly unprobed provider/account capabilities
+    - active_profile: Which saved account is in use and why (session switch or saved default)
+    - profiles: Saved accounts with email, storage mode (plain/protected) and any storage
+      problems. Metadata only; never opens the OS keystore.
     """
     latest = _get_latest_pypi_version()
     update_available = False
@@ -153,12 +200,13 @@ def server_info() -> dict[str, Any]:
     if latest:
         update_available = _compare_versions(__version__, latest)
 
-    return {
+    info: dict[str, Any] = {
         "status": "success",
         "version": __version__,
         "latest_version": latest,
         "update_available": update_available,
         "auth_status": _check_auth_status(),
+        "storage_warning": _check_storage_warning(),
         "update_command": "uv tool upgrade notebooklm-mcp-cli",
         "pip_update_command": "pip install --upgrade notebooklm-mcp-cli",
         "mcp_capabilities": _runtime_capabilities(),
@@ -170,3 +218,6 @@ def server_info() -> dict[str, Any]:
             ),
         },
     }
+
+    info.update(_profile_summary())
+    return info

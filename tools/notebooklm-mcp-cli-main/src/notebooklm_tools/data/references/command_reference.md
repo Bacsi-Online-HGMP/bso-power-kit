@@ -57,6 +57,7 @@ nlm login [OPTIONS]
 | `--force` | | Replace credentials even if the detected account differs |
 | `--clear` | | Clear stored browser/profile state before login |
 | `--wsl` | | Use the WSL/Windows-browser authentication path |
+| `--storage` | | `protected` or `file`: where to keep the saved login for a NEW profile (skips the question; refused for existing profiles) |
 
 **Note**: Each profile gets its own isolated Chrome session, so you can be logged into multiple Google accounts simultaneously.
 
@@ -118,6 +119,71 @@ nlm login switch work
 # Output: ✓ Switched default profile to work
 #         Account: jsmith@company.com
 ```
+
+### nlm auth storage status
+
+Show current credential storage mode (`file` or `protected`) for a profile, envelope status, and any detected conflicts.
+
+```bash
+nlm auth storage status [OPTIONS]
+```
+
+| Option | Short | Description |
+|--------|-------|-------------|
+| `--profile` | `-p` | Profile to check (default: configured default profile) |
+| `--json` | `-j` | Output as JSON |
+
+### nlm auth storage set
+
+Change credential storage mode for one or more profiles. In a terminal with several saved logins and no `--profile`, a picker lets you choose which ones (nothing pre-selected). Scripts and agents without a terminal act on the default profile and are told which profiles are still in the other mode. In `protected` mode, credentials are encrypted via the OS credential store (macOS Keychain, Windows Credential Manager, Secret Service / libsecret).
+
+```bash
+nlm auth storage set <mode> [OPTIONS]
+```
+
+| Argument | Description |
+|----------|-------------|
+| `<mode>` | Target mode: `file` or `protected` |
+
+| Option | Short | Description |
+|--------|-------|-------------|
+| `--profile` | `-p` | Profile to set (skips the picker) |
+| `--all` | | Apply to every saved profile not already in this mode |
+| `--json` | `-j` | Output as JSON |
+
+> **Downgrade Preparation**: If downgrading to an older version of `notebooklm-mcp-cli` that does not support Protected mode, run `nlm auth storage set file` for every protected profile first to restore plaintext files.
+
+### nlm auth storage resolve
+
+Resolve a credential storage conflict when both encrypted credentials and legacy plaintext files exist, clear stuck operation markers, or discard inaccessible credentials.
+
+```bash
+nlm auth storage resolve [choice] [OPTIONS]
+```
+
+| Argument | Description |
+|----------|-------------|
+| `[choice]` | Resolution choice: `file` (keep plaintext, discard encrypted) or `protected` (keep encrypted, discard plaintext) |
+
+| Option | Short | Description |
+|--------|-------|-------------|
+| `--profile` | `-p` | Profile to resolve (default: configured default profile) |
+| `--discard-inaccessible` | | Discard inaccessible ciphertext and reset to file mode without exporting |
+| `--clear-marker` | | Clear a stuck or corrupt operation marker |
+| `--yes` | `-y` | Confirm action without interactive prompt |
+| `--json` | `-j` | Output as JSON |
+
+### nlm auth storage relocate
+
+Re-bind installation identity after moving or restoring the storage directory to update the stored installation ID and path binding.
+
+```bash
+nlm auth storage relocate [OPTIONS]
+```
+
+| Option | Short | Description |
+|--------|-------|-------------|
+| `--json` | `-j` | Output as JSON |
 
 ---
 
@@ -1038,7 +1104,7 @@ nlm config set <key> <value>
 | `output.format` | `table` | Default output format (table, json) |
 | `output.color` | `true` | Enable colored output |
 | `output.short_ids` | `true` | Show shortened IDs |
-| `auth.browser` | `auto` | Preferred browser for login (auto, chrome, arc, dia, comet, brave, edge, chromium, firefox, vivaldi, opera). Falls back to auto if a preferred named browser is not found. |
+| `auth.browser` | `auto` | Preferred browser for login (auto, chrome, arc, dia, comet, brave, edge, edge-beta, chromium, firefox, vivaldi, opera). Falls back to auto if a preferred named browser is not found. |
 | `auth.browser_path` | empty | Explicit Chromium-compatible executable path. Overrides named discovery; `NLM_BROWSER_PATH` provides the environment override. |
 | `auth.default_profile` | `default` | Profile to use when `--profile` not specified. **Note:** The MCP Server always uses the active default profile. Changing this setting will instantaneously switch the MCP server's Google account. |
 
@@ -1114,6 +1180,7 @@ MCP setup writes the configured server name `gemini-notebook-mcp`; the
 `notebooklm-mcp` executable remains unchanged for compatibility.
 
 ```bash
+nlm setup
 nlm setup list
 nlm setup add <tool>
 nlm setup remove <tool>
@@ -1127,6 +1194,7 @@ nlm skill install <tool> [--level user|project]
 nlm skill update [tool]
 nlm skill uninstall <tool>
 nlm skill show
+nlm skill package [--output DIR]   # Zip for Claude Desktop / claude.ai skill upload
 
 nlm doctor
 nlm doctor --verbose
@@ -1137,9 +1205,18 @@ Relay AI/3P profiles exist, the command prompts for a selection unless
 `--profile` is supplied; if no profile exists, nothing is created. Fully quit
 the selected Claude profile before adding or removing MCP configuration. The
 CLI refuses to write while the active Claude executable is running, including
-when Relay AI launched it. User-level skill installation likewise requires
-the target tool to be detected; use `--level project` for an intentional
-project-local install.
+when Relay AI launched it. Bare `nlm setup` opens a wizard with Show my tools' status,
+Add the MCP to my tools/agents, Add the skill to my tools/agents, Remove an MCP
+or skill, Credential protection, Copy MCP setup for a tool not listed, and Exit (Esc goes back). It
+offers to rename entries still using the old `notebooklm-mcp` name. MCP configuration defaults to app/user scope;
+GitHub Copilot is configured in the VS Code user profile by the wizard. Its
+direct command defaults to the current project and accepts `--scope user` for
+the global profile. The optional skill defaults to **All projects (user level)**
+and can target **This folder (project level)**. Skill updates skip equal or
+newer versions and ask before replacing older or unversioned installs; existing
+skill directories are backed up before replacement or removal. `nlm skill
+package` writes `nlm-skill.zip` for Claude Desktop Chat/Cowork and claude.ai
+(Customize → Skills → Add); re-upload it after updating `nlm`.
 
 Verb-first aliases are also available for common operations, including
 `nlm create`, `nlm list`, `nlm get`, `nlm add`, `nlm rename`, `nlm delete`,

@@ -87,7 +87,7 @@ jobs:
 
 ### Static Key → Dynamic, Short-Lived Credential
 
-```hcl
+```bash
 # BEFORE: a long-lived static DB password in an env var — one leak = full, permanent access.
 # DATABASE_URL=postgres://app:sup3rs3cret@db.internal:5432/app   # never rotated, everywhere
 
@@ -95,10 +95,21 @@ jobs:
 vault write database/roles/app \
   db_name=appdb \
   creation_statements="CREATE ROLE \"{{name}}\" WITH LOGIN PASSWORD '{{password}}' VALID UNTIL '{{expiration}}'; \
-                       GRANT SELECT, INSERT, UPDATE ON app.* TO \"{{name}}\";" \
+                       GRANT USAGE ON SCHEMA app TO \"{{name}}\"; \
+                       GRANT SELECT, INSERT, UPDATE ON ALL TABLES IN SCHEMA app TO \"{{name}}\";" \
   default_ttl="15m" max_ttl="1h"
 # The app fetches a fresh, least-privilege credential per session; a leaked one is dead in minutes.
 ```
+
+This PostgreSQL example assumes the dedicated `app` schema contains only tables
+this workload may access, and the Vault database connection role can create roles
+and grant those privileges. `app.*` is not PostgreSQL GRANT syntax; schema `USAGE`
+and table privileges are separate. The grants cover existing tables only. Reissue
+credentials after migrations or maintain a reviewed grant strategy for future
+tables. Sequence-backed inserts need narrowly scoped sequence `USAGE` as well.
+Verify a leased role can SELECT/INSERT/UPDATE an allowed table but cannot DELETE,
+CREATE a table, or access another schema. See [PostgreSQL GRANT](https://www.postgresql.org/docs/current/sql-grant.html)
+and [Vault's database secrets tutorial](https://developer.hashicorp.com/vault/tutorials/db-credentials/database-secrets).
 
 ### Leak-Response Runbook (the clock started at commit)
 

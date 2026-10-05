@@ -23,17 +23,48 @@
 //      - $XDG_CONFIG_HOME/caveman/config.json (any platform, if set)
 //      - ~/.config/caveman/config.json (macOS / Linux fallback)
 //      - %APPDATA%\caveman\config.json (Windows fallback)
-//   4. 'full'
+//   4. 'caveman'
 
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
 
+// One stored id per skill: skills/caveman, skills/ultracave, skills/megacave,
+// plus the one-shot modes and the durable off.
 const VALID_MODES = [
-  'off', 'lite', 'full', 'ultra',
-  'wenyan-lite', 'wenyan', 'wenyan-full', 'wenyan-ultra',
+  'off', 'caveman', 'ultracave', 'megacave',
   'commit', 'review', 'compress'
 ];
+
+// Startup policy only: manual starts inactive, but explicit activation uses
+// caveman. Keep it out of flag validation and the selectable modes.
+const VALID_DEFAULT_MODES = [...VALID_MODES, 'manual'];
+
+// The six intensity levels that preceded the three skills. Session files,
+// .caveman-active mirrors, config files, env vars and mode-log rows written
+// before the switch still hold these, so every read maps them forward and no
+// write ever emits one.
+const LEGACY_MODES = {
+  lite: 'caveman', full: 'caveman', ultra: 'ultracave',
+  wenyan: 'megacave', 'wenyan-lite': 'megacave',
+  'wenyan-full': 'megacave', 'wenyan-ultra': 'megacave',
+};
+
+// Stored/configured value → current mode id, or null when it is neither a
+// mode nor a legacy level. The whitelist every read path goes through.
+function canonicalMode(raw) {
+  if (typeof raw !== 'string') return null;
+  const m = raw.toLowerCase();
+  if (VALID_MODES.includes(m)) return m;
+  return Object.prototype.hasOwnProperty.call(LEGACY_MODES, m) ? LEGACY_MODES[m] : null;
+}
+
+// Same, for default-mode sources, which also accept the 'manual' policy.
+function canonicalDefaultMode(raw) {
+  if (typeof raw !== 'string') return null;
+  const m = raw.toLowerCase();
+  return VALID_DEFAULT_MODES.includes(m) ? m : canonicalMode(m);
+}
 
 // Legacy machine-wide flag. Kept as a last-write-wins MIRROR of whichever
 // session wrote most recently, because INSTALL.md tells users to `cat` it and
@@ -99,9 +130,8 @@ function readModeFromConfigFile(configPath) {
   try {
     const raw = fs.readFileSync(configPath, 'utf8');
     const config = JSON.parse(raw);
-    if (config && config.defaultMode &&
-        VALID_MODES.includes(String(config.defaultMode).toLowerCase())) {
-      return String(config.defaultMode).toLowerCase();
+    if (config && config.defaultMode) {
+      return canonicalDefaultMode(String(config.defaultMode));
     }
   } catch (e) {
     // Missing / unreadable / invalid JSON → caller falls through
@@ -117,10 +147,8 @@ function readModeFromConfigFile(configPath) {
 // cwd-independent, so only the repo-config walk takes it.
 function getDefaultMode(startDir) {
   // 1. Environment variable (highest priority)
-  const envMode = process.env.CAVEMAN_DEFAULT_MODE;
-  if (envMode && VALID_MODES.includes(envMode.toLowerCase())) {
-    return envMode.toLowerCase();
-  }
+  const envMode = canonicalDefaultMode(process.env.CAVEMAN_DEFAULT_MODE);
+  if (envMode) return envMode;
 
   // 2. Repo-local config (checked-in, per-project default)
   const repoConfigPath = findRepoConfigPath(startDir);
@@ -134,7 +162,7 @@ function getDefaultMode(startDir) {
   if (userMode) return userMode;
 
   // 4. Default
-  return 'full';
+  return 'caveman';
 }
 
 // Symlink-safe flag file write.
@@ -190,12 +218,18 @@ function safeWriteFlag(flagPath, content) {
             return;
           }
         } else {
-          const home = os.homedir();
-          const normalizedReal = path.resolve(realFlagDir);
-          const normalizedHome = path.resolve(home);
-          if (!normalizedReal.toLowerCase().startsWith(normalizedHome.toLowerCase() + path.sep) &&
-              normalizedReal.toLowerCase() !== normalizedHome.toLowerCase()) {
-            if (debug) process.stderr.write(`[caveman] safeWriteFlag: symlink target ${normalizedReal} is outside home directory ${normalizedHome}\n`);
+          // The home-prefix check used to live here, comparing the resolved
+          // symlink target against os.homedir(). That is the wrong proxy on
+          // win32: a directory junction (e.g. ~/.claude junctioned to another
+          // drive, the same "legitimate symlinked config dir" case this branch
+          // exists to allow) resolves to a realpath that does not start with
+          // the home directory, so the write was refused through the very
+          // junction this code's own comments say it should tolerate. Test
+          // what actually matters instead: can the current user write there.
+          try {
+            fs.accessSync(realFlagDir, fs.constants.W_OK);
+          } catch (e) {
+            if (debug) process.stderr.write(`[caveman] safeWriteFlag: symlink target ${realFlagDir} is not writable by current user\n`);
             return;
           }
         }
@@ -273,6 +307,64 @@ function safeWriteFlag(flagPath, content) {
   }
 }
 
+// Symlink-safe flag file delete. Symmetric with safeWriteFlag: resolves
+// through a symlinked/junctioned parent the same way (ownership check on
+// Unix, writable-parent check on win32) and refuses to touch a target that
+// is itself a symlink, before unlinking. Without this, any caller that wants
+// to clear the flag could delete straight through a junction that
+// safeWriteFlag would refuse to write through in the first place — a
+// write/delete asymmetry that lets the flag be destroyed but never
+// recreated on that machine.
+//
+// Silent-fails on any filesystem error — the flag is best-effort.
+function safeDeleteFlag(flagPath) {
+  const debug = process.env.CAVEMAN_DEBUG === '1';
+  try {
+    const flagDir = path.dirname(flagPath);
+
+    let realFlagDir;
+    try {
+      const lstat = fs.lstatSync(flagDir);
+      if (lstat.isSymbolicLink()) {
+        realFlagDir = fs.realpathSync(flagDir);
+        const realStat = fs.statSync(realFlagDir);
+        if (!realStat.isDirectory()) {
+          if (debug) process.stderr.write(`[caveman] safeDeleteFlag: symlink target ${realFlagDir} is not a directory\n`);
+          return;
+        }
+        if (typeof process.getuid === 'function') {
+          if (realStat.uid !== process.getuid()) {
+            if (debug) process.stderr.write(`[caveman] safeDeleteFlag: symlink target ${realFlagDir} owned by uid ${realStat.uid}, not current user ${process.getuid()}\n`);
+            return;
+          }
+        } else {
+          try {
+            fs.accessSync(realFlagDir, fs.constants.W_OK);
+          } catch (e) {
+            if (debug) process.stderr.write(`[caveman] safeDeleteFlag: symlink target ${realFlagDir} is not writable by current user\n`);
+            return;
+          }
+        }
+      } else {
+        realFlagDir = flagDir;
+      }
+    } catch (e) {
+      return;
+    }
+
+    const realFlagPath = path.join(realFlagDir, path.basename(flagPath));
+    try {
+      if (fs.lstatSync(realFlagPath).isSymbolicLink()) return;
+    } catch (e) {
+      return;
+    }
+
+    fs.unlinkSync(realFlagPath);
+  } catch (e) {
+    // Silent fail — flag is best-effort
+  }
+}
+
 // Symlink-safe, size-capped, whitelist-validated flag file read.
 // Symmetric with safeWriteFlag: refuses symlinks at the target, caps the read,
 // and rejects anything that isn't a known mode. Returns null on any anomaly.
@@ -282,8 +374,8 @@ function safeWriteFlag(flagPath, content) {
 // reader — statusline, per-turn reinforcement — would slurp that content and
 // either echo it to the terminal or inject it into model context.
 //
-// MAX_FLAG_BYTES is a hard cap. The longest legitimate value is "wenyan-ultra"
-// (12 bytes); 64 leaves slack without enabling exfil.
+// MAX_FLAG_BYTES is a hard cap. The longest legitimate value is the legacy
+// "wenyan-ultra" (12 bytes); 64 leaves slack without enabling exfil.
 const MAX_FLAG_BYTES = 64;
 
 function readFlag(flagPath) {
@@ -310,9 +402,9 @@ function readFlag(flagPath) {
       if (fd !== undefined) fs.closeSync(fd);
     }
 
-    const raw = out.trim().toLowerCase();
-    if (!VALID_MODES.includes(raw)) return null;
-    return raw;
+    // Legacy levels come back as their current id, so every caller of
+    // readFlag (and the session helpers built on it) sees only VALID_MODES.
+    return canonicalMode(out.trim());
   } catch (e) {
     return null;
   }
@@ -343,10 +435,17 @@ function appendFlag(filePath, line) {
             return;
           }
         } else {
-          const home = os.homedir();
-          const normalized = path.resolve(realDir).toLowerCase();
-          const normalizedHome = path.resolve(home).toLowerCase();
-          if (!normalized.startsWith(normalizedHome + path.sep) && normalized !== normalizedHome) return;
+          // Same reasoning as safeWriteFlag's win32 branch: a directory
+          // junction resolves to a realpath with no home-directory prefix, so
+          // the old check refused the legitimate junctioned config dir it was
+          // meant to allow — and silently stopped the lifetime stats log from
+          // recording anything. Test what the guard actually cares about.
+          try {
+            fs.accessSync(realDir, fs.constants.W_OK);
+          } catch (e) {
+            if (debug) process.stderr.write(`[caveman] appendFlag: symlink target ${realDir} is not writable by current user\n`);
+            return;
+          }
         }
       } else {
         realDir = dir;
@@ -485,15 +584,15 @@ function readSessionModeRaw(claudeDir, sessionId) {
 // standalone hooks can both be registered, and settings.json holds a
 // statusline path baked in at install time.
 function writeSessionMode(claudeDir, sessionId, modeOrNull) {
-  const canonical = (!modeOrNull || modeOrNull === 'off') ? 'off' : modeOrNull;
-  if (!VALID_MODES.includes(canonical)) return;
+  const canonical = modeOrNull ? canonicalMode(modeOrNull) : 'off';
+  if (!canonical) return;
 
   const sessionPath = sessionActivePath(claudeDir, sessionId);
   if (sessionPath) safeWriteFlag(sessionPath, canonical);
 
   const legacy = legacyFlagPath(claudeDir);
   if (canonical === 'off') {
-    try { fs.unlinkSync(legacy); } catch (e) { /* already absent */ }
+    safeDeleteFlag(legacy);
   } else {
     safeWriteFlag(legacy, canonical);
   }
@@ -514,9 +613,10 @@ function writeSessionMode(claudeDir, sessionId, modeOrNull) {
 // switch itself on at that mode. Symmetrically, clearing must not reach across
 // and delete machine-wide state on behalf of one session.
 function writeSessionPrev(claudeDir, sessionId, mode) {
-  if (!mode || !VALID_MODES.includes(mode)) return;
+  const canonical = canonicalMode(mode);
+  if (!canonical) return;
   const p = sessionPrevPath(claudeDir, sessionId) || path.join(claudeDir, PREV_BASENAME);
-  safeWriteFlag(p, mode);
+  safeWriteFlag(p, canonical);
 }
 
 function readSessionPrev(claudeDir, sessionId) {
@@ -528,10 +628,10 @@ function readSessionPrev(claudeDir, sessionId) {
 function clearSessionPrev(claudeDir, sessionId) {
   const p = sessionPrevPath(claudeDir, sessionId);
   if (p) {
-    try { fs.unlinkSync(p); } catch (e) {}
+    safeDeleteFlag(p);
     return;
   }
-  try { fs.unlinkSync(path.join(claudeDir, PREV_BASENAME)); } catch (e) {}
+  safeDeleteFlag(path.join(claudeDir, PREV_BASENAME));
 }
 
 // Sweep stale per-session files. Called from SessionStart on a genuinely new
@@ -590,8 +690,9 @@ const MODE_LOG_BASENAME = '.caveman-mode-log.jsonl';
 // 'off' would be meaningless besides.
 function recordModeChange(claudeDir, newMode, sessionId) {
   try {
+    if (newMode && !canonicalMode(newMode)) return; // not a mode: log nothing
     const current = offToNull(readSessionModeRaw(claudeDir, sessionId));
-    const next = offToNull(newMode);
+    const next = offToNull(canonicalMode(newMode));
     if (current === next) return;
     const entry = { ts: Date.now(), mode: next, prev: current };
     const sid = validateSessionId(sessionId);
@@ -626,14 +727,13 @@ function readHistory(filePath) {
 }
 
 // ---------------------------------------------------------------------------
-// Caveman ruleset — SKILL.md read + intensity filter
+// Caveman ruleset — skills/<mode>/SKILL.md, whole body
 //
-// SKILL.md is the single source of truth for caveman behavior, and BOTH loaders
-// need it filtered to one level. caveman-activate.js injects it at SessionStart;
-// caveman-mode-tracker.js re-injects it when the user switches level mid-session
-// (#975). Before that, a switch moved the banner and the stored mode while the
-// model kept whatever level SessionStart had given it — `/caveman ultra` was a
-// no-op on behavior.
+// Each prose mode is its own skill, so the stored id IS the skill id and the
+// body needs no per-level filtering. caveman-activate.js injects it at
+// SessionStart; caveman-mode-tracker.js re-injects it when the user switches
+// mode mid-session (#975) and reads its thesis line for per-turn
+// reinforcement.
 //
 // It lives here rather than in a new `caveman-ruleset.js` sibling for the reason
 // the "Keep mode-state logic in caveman-config.js" rule gives: the hook file set
@@ -642,91 +742,76 @@ function readHistory(filePath) {
 // name, so a second shared sibling is a standing drift risk. This module is
 // already the one file every loader resolves.
 
-// The wenyan storage alias: config stores wenyan-full as 'wenyan', while
-// SKILL.md spells the row 'wenyan-full'. Filtering on the raw stored value
-// would match no row and emit a ruleset with no intensity line at all.
-function canonicalModeLabel(mode) {
-  return mode === 'wenyan' ? 'wenyan-full' : mode;
-}
+const SKILL_MODES = ['caveman', 'ultracave', 'megacave'];
+
+// Used when no SKILL.md resolves (standalone hook install without skills dir).
+// Each is the first line under the skill's `# <id>` heading.
+const FALLBACK_THESIS = {
+  caveman: 'Respond terse like smart caveman. All technical substance stay. Only fluff die.',
+  ultracave: 'Respond terse like smart caveman. All technical substance stay. Only fluff die. Then cut again.',
+  megacave: '以文言答。技術之實皆存，唯贅言去之。',
+};
 
 // Candidate locations, tried in order (#587/#589 — the old single '..' path
 // resolved to <plugin_root>/src/skills/, which does not exist, so plugin
 // installs silently used the stale fallback ruleset):
-//   1. $CLAUDE_PLUGIN_ROOT/skills/caveman/SKILL.md — Claude Code sets
+//   1. $CLAUDE_PLUGIN_ROOT/skills/<id>/SKILL.md — Claude Code sets
 //      CLAUDE_PLUGIN_ROOT when invoking plugin hooks; authoritative when present.
-//   2. ../../skills/caveman/SKILL.md — hook at <plugin_root>/src/hooks/
+//   2. ../../skills/<id>/SKILL.md — hook at <plugin_root>/src/hooks/
 //      (plugin.json layout) or a repo checkout.
-//   3. ../skills/caveman/SKILL.md — standalone install with hooks at
-//      $CLAUDE_CONFIG_DIR/hooks/ and the skill at
-//      $CLAUDE_CONFIG_DIR/skills/caveman/.
-function skillPathCandidates(hookDir) {
+//   3. ../skills/<id>/SKILL.md — standalone install with hooks at
+//      $CLAUDE_CONFIG_DIR/hooks/ and the skill at $CLAUDE_CONFIG_DIR/skills/<id>/.
+// skillId becomes a path segment: callers pass a SKILL_MODES id only.
+function skillPathCandidates(hookDir, skillId) {
   const dir = hookDir || __dirname;
+  const id = skillId || 'caveman';
   const candidates = [];
   if (process.env.CLAUDE_PLUGIN_ROOT) {
-    candidates.push(path.join(process.env.CLAUDE_PLUGIN_ROOT, 'skills', 'caveman', 'SKILL.md'));
+    candidates.push(path.join(process.env.CLAUDE_PLUGIN_ROOT, 'skills', id, 'SKILL.md'));
   }
   candidates.push(
-    path.join(dir, '..', '..', 'skills', 'caveman', 'SKILL.md'),
-    path.join(dir, '..', 'skills', 'caveman', 'SKILL.md')
+    path.join(dir, '..', '..', 'skills', id, 'SKILL.md'),
+    path.join(dir, '..', 'skills', id, 'SKILL.md')
   );
   return candidates;
 }
 
-// Reads SKILL.md and keeps only `mode`'s row of the intensity table and only
-// its example lines, so the model is never handed a second level's rules to
-// choose between. Returns null when SKILL.md cannot be read from any candidate
-// — callers decide what to do with that (activate.js has a hardcoded fallback
-// ruleset; the tracker degrades to its one-line reinforcement).
-function loadFilteredRuleset(mode, hookDir) {
-  const modeLabel = canonicalModeLabel(mode);
-  let skillContent = '';
-  for (const candidate of skillPathCandidates(hookDir)) {
+// The mode's SKILL.md body with YAML frontmatter stripped, or null when the
+// mode has no skill file (off, one-shot modes) or none resolves — callers
+// decide what to do with that (activate.js has a hardcoded fallback ruleset;
+// the tracker degrades to its one-line reinforcement).
+function loadRuleset(mode, hookDir) {
+  const id = canonicalMode(mode);
+  if (!SKILL_MODES.includes(id)) return null;
+  for (const candidate of skillPathCandidates(hookDir, id)) {
     try {
-      skillContent = fs.readFileSync(candidate, 'utf8');
-      break;
+      return fs.readFileSync(candidate, 'utf8').replace(/^---[\s\S]*?---\s*/, '');
     } catch (e) { /* try next candidate */ }
   }
-  if (!skillContent) return null;
+  return null;
+}
 
-  // Strip YAML frontmatter
-  const body = skillContent.replace(/^---[\s\S]*?---\s*/, '');
-
-  const filtered = body.split('\n').reduce((acc, line) => {
-    // Intensity table rows start with | **level** |
-    const tableRowMatch = line.match(/^\|\s*\*\*(\S+?)\*\*\s*\|/);
-    if (tableRowMatch) {
-      // Keep only the active level's row (and always keep header/separator)
-      if (tableRowMatch[1] === modeLabel) {
-        acc.push(line);
-      }
-      return acc;
-    }
-
-    // Example lines start with "- level:" — keep only lines matching active level
-    const exampleMatch = line.match(/^- (\S+?):\s/);
-    if (exampleMatch) {
-      if (exampleMatch[1] === modeLabel) {
-        acc.push(line);
-      }
-      return acc;
-    }
-
-    acc.push(line);
-    return acc;
-  }, []);
-
-  return filtered.join('\n');
+// First non-empty line after the skill's `# <id>` heading — the one-sentence
+// statement of the mode, used for per-turn reinforcement.
+function thesisLine(mode, hookDir) {
+  const id = canonicalMode(mode);
+  if (!SKILL_MODES.includes(id)) return null;
+  const lines = (loadRuleset(id, hookDir) || '').split(/\r?\n/);
+  const heading = lines.findIndex((line) => line.trim() === '# ' + id);
+  const line = heading === -1 ? null : lines.slice(heading + 1).find((l) => l.trim());
+  return line ? line.trim() : FALLBACK_THESIS[id];
 }
 
 // The banner both loaders put above the ruleset, so the label the model reads
 // cannot drift between SessionStart and a mid-session switch.
 function rulesetBanner(mode) {
-  return 'CAVEMAN MODE ACTIVE — level: ' + canonicalModeLabel(mode);
+  return 'CAVEMAN MODE ACTIVE — mode: ' + (canonicalMode(mode) || mode);
 }
 
 module.exports = {
   getDefaultMode, getConfigDir, getConfigPath, findRepoConfigPath, VALID_MODES,
-  safeWriteFlag, readFlag, appendFlag, readHistory,
+  canonicalMode,
+  safeWriteFlag, safeDeleteFlag, readFlag, appendFlag, readHistory,
   recordModeChange, MODE_LOG_BASENAME,
   // Per-session state
   SESSIONS_DIRNAME, FLAG_BASENAME, PREV_BASENAME,
@@ -736,5 +821,5 @@ module.exports = {
   writeSessionPrev, readSessionPrev, clearSessionPrev,
   gcSessionStore,
   // Ruleset injection
-  canonicalModeLabel, loadFilteredRuleset, rulesetBanner,
+  skillPathCandidates, loadRuleset, thesisLine, rulesetBanner,
 };

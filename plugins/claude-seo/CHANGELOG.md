@@ -7,6 +7,142 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.4.2] - 2026-10-04
+
+seo-cockpit, Google sign-in through your own account, and a schema-hook fix.
+
+### Added
+
+- `plugins/seo-cockpit` 0.3.3: an optional mods companion plugin (Claude
+  Code 2.1.287+), a second entry in the marketplace
+  (`/plugin install seo-cockpit@agricidaniel-claude-seo`).
+  - Spend guard: holds paid SEO API calls against the DataForSEO budget
+    before they run (DataForSEO MCP tools and the Merchant script are priced
+    by `dataforseo_costs.py`; Ahrefs, Firecrawl, image generation, Moz,
+    Keywords Everywhere, Cloud NLP, the Indexing API, and curl or WebFetch
+    calls to SE Ranking and Profound ask first). It fails closed and logs
+    only successful priced calls.
+  - Live audit band (agents running and done, findings written, spend,
+    time), a receipt line with the health score when an audit finishes, an
+    opt-in economy mode that runs the five Opus agents on Sonnet, and
+    compaction instructions that keep audit state.
+  - `/seo-cockpit [site | export]`: one Overview (Audit, Vitals, Search,
+    Rankings, Maps, Spend) for a site taken from the folder, a site you
+    chose, or a Default site from `/config`, from any folder. Everything
+    free loads on open; a row opens its charts. Text charts in the terminal,
+    SVG on the desktop, an HTML dashboard export where panes do not draw
+    (the VS Code chat panel). A status line keeps the summary under the
+    prompt.
+  - Zero-token `/seo-spend` and `/seo-doctor`.
+  - Settings in `/config`: Default site, Audits folder, Google account
+    (`auto` or `gcloud`) and a sensitive Google API key.
+  - Verified on Claude Code 2.1.289: 85 kit tests (`claude plugin test`),
+    `claude plugin validate --strict`, and a live run on a real site.
+- `seo-maps`: a geo-grid scan now also saves its grid as
+  `{business}-maps/geo-grid-{keyword}-{date}.json`, for comparison over
+  time and for the seo-cockpit Maps view.
+
+### Changed
+
+- Google APIs can use the person's own gcloud sign-in
+  (`gcloud auth application-default login`): it is the fallback when no
+  claude-seo OAuth token or service account is configured, and
+  `CLAUDE_SEO_GOOGLE_AUTH=adc` chooses it even when a service account is set.
+  A service account often lacks access to properties the person owns. Only an
+  `authorized_user` gcloud file counts, and it refreshes with the scopes
+  granted at login.
+- `dataforseo_costs.py check` returns `credentials_in_env` on every result,
+  so a budget approval is not read as proof the call can run.
+
+### Fixed
+
+- Schema hook (`hooks/validate-schema.py`): diagnostics went to stdout,
+  which Claude Code ignores, so Claude never saw them. Critical errors now
+  exit 2 with the errors on stderr (fed back to Claude); warnings exit 0
+  with `hookSpecificOutput.additionalContext` JSON, which Claude reads
+  without an error notice. Wording no longer claims the edit is blocked: a
+  PostToolUse hook runs after the file is written.
+- `ai_opt_llm_ment_search` costs about $0.103 per the official response
+  example, not $0.05 (`dataforseo_costs.py` and both `cost-tiers.md`).
+
+## [2.4.1] - 2026-09-29
+
+Google-currency patch. Every changed fact was re-checked against its
+primary source between 2026-09-28 and 2026-09-29; claims that could not be
+confirmed on a Google-owned page are recorded in `unverified[]` or labelled
+as third-party instead of being stated as fact.
+
+### Added
+
+- Ledger (`data/google-updates.json`): the September 2026 Spam Update
+  (started 2026-09-24, still rolling out when this release was cut; Google
+  estimates up to two weeks and named no target), the August 2025 Spam
+  Update, VideoObject `creator` and the `interactionStatistic` action types,
+  Search Console multimodal reporting, Merchant Center AI performance
+  insights, the UCP integration hub cart transfer, Gemini 3.8 Flash in AI
+  Mode for subscribers, and CrUX experimental ad metrics.
+- `unverified[]` entries so audits do not encode them: SAFE ("The Synthetic
+  Gap" is a Google paper about YouTube spam networks and never mentions
+  Search), the claim that the September spam update excludes link spam,
+  vendor volatility readings, a "September 2026 Authority Signals Update"
+  (refuted: no such incident on the Search Status Dashboard), a JSON-LD
+  parsing report, and AI Mode SERP tests.
+- `pagespeed_check.py` reports `lighthouse_version`, the Lighthouse build
+  PSI actually ran (13.5.0 on 2026-09-29).
+- Tests: `test_no_em_dash.py`, `test_file_size_limits.py` (SKILL.md 500
+  lines, references 200), and eight new canonical-fact guards, each failing
+  on the v2.4.0 wording it replaces. The ledger host allowlist adds
+  `developer.chrome.com` and `static.googleusercontent.com` (the full QRG PDF).
+
+### Changed
+
+- Skills: the Search generative AI control covers Discover gen-AI features
+  and is separate from `Google-Extended`; `Google-Extended` covers Gemini
+  training and grounding and training of the models behind Search gen-AI
+  features, with no effect on Search inclusion or ranking; the multimodal
+  search type is a UI and export filter with no verified API `type`; local
+  business queries in EEA aggregator and supplier units reach seo-ecommerce.
+- Re-verified and corrected: URL Inspection `mobileUsabilityResult` is
+  deprecated; the AI optimization guide dates (published 2026-05-15,
+  llms.txt clarified 2026-06-15, last updated 2026-07-10); JavaScript
+  structured data guidance (dynamic Product markup can slow Shopping
+  crawls); ProfilePage and DiscussionForumPosting dates, Speakable still
+  beta; I/O 2026 wording and summer rollouts marked as announced; Gemini
+  image model names and shutdowns (the `-preview` image IDs retired
+  2026-06-25, `gemini-2.5-flash-image` retires 2026-10-02); AI Mode 1B+
+  monthly users is Google-stated; FTC review penalty unchanged for 2026;
+  ChatGPT 1B+ weekly users; Ahrefs and Profound study dates; caniuse AVIF
+  and WebP figures.
+- Third-party claims are labelled as such: update-table impact text (Google
+  confirms rollout dates, not targets), the Sterling Sky 18-day finding (a
+  case example, not a rule), local AI Overview coverage (0.14% and 68% shown
+  together with their methods), the June 2025 manual-action wave, and the
+  late-2024 publisher site-reputation reports.
+- The `/seo` orchestrator routes Google update-history questions to the
+  bundled ledger (`seo_updates.py`), so answers no longer depend on whatever
+  older copy the model finds on disk.
+- Six reference files over 200 lines were split at section boundaries into
+  sibling files, with no content removed.
+- Em dashes removed from skills, agents, scripts, extensions and docs.
+- Python 3.10 reaches end of life in October 2026; the docs now recommend
+  3.11 or newer. The floor is unchanged in this patch.
+- `google_report.py` PDFs, `lcp_subparts.py` text output and the installer
+  banners no longer print em dashes; `gsc_inspect.py` flags the deprecated
+  `mobile_usability` field. The README v2.2.1 note now dates the Agentic
+  Browsing category to Lighthouse 13.2.0. The banana extension's prompt
+  reference is split the same way as the core copy.
+
+### Fixed
+
+- `seo_updates.py --kind spam` and `--kind core` now include the combined
+  March 2024 core+spam rollout.
+- Site reputation regional enforcement is dated from its effective date,
+  2026-08-30 (announced 2026-08-28), in `parasite_risk.py` and the skills.
+- Ledger: the December 2024 spam update no longer claims a scaled-content
+  target; the November 2024 core update records its 23-day rollout; the QRG
+  entries cite the full guidelines PDF instead of the 2023 overview.
+- local-seo-signals: the August 2026 spam update ended August 21.
+
 ## [2.4.0] - 2026-09-24
 
 ### Added

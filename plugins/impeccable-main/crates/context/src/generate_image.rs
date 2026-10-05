@@ -298,6 +298,7 @@ fn run_with_api_base(args: &[String], io: &mut Io, api_base: &str) -> i32 {
             return 1;
         }
         io.out(&format!("IMAGE: {} ({}x{}, fake synthetic comp, $0.00, no API call)\n", out, w, h));
+        note_generated_slot(io, &out);
         return 0;
     }
     let Some(key) = env.get("OPENAI_API_KEY").filter(|k| !k.is_empty()).cloned() else {
@@ -441,6 +442,7 @@ fn run_with_api_base(args: &[String], io: &mut Io, api_base: &str) -> i32 {
         }
         let _ = std::fs::write(abs(&format!("{}.json", out)), json_pretty(&Value::Object(m)));
     }
+    note_generated_slot(io, &out);
     io.out(&format!(
         "IMAGE: {} ({}, {}, {}, billed to your OpenAI key); {} at {}.json\n",
         out,
@@ -451,6 +453,17 @@ fn run_with_api_base(args: &[String], io: &mut Io, api_base: &str) -> i32 {
         out
     ));
     0
+}
+
+/// A written image that fills a decision page's declared slot counts as that
+/// hand's comp even when its bytes match what sat there before (the same
+/// prompt regenerates the same bytes). A failed record is reported, not fatal:
+/// the image itself was written.
+fn note_generated_slot(io: &mut Io, out: &str) {
+    let cwd = io.cwd.to_string_lossy().into_owned();
+    if let Err(e) = crate::serve_question::record_generated(&cwd, out) {
+        io.err(&format!("generate-image: could not mark {} as generated for its decision page ({}); a --wait may report it stale\n", out, e));
+    }
 }
 
 fn base64_decode(s: &str) -> Vec<u8> {
@@ -485,6 +498,7 @@ mod tests {
     use std::time::Duration;
 
     fn round_trip(edit: bool, override_model: Option<&str>, background: Option<&str>) {
+        let _proxy_lock = crate::http::PROXY_ENV_LOCK.lock().unwrap();
         let server = tiny_http::Server::http("127.0.0.1:0").unwrap();
         let api_base = format!("http://{}", server.server_addr());
         let temp = std::env::temp_dir().join(format!("impeccable-image-{}-{}", std::process::id(), server.server_addr().to_ip().unwrap().port()));

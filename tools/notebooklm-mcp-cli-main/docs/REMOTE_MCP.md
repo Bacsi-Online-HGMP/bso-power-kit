@@ -110,6 +110,7 @@ machine and network.
 - Setting `NOTEBOOKLM_COOKIES` manually creates a static credential. When it
   expires, `nlm login` cannot replace it while that environment variable
   continues to override the profile on disk.
+- Remote and containerized deployments (Docker, cloud VPS, headless servers) lack an interactive desktop OS keystore. Protected mode requires an interactive GUI desktop session, so remote servers must keep profiles in standard `file` mode (`nlm auth storage set file`) or configure `NOTEBOOKLM_COOKIES`.
 
 For authentication details, see the
 [Authentication Guide](AUTHENTICATION.md).
@@ -133,7 +134,7 @@ This has important consequences:
 - It is not a safe organization-wide connector for unrelated users.
 - An OAuth gateway can control who reaches the MCP endpoint, but it does not
   create per-user Gemini Notebook isolation.
-- Account switching affects the whole server, not one remote session.
+- Account switching affects the whole server, not one remote session. This includes the MCP `profile` tool: on a shared HTTP server a session switch applies to every connected client. This product is built for one person, so be aware of it if you share a server.
 
 ## Remote File Limitations
 
@@ -286,6 +287,9 @@ The health endpoint is:
 ```text
 http://127.0.0.1:8000/health
 ```
+
+Monitors and proxies that probe the conventional `/healthz` path get the same
+response at `http://127.0.0.1:8000/healthz`.
 
 This confirms transport compatibility. It does not create a Claude web/mobile
 connector because Anthropic's cloud cannot reach your loopback address.
