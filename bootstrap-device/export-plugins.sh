@@ -3,6 +3,7 @@
 # Run it on a machine that is working well, commit the result, then a new machine runs bootstrap-plugins.sh.
 #
 # Runs on bash 3.2 (the macOS default) - no mapfile, no associative arrays.
+# lang-exception: the pack names vanphong and noidung are literal values in the TSV files and are matched by bootstrap-plugins.sh --pack.
 set -euo pipefail
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -81,7 +82,7 @@ new = []
 blocked = []
 for mk, n in rows:
     if mk in deny_mk:
-        blocked.append((n, deny_mk[mk] + ' (ca marketplace)'))
+        blocked.append((n, deny_mk[mk] + ' (whole marketplace)'))
         continue
     if n in deny:
         blocked.append((n, deny[n]))

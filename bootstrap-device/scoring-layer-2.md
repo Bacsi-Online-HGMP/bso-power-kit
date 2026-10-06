@@ -1,4 +1,4 @@
-<!-- lang-exception: scoring-axis codes and names are Vietnamese initials (e.g. DL = Doc lap), each glossed in English. -->
+<!-- lang-exception: scoring-axis codes and names are Vietnamese initials (e.g. DL = Doc lap), each glossed in English; the pack names (vanphong, noidung) and the file name plugins-loai.tsv are literal values used by the install scripts. -->
 # Scoring — Layer 2 (Claude Code plugins)
 
 Scoring the 81 Layer-2 plugins against the 9-axis rubric in
