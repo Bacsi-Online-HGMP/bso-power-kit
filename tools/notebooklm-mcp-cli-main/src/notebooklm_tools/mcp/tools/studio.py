@@ -5,8 +5,9 @@ import time as _time
 from typing import Any
 
 from ...services import ServiceError, ValidationError
+from ...services import notebooks as notebooks_service
 from ...services import studio as studio_service
-from ...utils.config import get_default_language, get_notebook_url
+from ...utils.config import get_default_language
 from ._utils import ResultDict, coerce_list, error_result, get_client, logged_tool
 
 # Auth guard: avoid a live HTTP check on every studio_create call. We check
@@ -23,21 +24,21 @@ from ._utils import ResultDict, coerce_list, error_result, get_client, logged_to
 # to invalid during the cached window and the guard would otherwise skip
 # the re-check.
 _auth_guard_expires: float = 0.0
-_auth_guard_mtime: float = 0.0
+_auth_guard_mtime: Any = 0.0
 _AUTH_GUARD_TTL: float = 60.0
 
 
-def _get_auth_file_mtime() -> float:
-    """Thin wrapper around `services.auth.get_active_auth_mtime`.
+def _get_auth_file_mtime() -> Any:
+    """Return the auth guard invalidation token (revision in protected mode, mtime in file mode).
 
     Kept as a module-level function so the existing tests in
     `tests/test_mcp_auth_studio_failures.py` that monkeypatch
     `studio_tools._get_auth_file_mtime` continue to work without
     having to also patch the shim.
     """
-    from ...services.auth import get_active_auth_mtime
+    from ...services.auth import get_active_auth_state
 
-    return get_active_auth_mtime()
+    return get_active_auth_state()
 
 
 def _studio_auth_is_valid() -> tuple[bool, str | None, str | None]:
@@ -219,7 +220,7 @@ def studio_create(
             return error_result(
                 f"Cannot create {artifact_type}: NotebookLM auth is not valid. "
                 "Run `nlm login` in a terminal to re-authenticate, then retry. "
-                "`refresh_auth()` will NOT help if the tokens are expired — it only reloads them from disk.",
+                "`refresh_auth()` validates cached credentials and then attempts headless recovery before requiring an interactive login.",
                 hint="nlm login",
                 reason=auth_reason,
                 details=auth_error,
@@ -262,7 +263,7 @@ def studio_create(
         return {
             **result_payload,
             "status": "success",
-            "notebook_url": get_notebook_url(notebook_id),
+            "notebook_url": notebooks_service.notebook_url(client, notebook_id),
         }
     except ValidationError as e:
         return error_result(_normalize_studio_validation_error(str(e)))
@@ -304,12 +305,12 @@ def studio_status(
                 - artifact_id: UUID
                 - title: Artifact title
                 - type: audio, video, report, etc.
-                - status: completed, in_progress, failed
+                - status: queued, in_progress, completed, failed
                 - created_at: Creation timestamp
                 - error_reason: Failure guidance when status is failed
               With include_details=True, artifacts also include prompts, source IDs,
               report content, media URLs, and other rich fields.
-            - summary: Counts of total, completed, in_progress
+            - summary: Counts of total, completed, in_progress, queued
             - pagination: returned, offset, limit, and has_more
     """
     try:
@@ -348,6 +349,7 @@ def studio_status(
                 "total": status_result["total"],
                 "completed": status_result["completed"],
                 "in_progress": status_result["in_progress"],
+                "queued": status_result["queued"],
             },
             "artifacts": status_result["artifacts"],
             "pagination": {
@@ -356,7 +358,7 @@ def studio_status(
                 "limit": status_result["limit"],
                 "has_more": status_result["has_more"],
             },
-            "notebook_url": get_notebook_url(notebook_id),
+            "notebook_url": notebooks_service.notebook_url(client, notebook_id),
         }
     except (ValidationError, ServiceError) as e:
         message = e.user_message if isinstance(e, ServiceError) else str(e)
@@ -441,7 +443,7 @@ def report(
                 "status": "success",
                 **payload,
                 "artifact_status": artifact_status,
-                "notebook_url": get_notebook_url(notebook_id),
+                "notebook_url": notebooks_service.notebook_url(client, notebook_id),
             }
 
         if action == "elements":
@@ -458,7 +460,7 @@ def report(
                 "status": "success",
                 **listing,
                 "total": len(listing["elements"]),
-                "notebook_url": get_notebook_url(notebook_id),
+                "notebook_url": notebooks_service.notebook_url(client, notebook_id),
             }
 
         if not confirm:
@@ -485,7 +487,11 @@ def report(
         batch = studio_service.generate_report_elements(
             client, notebook_id, artifact_id, items, language=language or None
         )
-        return {"status": "success", **batch, "notebook_url": get_notebook_url(notebook_id)}
+        return {
+            "status": "success",
+            **batch,
+            "notebook_url": notebooks_service.notebook_url(client, notebook_id),
+        }
     except json.JSONDecodeError as e:
         return error_result(f"plan is not valid JSON: {e}")
     except (ValidationError, ServiceError) as e:
@@ -593,7 +599,7 @@ def studio_revise(
         )
         return {
             "status": "success",
-            "notebook_url": get_notebook_url(notebook_id),
+            "notebook_url": notebooks_service.notebook_url(client, notebook_id),
             **result,
         }
     except (ValidationError, ServiceError) as e:

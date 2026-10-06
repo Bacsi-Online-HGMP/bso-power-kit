@@ -1,11 +1,11 @@
 # Gemini Notebook (formerly Google NotebookLM) MCP - Comprehensive Test Plan
 
-**Purpose:** Verify all **43 MCP tools** work correctly.
+**Purpose:** Verify all **53 MCP tools** work correctly.
 
-**Version:** 2.6 (Updated 2026-08-03 - synchronized current MCP surface)
+**Version:** 2.7 (Updated 2026-09-27 - synchronized current MCP surface)
 
-**Changes from v2.4:**
-- Current tool count: 43 tools — added `chat_list`, `chat_get`, `chat_export` (list/view/export notebook chat sessions)
+**Changes from v2.6:**
+- Current tool count: 53 tools — adds `profile`, `alias` and `chat_save_to_note`, plus `pipeline` create and profile info in `server_info` (v0.15.0).
 
 **Historical changes from v2.1:**
 - The test plan previously covered 39 tools, including consolidated notes, labels, async query, batch, pipeline, tags, and server_info.
@@ -69,6 +69,46 @@ Refresh my NotebookLM session without opening a browser window.
 or a dead login, prints a clear failure and exits non-zero (usable in
 cron/launchd). Refuses up front when `NOTEBOOKLM_COOKIES` is set in the
 environment (that value overrides saved credentials).
+
+---
+
+### Test 1.1c - Credential Storage Management (Protected Mode)
+**CLI:** `nlm auth storage status`, `nlm auth storage set protected`, `nlm auth storage set file`
+
+**Prompt:**
+```
+Check my NotebookLM credential storage mode and test switching between file mode and protected mode.
+```
+
+**Expected:**
+1. `nlm auth storage status`: Shows profile name, storage mode (`file` or `protected`), and presence of ciphertext or legacy files.
+2. `nlm auth storage set protected`: Encrypts credentials to `credentials.enc` using the OS keystore (macOS Keychain, Windows Credential Manager, Linux SecretService) and removes plaintext files.
+3. `nlm auth storage set file`: Decrypts credentials back to `cookies.json` with 0600 permissions.
+
+---
+
+### Test 1.1d - Profiles (`profile` tool)
+**Tool:** `profile` (action: list, status, switch)
+
+**Prompt:**
+```
+List my Gemini Notebook profiles, switch to my other profile for this session, then tell me how many notebooks I have. Do not change my default.
+```
+
+**Expected:**
+1. `profile(action="list")` returns every saved profile with email, `storage_mode`, `is_saved_default`, `is_active`.
+2. `profile(action="switch", name=...)` returns `scope: "session"`; later tools use that account and results carry `active_profile_note`.
+3. The saved default (`nlm config get auth.default_profile`) is unchanged.
+4. Quitting and reopening the app returns to the saved default.
+5. `make_default=true` changes `default_profile` in `~/.notebooklm-mcp-cli/config.toml` (switch it back afterwards).
+6. With `NOTEBOOKLM_COOKIES` set in the server's environment, switching returns an error.
+
+---
+
+### Test 1.1e - Aliases, chat-to-note, pipeline create
+**Tools:** `alias`, `chat_save_to_note`, `pipeline` (action: create)
+
+**Expected:** `alias(action="set", name="nb", value="<notebook id>")` then `notebook_get(notebook_id="nb")` resolves the alias; `chat_save_to_note` creates a note from a chat; `pipeline(action="create", ...)` saves a pipeline that `pipeline(action="list")` shows.
 
 ---
 
@@ -243,6 +283,13 @@ List all sources in notebook [notebook_id] and check their Drive freshness statu
 **Large notebook variant:** Call `source_list_drive` with `skip_freshness=True`, or use
 `nlm source list [notebook_id] --drive --skip-freshness`. Expected: sources are listed
 without per-source freshness checks; stale status may be unknown.
+
+**Drive-picker file variant:** Include a PDF, text, Markdown, Word, or PowerPoint file
+that was imported from Google Drive. Expected: type-14 files with Drive metadata appear
+in `drive_sources` with their Drive IDs and `can_sync: true`; directly uploaded type-14
+files without that metadata remain in `other_sources`. `can_sync` marks eligibility to
+attempt a manual sync, not a guarantee that every source's RPC will succeed. Only
+manually sync entries the tool marks `can_sync: true`.
 
 **Save:** Note a `source_id` for next tests.
 
@@ -1195,6 +1242,79 @@ How much of my Gemini Notebook usage allowance is left?
 - Missing profiles return an error without falling back to environment cookies
   or the default account.
 - Omitting the profile keeps the existing environment/default authentication.
+
+---
+
+## Test Group 14: Setup Wizard (CLI only)
+
+Automated: `uv run pytest -m wizard_e2e` drives the real `nlm setup` in a
+pseudo-terminal against a sandboxed HOME (fake `claude`/`codex`/`ps`/`pbcopy`/
+`open`) and checks the files written. Run it after any change to
+`cli/commands/setup.py`, `setup_wizard.py`, `skill.py` or `cli/skill_package.py`.
+The manual checks below cover what the sandbox can't: the real `claude` and
+`codex` CLIs, and the real Claude Desktop upload. Run `nlm setup` in a real
+terminal (not an agent's shell — it refuses non-interactive sessions).
+
+### Test 14.1 - Status and Esc
+**CLI:** `nlm setup` → **Show my tools' status**
+
+**Expected:**
+- Only installed tools are listed, with ✓ set up / ✗ not yet / ⚠ old name and
+  the skill version (⬆ when an upgrade exists).
+- Esc on every screen returns to the main menu within ~0.1s; Esc on the main
+  menu quits.
+
+### Test 14.2 - Connect and rename
+**CLI:** `nlm setup` → **Add the MCP to my tools/agents**
+
+**Expected:**
+- Nothing is pre-ticked; already-connected tools are shown but not selectable.
+- Tools whose entry is still `notebooklm-mcp` appear under **Needs a fix**;
+  ticking them reports `repaired · Renamed to gemini-notebook-mcp`.
+- Verify: `claude mcp list` shows `gemini-notebook-mcp ✔ Connected`;
+  `~/.codex/config.toml` has `[mcp_servers.gemini-notebook-mcp]` and kept any
+  extra keys (e.g. `enabled = true`); Claude Desktop configs (both profiles if
+  chosen) contain `gemini-notebook-mcp` with the full binary path.
+- With Claude Desktop open, connecting it is refused ("still running").
+
+### Test 14.3 - Skill and Claude Desktop upload file
+**CLI:** `nlm setup` → **Add the skill to my tools/agents** (or `nlm skill package`)
+
+**Expected:**
+- No "Add the skill?" question — it opens on "Where should the skill live?".
+- The picker includes **Claude Desktop / claude.ai · creates a file to upload**,
+  not pre-ticked. Ticking it saves `~/Downloads/nlm-skill.zip`, reveals it in
+  Finder, and shows the upload steps last.
+- Upload via Claude Desktop **Customize → Skills → Add**: accepted; the skill
+  appears on the Skills page and loads in Chat and Cowork.
+
+### Test 14.4 - Remove and copy setup
+**CLI:** `nlm setup` → **Remove an MCP or skill**, then **Copy MCP setup for a tool not listed**
+
+**Expected:**
+- Remove: grouped MCP connections / Skills, nothing pre-ticked, two separate
+  default-No confirmations; only ticked items change; backups appear in
+  `~/.notebooklm-mcp-cli/backups/`.
+- Copy: the clipboard holds `{"mcpServers": {"gemini-notebook-mcp": {"command": "<full path>/notebooklm-mcp"}}}`.
+
+### Test 14.5 - Credential protection
+**CLI:** `nlm setup` → **Credential protection**
+
+**Expected:**
+- With no saved logins: "No saved logins yet. Run 'nlm login' first."
+- With plain logins: lists each as `plain` and offers **Protect saved logins (recommended)**; with several logins a checkbox picker appears.
+- With protected logins: offers **Restore protected logins to plain files** (asks to confirm, default No); never offers Protect for an already-protected login.
+- Mixed: offers both.
+- Afterwards `nlm auth storage status` matches, and no protection tip appears for a protected login.
+
+### Test 14.6 - First login on a new profile (new-user flow)
+**CLI:** `nlm login` on a machine (or sandbox) with no saved logins
+
+**Expected:**
+1. Before the browser opens: "Where should your saved login live?" with Protected (recommended) and Plain file.
+2. Choosing 1 stores the login encrypted (`credentials.enc`, no `cookies.json`) and ends with "✓ Login stored in protected mode." with no further tips or questions.
+3. A profile name protected mode can't use (`my work`, `john@work.com`) offers a working name (`my-work`) or keeping the name as a plain file.
+4. Ctrl+C or closing the flow leaves no profile folder, no saved answer, and closes the Chrome window it opened.
 
 ---
 

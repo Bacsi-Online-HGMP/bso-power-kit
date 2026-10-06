@@ -29,7 +29,8 @@ notebooklm-mcp \
 ```
 
 This exposes `http://127.0.0.1:8000/mcp` and a local health endpoint at
-`http://127.0.0.1:8000/health`.
+`http://127.0.0.1:8000/health`. Monitors that probe the conventional `/healthz`
+path get the same response.
 
 ## Authentication and Account Isolation
 
@@ -47,7 +48,9 @@ Google can require interactive sign-in again at any time. Persistent local
 browser profiles give the best recovery behavior. VPS and container
 deployments may require manual authentication maintenance, especially when
 storage is ephemeral or cookies are supplied only through environment
-variables.
+variables. Remote and containerized servers without a desktop session or
+keyring daemon should keep profiles in `file` mode (`nlm auth storage set file`)
+or provide credentials via environment variables (`NOTEBOOKLM_COOKIES`).
 
 ## Remote File Limitation
 

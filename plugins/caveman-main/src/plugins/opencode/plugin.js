@@ -142,40 +142,40 @@ const staleBlock = new RegExp(
   escapeRegExp(bannerPrefix) + '[a-z-]+' + escapeRegExp(bannerSuffix) + '[\\s\\S]*$'
 );
 
-// SKILL.md is the single source of truth for caveman behavior, filtered to the
-// active level the same way caveman-activate.js and caveman-mode-tracker.js do.
-// The filter itself is NOT re-implemented here: it lives in caveman-config.js,
-// which loadConfig() already evaluates, so all three loaders share one copy of
-// the intensity-table parsing. A local copy here is the exact drift risk
-// CLAUDE.md's "keep it in caveman-config.js" rule exists to prevent — SKILL.md's
-// table format would then have two parsers to keep in step.
+// skills/<mode>/SKILL.md is the single source of truth for each mode, loaded
+// whole the same way caveman-activate.js and caveman-mode-tracker.js do. The
+// loader itself is NOT re-implemented here: it lives in caveman-config.js,
+// which loadConfig() already evaluates, so all three loaders share one copy.
+// A local copy here is the exact drift risk CLAUDE.md's "keep it in
+// caveman-config.js" rule exists to prevent.
 //
 // Resolved off `config` rather than destructured at module scope because the
 // installed caveman-config.cjs is a COPY: a user whose opencode plugin dir
-// still holds a pre-#975 copy gets a config without these exports, and the
+// still holds an older copy gets a config without these exports, and the
 // stand-ins below degrade to the banner alone rather than throwing inside a
 // system-prompt hook.
-function loadFilteredRuleset(mode) {
-  if (typeof config.loadFilteredRuleset !== 'function') return null;
+function loadRuleset(mode) {
+  if (typeof config.loadRuleset !== 'function') return null;
   // The shared loader probes <base>/../../skills and <base>/../skills. opencode
   // has no CLAUDE_PLUGIN_ROOT equivalent and two layouts to cover, so it is
   // called once per base — `here` resolves the installed tree
   // (~/.config/opencode/plugins/caveman → ~/.config/opencode/skills) and the
   // parent resolves the dev tree (src/plugins/opencode → repo-root skills).
   for (const base of [here, join(here, '..')]) {
-    const ruleset = config.loadFilteredRuleset(mode, base);
-    if (ruleset) return ruleset;
+    const ruleset = config.loadRuleset(mode, base);
+    if (ruleset) return ruleset.trimEnd();
   }
   return null;
 }
 
 function reinforcementLine(mode) {
   const banner = reinforcementBanner(mode);
-  const ruleset = loadFilteredRuleset(mode);
-  // No SKILL.md reachable (a standalone hook install without the skills
-  // dir): fall back to the banner alone, the same degrade caveman-activate.js
-  // uses for the same case.
-  return ruleset ? banner + '\n\n' + ruleset : banner;
+  const ruleset = loadRuleset(mode);
+  if (ruleset) return banner + '\n\n' + ruleset;
+  // No SKILL.md reachable from the plugin install: the mode's thesis line
+  // (caveman-config's built-in fallback map), else the banner alone.
+  const thesis = typeof config.thesisLine === 'function' ? config.thesisLine(mode) : null;
+  return thesis ? banner + '\n\n' + thesis : banner;
 }
 
 function applyModeChange(change) {
@@ -195,7 +195,11 @@ function applyModeChange(change) {
 // drives one shared implementation. Re-fires on every `session.created` event,
 // so a new session in a long-lived plugin process re-asserts the flag.
 function handleSessionCreated() {
-  const mode = getDefaultMode();
+  // Manual startup is currently a Claude Code policy. OpenCode's installer
+  // also ships static AGENTS.md activation, so a cleared flag alone cannot
+  // promise normal prose here. Preserve its existing caveman-mode default.
+  const configured = getDefaultMode();
+  const mode = configured === 'manual' ? 'caveman' : configured;
   if (mode === 'off') {
     recordModeChange(opencodeDir, null);
     removeFlag();
@@ -235,6 +239,14 @@ export const CavemanPlugin = async (_ctx) => {
     for (const part of output.parts) {
       if (part && part.type === 'text' && part.text) {
         const change = parseModeChange(part.text, { getDefaultMode, expandedTpl: true, unwrapQuotes: true });
+        if (change && change.action === 'status') {
+          // readFlag maps a legacy level name to its current mode id.
+          const active = readFlag(flagPath);
+          // Replace the expanded activation template for this message only.
+          // No shared pending response: concurrent sessions cannot steal it.
+          part.text = 'Report this status verbatim without changing mode: Caveman mode: ' + (active || 'off');
+          continue;
+        }
         if (change) applyModeChange(change);
       }
     }

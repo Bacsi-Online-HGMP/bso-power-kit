@@ -33,6 +33,28 @@ def main() -> int:
     builder = load_module("agency_agents_hermes_builder", BUILDER_PATH)
 
     with tempfile.TemporaryDirectory() as tmp:
+        source = Path(tmp) / "engineering" / "engineering-multiline.md"
+        source.parent.mkdir()
+        source.write_text(
+            "---\n"
+            "name: Multiline Specialist\n"
+            "description: First part of the description\n"
+            "             followed by essential context.\n"
+            "vibe: First part of the vibe\n"
+            "      followed by the rest.\n"
+            "---\n\n# Multiline Specialist\n",
+            encoding="utf-8",
+        )
+        parsed = builder.parse_agent(source, Path(tmp))
+        assert parsed is not None
+        assert parsed["description"] == "First part of the description followed by essential context."
+        assert parsed["vibe"] == "First part of the vibe followed by the rest."
+        quoted_vibe = builder.parse_agent(
+            REPO_ROOT / "specialized" / "identity-graph-operator.md", REPO_ROOT
+        )
+        assert quoted_vibe is not None
+        assert quoted_vibe["vibe"].endswith('who is this?"')
+
         out_dir = Path(tmp) / "hermes"
         builder.build(REPO_ROOT, out_dir)
         plugin = load_module(

@@ -5,6 +5,146 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+## [0.15.2] - 2026-10-04
+
+> Research auto-import that waits out a slow start, a Windows credential-lock fix, and a `/healthz` alias for monitors that expect one.
+> Community release: two of these changes come from **@insane66613**.
+
+### Added
+
+- **The HTTP server answers `/healthz`, too.** Reverse proxies, tunnel monitors, and service supervisors that probe the conventional `/healthz` path used to get a 404 from `notebooklm-mcp --transport http` even when the server was healthy. `/health` is unchanged and `/healthz` returns the same response. Thanks to **@insane66613** ([PR #347](https://github.com/jacob-bd/gemini-notebook-mcp-cli/pull/347)).
+
+### Fixed
+
+- **Windows credentials survive a transient file lock.** File-mode auth lets readers work without locks while a writer replaces credential files atomically, and on Windows a reader holding the file can briefly make the read or the final replace fail with a sharing violation. Ordinary CLI and MCP access could then fail authentication or quietly skip a credential save. Reads (root token cache, profile cookies, metadata) and the atomic replace now retry a few times, only for `PermissionError` and only on Windows; macOS and Linux still make a single attempt. Verified on Windows 11 against the repo's own concurrency test: 13 of 25 runs hit the bug before the fix, 0 of 25 after. Thanks to **@insane66613** ([PR #348](https://github.com/jacob-bd/gemini-notebook-mcp-cli/pull/348)).
+- **`research start --auto-import` no longer gives up when the task isn't visible yet.** Right after a research task starts, the first status poll can come back empty for a moment. That was treated as "no research", so auto-import skipped the import and printed "Research may have timed out or failed" even though the research completed and found sources. While waiting on a known task ID, an empty poll is now retried for a short window (90 seconds at most, never past the caller's max wait) before concluding the task really isn't there. Single checks (`--max-wait 0`) and polls without a task ID behave as before. Reported by **@megaboy81-boop**, whose diagnosis pointed straight at the polling loop ([Issue #346](https://github.com/jacob-bd/gemini-notebook-mcp-cli/issues/346)).
+
+## [0.15.1] - 2026-10-02
+
+> Safer, smarter login recovery, plus Microsoft Edge Beta.
+> Community release: five of these changes come from **@insane66613**.
+
+### Added
+
+- **Microsoft Edge Beta is a supported login browser.** Use `nlm config set auth.browser edge-beta`, or leave it on `auto`. Found on macOS, Linux and the usual Windows install folders. Docs and the skill reference list it too. Thanks to **@insane66613** for the browser support ([PR #345](https://github.com/jacob-bd/gemini-notebook-mcp-cli/pull/345)).
+- **Health checks can target one saved account.** The credential health check can now be asked about a specific profile, and each profile keeps its own cached result instead of all accounts sharing one. Nothing in the CLI or MCP uses this yet; it is groundwork for multi-account checks. Thanks to **@insane66613** ([PR #343](https://github.com/jacob-bd/gemini-notebook-mcp-cli/pull/343)).
+
+### Fixed
+
+- **A fresh browser login is checked before it replaces your saved one.** Headless recovery now proves the extracted login can really talk to Gemini Notebook before saving it. If it can't, your existing saved login stays untouched. Thanks to **@insane66613** ([PR #342](https://github.com/jacob-bd/gemini-notebook-mcp-cli/pull/342)).
+- **`refresh_auth` can now recover a stale login on its own.** When saved credentials are stale, the MCP `refresh_auth` tool now tries the saved browser profile before telling you to run `nlm login` (before, that step was unreachable). It respects `NOTEBOOKLM_DISABLE_HEADLESS_REFRESH=1`, so Google Workspace accounts that lose their session when the browser is relaunched can opt out; when it is set, the message says so. Studio's "not signed in" hint was updated to match. Thanks to **@insane66613** for the fix ([PR #341](https://github.com/jacob-bd/gemini-notebook-mcp-cli/pull/341)); the opt-out check was added during review.
+- **Renaming a profile now keeps its saved browser login with it.** `nlm login profile rename` moves the Chrome browser folder (and the Firefox one) along with the account, so the next login doesn't start from a blank browser. It refuses the rename if a browser folder already exists under the new name, and rolls everything back if a later step fails. Protected profiles still can't be renamed. Thanks to **@insane66613** ([PR #344](https://github.com/jacob-bd/gemini-notebook-mcp-cli/pull/344)); the Firefox folder and the existing-folder check were added during review.
+- The first-ever creation of `installation.json` (the install identity used for protected storage) is now atomic: it is written to a temporary file and renamed into place, so a second process starting at the same moment can never read a half-written file and fail with "Corrupt or unreadable installation.json". This only affected a first protected write racing another process; it also made one CI test intermittently fail.
+
+## [0.15.0] - 2026-10-01
+
+> 🔒 **Choose how your login is stored before you sign in**
+> New logins now ask "Protected (recommended) or plain file?" *before* the browser opens, so a protected login never starts life as a plain file. `nlm setup` also gets a "Credential protection" menu item to protect or restore saved logins at any time.
+
+### Added
+
+- **Credential protection in `nlm setup`.** New main-menu item. Offers "Protect saved logins" when any login is plain, and "Restore protected logins to plain files" only when something is protected. With several logins you get the same checkbox picker as `nlm auth storage set`. The existing startup question stays.
+- **`nlm login` asks plain vs protected first (new profiles only).** Only in a real terminal on a desktop with a working keystore; SSH, containers and headless Linux stay on plain files without asking. If you type a name protected mode can't use (like `john@work.com` or `my work`), the question offers a working name instead (`john-work.com`, `my-work`) and lets you keep your original name as a plain file, all before the browser opens. Picking "protected" means no protection prompts or tips afterwards. Picking "plain" is respected: that profile is never nudged again.
+- **`nlm login --storage protected|file`.** Skips the question for a new profile (for scripts). Fails loudly instead of silently downgrading when the keystore is unavailable, and refuses to change the mode of an existing profile (use `nlm auth storage set`).
+- **MCP `profile` tool.** `action=list` shows saved accounts with email, storage mode and which is active; `action=status` shows storage details; `action=switch` changes the account for every later tool call until the MCP server restarts. `make_default=true` also saves it as your default for the CLI and future sessions. Built for apps with no CLI, like Claude CoWork.
+- **MCP `alias` tool, and aliases work everywhere.** Any tool's `notebook_id` now accepts an alias set with `nlm alias set` or the new tool.
+- **MCP `chat_save_to_note`** (CLI: `nlm chats to-note`) and **`pipeline` action `create`** (CLI: `nlm pipeline create`).
+- **`server_info` lists saved profiles** with email, storage mode and storage problems, plus which profile is active. Metadata only: it never opens the OS keystore.
+- **Active-account note.** While a profile switch is active and several profiles exist, every MCP tool result carries `active_profile_note` naming the account in use, because apps like Claude Desktop share one MCP server across chats.
+- **CLI-to-MCP parity test.** Every CLI command must map to an MCP tool or be on the deliberate CLI-only list, so gaps can't creep back.
+
+### Fixed
+
+- The one-time MCP "protect your login" notice no longer appears for a protected or already-answered active profile (it could after a profile switch).
+- The root `auth.json` backup and storage migrations always follow the saved default profile, never a temporary session switch.
+- `nlm auth storage set` and the wizard no longer list leftover empty profile folders.
+- Pressing Ctrl+C (or a failed or timed-out sign-in) during `nlm login` now closes the automation Chrome window it opened, instead of leaving it running for the next login to reuse.
+
+### Changed
+
+- Existing profiles behave as before: the after-login "Protect…?" question still appears for plain profiles that never answered.
+- Deliberately CLI-only (unsafe or interactive over MCP): `login`, `setup`, `skill`, profile delete/rename, `auth storage set/resolve/relocate`, `config`, `chat start`.
+
+### Removed
+
+- Nothing removed.
+
+## [0.14.0] - 2026-09-30
+
+> 🔒 **New: Protected login storage (recommended)**
+> Your saved Google login can now be encrypted, with its key kept in your computer's keychain instead of a plain file. We highly recommend everyone switch on a personal computer:
+>
+>     nlm auth storage set protected
+>
+> Optional: nothing changes unless you turn it on. Servers, cron, Docker and SSH setups can keep the plain file.
+> [How it works](docs/AUTHENTICATION.md#protected-storage)
+
+### Added
+
+- **Protected mode credential storage (`nlm auth storage`)** — Secure your saved Google login on personal computers by encrypting credentials at rest using AES-256-GCM (`credentials.enc`) with the encryption key stored in your operating system's native keystore (macOS Keychain, Windows Credential Manager, Linux SecretService).
+  - Optional: File mode remains the default, and upgrading changes nothing until enabled.
+  - Subcommands: `nlm auth storage status`, `set protected|file`, `resolve file|protected`, and `relocate`.
+  - `set` shows a picker in a terminal when you have several saved logins, so you choose which ones to switch; `--all` switches every one. Without a terminal it acts on the default profile and lists any profiles still in the other mode.
+  - Conflict detection and interactive resolution for divergent file vs protected credentials.
+  - Fast MCP hot-path with in-memory caching (no keychain access on ordinary tool calls) and revision checks.
+  - Safe multi-process token rotation with single-flight reloads and compare-and-save semantics.
+  - Told once, never nagged: a one-time CLI tip (terminal only), a one-time MCP notice, and an optional `[y/N]` question after `nlm login` and in `nlm setup` (asked once per profile, default No). `nlm doctor` lists each profile as plain or protected.
+  - When you turn it on, `nlm` lists leftover plain login backups and offers to delete them (default No). The `backups/` folder of setup-wizard backups is never touched.
+
+### Changed
+
+- **Token rotation rate limiting** — Rotation cooldown is now tracked per credential file (`cookies.json` in file mode, `credentials.enc` in protected mode) instead of one shared per-process key.
+- **Environment cookies are ephemeral** — When `NOTEBOOKLM_COOKIES` is set, credentials are used for the active process only. They are never written to profile caches or OS keystores, and cannot trigger or overwrite saved-profile headless recovery.
+
+### Downgrade Warning
+
+- **Downgrading to older versions:** Older versions of `notebooklm-mcp-cli` do not understand `credentials.enc`. Before downgrading to a version prior to this release, run `nlm auth storage set file` on every protected profile to restore standard JSON files.
+
+## [0.13.0] - 2026-09-27
+
+Setup is now one command. `nlm setup` finds the AI tools on your machine and
+connects them to Gemini Notebook through a guided menu — no config files to
+edit. This release also includes the fixes prepared for the unreleased 0.12.1.
+
+### Added
+
+- **Guided setup wizard (`nlm setup`)** — A menu with six options: **Show my tools' status**, **Add the MCP to my tools/agents**, **Add the skill to my tools/agents**, **Remove an MCP or skill**, **Copy MCP setup for a tool not listed**, and **Exit**. Only tools found on your machine are listed. Press Esc on any screen to go back; the menu returns after each task.
+- **Status view** — One color-coded table per detected tool: MCP connection (✓ set up, ✗ not yet, ⚠ old name) and skill version (⬆ when an upgrade is available).
+- **Connect and skill pickers** — The connect list starts with nothing selected and shows already-connected tools as locked. The skill step asks **All my projects** (default) or **Just this folder**, pre-ticks tools you just connected and available upgrades, and replaces an older skill only after you confirm. Choosing **Add the skill** from the menu goes straight to these choices.
+- **Rename old server names** — Connections still named `notebooklm-mcp` or `notebooklm` show as **⚠ old name** and appear under **Needs a fix**. Ticking one renames it to `gemini-notebook-mcp` and keeps its other settings (for example Codex's `enabled = true`). Claude Code entries are renamed through `claude mcp add-json` and checked against the saved config before the wizard reports success.
+- **Skill upload file for Claude Desktop Chat, Cowork and claude.ai** — These only load skills uploaded to your Claude account, not local skill folders. `nlm skill package` (or the **Claude Desktop / claude.ai** row in the wizard's skill picker) saves `~/Downloads/nlm-skill.zip` in Claude's skill-upload format, reveals it in Finder on macOS, and shows the upload steps (**Customize → Skills → Add**). The zip's `SKILL.md` carries its version under `metadata:` as the upload format requires.
+- **Copy MCP setup** — Copies the standard JSON snippet, using the full path to `notebooklm-mcp`, straight to the clipboard. **Advanced options** switch to uvx, the bare command, or entry-only JSON.
+- **Codex desktop and global Copilot setup** — The wizard configures the shared Codex CLI / ChatGPT desktop MCP config and the VS Code user profile for GitHub Copilot. Skill setup deduplicates shared locations.
+
+### Improved
+
+- **Safe changes** — Every MCP config and skill folder is backed up to `~/.notebooklm-mcp-cli/backups/` before it changes. Malformed configs fail closed, unrelated servers are preserved, and JSONC files are left untouched when they can't be edited safely. Removal is grouped (MCP connections / skills), opt-in, and asks for a separate default-No confirmation per group.
+- **Honest results** — A connection that fails, or that you skip with Esc (such as at the Claude Desktop profile question), is reported as failed or skipped instead of connected, and the skill offer no longer says "Connection added" after a failure.
+- **New MCP entries use the full path** to `notebooklm-mcp` by default, since desktop apps often don't inherit your shell `PATH`.
+- **Version-aware skill updates** — Current or newer skill versions are kept; older or unversioned installs are replaced only after confirmation.
+
+### Fixed
+
+- **Direct `AuthManager.get_headers()` calls use the saved sign-in host ([#332](https://github.com/jacob-bd/gemini-notebook-mcp-cli/issues/332))** — `Origin` and `Referer` now follow the profile's saved `base_host` instead of defaulting to `notebooklm.google.com`, matching the live client.
+- Retry transient Google media 404s when downloading newly completed videos; report an uncertain media availability error after retries.
+- Explain permission-denied collaborator invites without guessing which account or domain restriction applied.
+- Build notebook links from the authenticated profile's host across notebook, Studio, and sharing outputs.
+- **Drive-imported files in Drive status ([#337](https://github.com/jacob-bd/gemini-notebook-mcp-cli/issues/337))** — Read type-14 Drive IDs so Drive-picker files appear in `source_list_drive` and are eligible for manual sync. Direct uploads without Drive metadata remain excluded; an eligible source can still fail a sync attempt.
+
+### Other improvements
+
+- Count queued artifacts separately in Studio status summaries. Queue position and ETA remain unavailable from the upstream response.
+- Guide MCP and CLI agents on profile selection, download readiness, path boundaries, report timeouts, and sharing errors.
+- Setup backups follow `NOTEBOOKLM_MCP_CLI_PATH` like the rest of the app's storage, so the test suite no longer writes into the real backup folder.
+
+### Verification
+
+- New opt-in end-to-end suite (`uv run pytest -m wizard_e2e`, 38 tests): drives the real `nlm setup` in a pseudo-terminal against a sandboxed home folder and checks the files written for every menu option, Esc on every screen, the old-name rename, and the upload zip.
+- Live on macOS: connected Claude Desktop (regular and Relay AI / 3P profiles) and used the MCP from Cowork; renamed a real Claude Code entry; uploaded `nlm-skill.zip` in Claude Desktop.
+- Full suite, excluding the e2e markers: 1,898 passed, 39 skipped. Ruff lint clean.
+
 ## [0.12.0] - 2026-09-24
 
 Adds support for Gemini Notebook's new Interactive Reports, built for AI
@@ -32,7 +172,7 @@ elements.
 
 ### Verification
 
-- Live, on a personal account: all seven element types generated with non-default settings; Google saved the exact codes and its Studio labels show Debate audio, Explainer and Short video; "more" produced a 26-question quiz and 80 flashcards; a French report produced a French quiz; a report scoped to one of two sources kept its elements on that source.
+- Live, on a Google Workspace account: all seven element types generated with non-default settings; Google saved the exact codes and its Studio labels show Debate audio, Explainer and Short video; "more" produced a 26-question quiz and 80 flashcards; a French report produced a French quiz; a report scoped to one of two sources kept its elements on that source.
 - Agent consent evaluation (a different model, skill docs only): 8/8 correct, including ignoring a planted "pre-approved" instruction in a card description.
 - Full suite, excluding the e2e marker: 1,747 passed, 38 skipped. Ruff lint clean.
 

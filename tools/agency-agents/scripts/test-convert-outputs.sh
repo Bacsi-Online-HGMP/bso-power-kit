@@ -97,7 +97,7 @@ N="$(wc -l < "$SOURCES" | tr -d ' ')"
 [[ "$N" -gt 0 ]] || { echo "ERROR: no source agents found." >&2; exit 2; }
 
 # --- generate: every converted tool, sequentially, into a scratch dir ---------
-TOOLS="antigravity gemini-cli opencode cursor aider windsurf openclaw qwen zcode kimi codex osaurus hermes vibe"
+TOOLS="antigravity gemini-cli opencode cursor aider windsurf openclaw qwen zcode kimi codex osaurus hermes vibe dsh"
 if [[ -z "$OUT" ]]; then
   OUT="$TMP/out"; mkdir -p "$OUT"
   for t in $TOOLS; do
@@ -142,6 +142,7 @@ def check(cond, msg): (ok if cond else bad)(msg)
 SPEC = {
     "antigravity": ("agency-*/SKILL.md", "yaml-fm"),
     "osaurus":     ("agency-*/SKILL.md", "yaml-fm"),
+    "dsh":         ("agency-*/SKILL.md", "yaml-fm"),
     "gemini-cli":  ("agents/*.md",       "yaml-fm"),
     "opencode":    ("agents/*.md",       "yaml-fm"),
     "qwen":        ("agents/*.md",       "yaml-fm"),
@@ -173,9 +174,12 @@ def find_desc(obj):
     return None
 
 def frontmatter(text):
-    if not text.startswith("---"): raise ValueError("no frontmatter")
-    parts = text.split("\n---", 1)
-    return yaml.safe_load(parts[0][3:])
+    lines = text.splitlines()
+    if not lines or lines[0] != "---": raise ValueError("no frontmatter")
+    for end in range(1, len(lines)):
+        if lines[end] == "---":
+            return yaml.safe_load("\n".join(lines[1:end]))
+    raise ValueError("missing frontmatter closing ---")
 
 def parsed_desc(path, fmt):
     text = open(path, encoding="utf-8").read()
@@ -198,8 +202,10 @@ src_bad = []
 for slug, (_gf_desc, _gf_name, path) in list(src.items()):
     try:
         data = frontmatter(open(os.path.join(R, path), encoding="utf-8").read())
-        assert isinstance(data, dict) and isinstance(data.get("name"), str) \
-            and isinstance(data.get("description"), str), "missing name/description"
+        assert isinstance(data, dict) and all(
+            isinstance(data.get(field), str) and data[field].strip()
+            for field in ("name", "description", "color")
+        ), "missing or empty name/description/color"
         assert data["description"][:1] not in ('"', "'"), "description starts with a quote character"
         src[slug] = (data["description"], data["name"], path)
     except Exception as e:
@@ -324,13 +330,13 @@ elif not colour_bad:
 # block in half and leaves each file holding a dangling fence, which renders as
 # broken markdown for every user of that integration (#849). So every fenced
 # block in a source must land intact in exactly one of the two files.
-SPLIT_FENCE = re.compile(r"^(`{3,}|~{3,})")
+SPLIT_FENCE = re.compile(r"^(`{3,}|~{3,})(.*)$")
 
 def body_lines(text):
     """Mirror lib.sh's get_body, including `$(...)`'s trailing-newline strip."""
     out, fm = [], 0
     for line in text.split("\n"):
-        if line == "---":
+        if fm < 2 and line == "---":
             fm += 1
             continue
         if fm >= 2:
@@ -346,10 +352,11 @@ def fence_blocks(lines):
         m = SPLIT_FENCE.match(line)
         if not m:
             continue
-        tok = m.group(1)
+        tok, rest = m.group(1), m.group(2)
         if not marker:
             marker, mlen, start = tok[0], len(tok), i
-        elif tok[0] == marker and len(tok) >= mlen:
+        elif tok[0] == marker and len(tok) >= mlen and not rest.strip():
+            # only a bare run closes: "```bash" inside a block is content (lib.sh fence_closes_p)
             res.append((start, i)); marker, mlen, start = "", 0, None
     if marker and start is not None:
         res.append((start, len(lines) - 1))
@@ -406,6 +413,44 @@ if os.path.isfile(aider_index):
             bad(f"aider: ...and {len(dangling)-3} more dangling paths")
     elif len(text) <= AIDER_INDEX_CEILING:
         ok(f"aider: index is {len(text):,} characters and all {N} agent paths resolve")
+
+# --- Layer A (tool names): Qwen only grants tools it can name ---------------
+# A Qwen subagent's `tools:` is an allow-list resolved against Qwen's registry
+# by tool name or display name; an entry matching neither is kept as-is and
+# grants nothing. Sources list Claude Code names, and Read/Write/Bash are not
+# Qwen names, so they have to be translated (convert.sh qwen_tools). Every
+# entry must be a Qwen built-in by a spelling Qwen resolves (tool name, display
+# name or legacy alias; packages/core/src/tools/tool-names.ts) or an MCP tool.
+QWEN_TOOLS = {
+    # tool names
+    "read_file", "write_file", "edit", "run_shell_command", "grep_search", "glob",
+    "list_directory", "web_fetch", "web_search", "todo_write", "notebook_edit", "agent",
+    # display names
+    "ReadFile", "WriteFile", "Edit", "Shell", "Grep", "Glob", "ListFiles", "WebFetch",
+    "WebSearch", "TodoList", "NotebookEdit", "Agent",
+    # legacy aliases
+    "SearchFiles", "FindFiles", "ReadFolder", "Task", "TodoWrite",
+    "search_file_content", "replace", "task",
+}
+qwen_bad = []
+for f in sorted(glob.glob(os.path.join(OUT, "qwen", "agents", "*.md"))):
+    try:
+        tools = (frontmatter(open(f, encoding="utf-8").read()) or {}).get("tools")
+    except Exception:
+        continue   # the strict-parse pass already reported this
+    if tools is None:
+        continue
+    entries = tools if isinstance(tools, list) else [t.strip() for t in str(tools).split(",")]
+    unknown = [t for t in entries if t and t not in QWEN_TOOLS and not t.startswith("mcp__")]
+    if unknown:
+        qwen_bad.append((os.path.basename(f)[:-3], unknown))
+for slug, unknown in qwen_bad[:3]:
+    bad(f"qwen: {slug} lists {', '.join(unknown)} — Qwen Code has no tool by that "
+        f"name, so the allow-list grants nothing for it")
+if len(qwen_bad) > 3:
+    bad(f"qwen: ...and {len(qwen_bad)-3} more agents with unknown tool names")
+if not qwen_bad:
+    ok("qwen: every tools: entry names a Qwen Code tool")
 
 # --- Layer A (app-facing): every SOURCE frontmatter strict-parsed above -------
 for m in src_bad[:5]: bad(m)
@@ -497,8 +542,11 @@ def drift_report(old_text):
     tools   = sorted(key for (k, key), h in cur.items() if k != "agent" and old.get((k, key)) != h)
     return changed, added, removed, tools
 
-if UPDATE:
+# Never make broken or incomplete generated output the new baseline.
+if UPDATE and not fails:
     open(MANIFEST, "w", newline="\n").write(new); ok(f"manifest written: {os.path.relpath(MANIFEST, R)}")
+elif UPDATE:
+    print("  SKIP manifest update: generated outputs failed validation")
 elif not os.path.exists(MANIFEST):
     bad(f"manifest missing: run with --update to create {os.path.relpath(MANIFEST, R)}")
 else:

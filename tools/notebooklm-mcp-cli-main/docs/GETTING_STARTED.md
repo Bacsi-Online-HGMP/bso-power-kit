@@ -23,15 +23,20 @@ If you have never used `notebooklm-mcp-cli` before, the path is:
    alternatives (`uvx`, `pip`, `pipx`, source install).
 2. **Authenticate** — `nlm login`. The CLI extracts your Google cookies
    from a managed browser session. See the
-   [Authentication Guide](AUTHENTICATION.md) for the two supported methods
-   (Auto Mode and File Mode) and how multi-profile auth works.
-3. **Connect an agent** — pick your client:
+   [Authentication Guide](AUTHENTICATION.md) for the supported methods
+   and how multi-profile auth works.
+   > 🔒 **Tip:** On a personal computer, `nlm login` asks before the browser opens whether to keep your login encrypted in your OS keystore (recommended) or as a plain file. Already logged in? Switch any time with `nlm setup` → **Credential protection** or `nlm auth storage set protected`. See [Protected Storage](AUTHENTICATION.md#protected-storage).
+3. **Connect an agent** — run the setup wizard and choose your app:
    ```bash
-   nlm skill install hermes          # Hermes Agent
-   claude mcp add gemini-notebook-mcp -- notebooklm-mcp   # Claude Code
-   gemini mcp add --scope user gemini-notebook-mcp -- notebooklm-mcp   # Gemini CLI
-   nlm setup add json                # any other MCP client (prints JSON)
+   nlm setup
    ```
+   Choose **Add the MCP to my tools/agents**, tick your apps with Space, and
+   press Enter. The wizard configures MCP at user/app scope, then offers the
+   optional skill for all projects or the current folder. Use **Show my tools'
+   status** to check what is connected, and **Copy MCP setup for a tool not
+   listed** for a client without a built-in installer. For Claude Desktop's
+   Chat and Cowork tabs (and claude.ai), tick **Claude Desktop / claude.ai** in
+   **Add the skill** to get an upload file (`~/Downloads/nlm-skill.zip`).
 4. **Verify** — restart your agent and call `notebook_list` (MCP) or
    `nlm notebook list` (CLI). If you see your existing notebooks, you are
    good to go.
@@ -75,7 +80,16 @@ cached in `~/.notebooklm-mcp-cli/profiles/default/auth.json`. The
 
 ### 3. Register the new MCP server
 
-Pick whichever fits your agent framework:
+Recommended: run the guided wizard to configure supported clients and
+optionally install the skill:
+
+```bash
+nlm setup
+```
+
+The skill defaults to all projects (user level); choose the current folder for
+project scope. For direct configuration, the existing client-specific commands
+remain available. For example:
 
 ```bash
 # Hermes Agent
@@ -127,6 +141,11 @@ gemini mcp remove notebooklm
 
 # Hermes / others: edit the client config directly
 ```
+
+> Only removing a *different* Gemini Notebook server needs this step. If the old
+> entry is this project's own pre-rebrand name (`notebooklm-mcp` or
+> `notebooklm`), `nlm setup` shows it as **⚠ old name** and renames it to
+> `gemini-notebook-mcp` for you: **Add the MCP to my tools/agents → Needs a fix**.
 
 If you are not sure what is registered, list everything:
 

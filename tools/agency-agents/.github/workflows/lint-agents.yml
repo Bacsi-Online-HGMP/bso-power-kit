@@ -41,9 +41,9 @@ jobs:
         id: changed
         run: |
           FILES=$(git diff --name-only --diff-filter=ACMR origin/${{ github.base_ref }}...HEAD -- \
-            'academic/**/*.md' 'design/**/*.md' 'engineering/**/*.md' 'finance/**/*.md' 'game-development/**/*.md' 'gis/**/*.md' 'healthcare/**/*.md' 'marketing/**/*.md' 'paid-media/**/*.md' 'sales/**/*.md' 'security/**/*.md' 'product/**/*.md' \
-            'project-management/**/*.md' 'research/**/*.md' 'testing/**/*.md' 'support/**/*.md' \
-            'spatial-computing/**/*.md' 'specialized/**/*.md')
+            ':(glob)academic/**/*.md' ':(glob)design/**/*.md' ':(glob)engineering/**/*.md' ':(glob)finance/**/*.md' ':(glob)game-development/**/*.md' ':(glob)gis/**/*.md' ':(glob)healthcare/**/*.md' ':(glob)marketing/**/*.md' ':(glob)paid-media/**/*.md' ':(glob)sales/**/*.md' ':(glob)security/**/*.md' ':(glob)product/**/*.md' \
+            ':(glob)project-management/**/*.md' ':(glob)research/**/*.md' ':(glob)testing/**/*.md' ':(glob)support/**/*.md' \
+            ':(glob)spatial-computing/**/*.md' ':(glob)specialized/**/*.md')
           {
             echo "files<<ENDOFLIST"
             echo "$FILES"
@@ -104,3 +104,7 @@ jobs:
         run: |
           chmod +x scripts/lint-agents.sh
           ./scripts/lint-agents.sh
+
+      - name: Reject folded frontmatter fixtures
+        if: steps.rules.outputs.changed == 'true'
+        run: bash scripts/test-folded-frontmatter.sh

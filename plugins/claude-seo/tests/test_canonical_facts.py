@@ -14,7 +14,8 @@ import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 FILES = [*ROOT.glob("skills/**/*.md"), *ROOT.glob("agents/*.md"),
-         *ROOT.glob("extensions/*/skills/**/*.md"), *ROOT.glob("extensions/*/agents/*.md")]
+         *ROOT.glob("extensions/*/skills/**/*.md"), *ROOT.glob("extensions/*/agents/*.md"),
+         *ROOT.glob("scripts/*.py")]
 
 WRONG = [
     # (regex, why it is wrong, primary source)
@@ -58,6 +59,29 @@ WRONG = [
      "developers.google.com/my-business/content/sunset-dates"),
     (r"Project Mariner\)", "Mariner's status is secondary-only; describe Google-Agent by function",
      "developers.google.com/crawling"),
+    # Review of 2026-09-28.
+    (r"(?i)(site reputation|searcher region|EEA)[^\n]{0,400}since 2026-08-28", "regional site reputation enforcement took effect 2026-08-30",
+     "developers.google.com/search/blog/2026/08/update-site-reputation-policy"),
+    (r"Gemini training \(NOT search\)|Optional block \(training only\)[^\n]*Google-Extended",
+     "Google-Extended covers Gemini training and grounding",
+     "developers.google.com/crawling/docs/crawlers-fetchers/google-common-crawlers"),
+    (r"August 2026 Spam \| Aug 18-20", "the August 2026 spam rollout completed August 21",
+     "status.search.google.com/incidents/LEubPCm2octf2uMqCFKE"),
+    (r"^\|[^|]*\d{4} (Core|Spam)[^|]*\|[^|]*\|[^|]*\|\s*Confirmed\s*\|\s*$",
+     "Google confirms rollout dates, not impact descriptions; label rows 'Dates confirmed'",
+     "status.search.google.com/products/rGHU1u87FJnkP6W2GwMi/history"),
+    (r"(?i)Google-Extended[^\n]{0,80}grounding( use)? only|training (&|and) grounding only\*\*",
+     "Google-Extended also limits training of the models behind Search gen-AI features",
+     "support.google.com/webmasters/answer/16908024"),
+    (r"canonical selection, mobile usability", "URL Inspection mobileUsabilityResult is deprecated",
+     "developers.google.com/webmaster-tools/v1/urlInspection.index/UrlInspectionResult"),
+    (r"Nano Banana 2 \(Flash, previous gen\)", "gemini-2.5-flash-image is the original Nano Banana",
+     "ai.google.dev/gemini-api/docs/models/gemini-2.5-flash-image"),
+    (r"\*\*18-day rule\*\*", "a single Sterling Sky case example, not a rule",
+     "sterlingsky.ca/what-gets-you-ranking-for-near-me-2025"),
+    (r"December 2025 JS SEO guidance, structured data injected via JavaScript may face delayed",
+     "the guide warns about Shopping crawl frequency for dynamic Product markup",
+     "developers.google.com/search/docs/appearance/structured-data/generate-structured-data-with-javascript"),
 ]
 
 

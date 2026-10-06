@@ -14,6 +14,7 @@ CHROMIUM_BROWSER_KEYS = {
     "dia",
     "comet",
     "edge",
+    "edge-beta",
     "chromium",
     "vivaldi",
     "opera",
@@ -23,7 +24,8 @@ FIREFOX_BROWSER_KEY = "firefox"
 
 def _normalize_browser(preferred: str | None = None) -> str:
     if preferred is None:
-        preferred = get_config().auth.browser
+        auth_cfg = getattr(get_config(), "auth", None)
+        preferred = getattr(auth_cfg, "browser", "auto") if auth_cfg else "auto"
     return (preferred or "auto").lower().strip()
 
 
@@ -130,7 +132,12 @@ def _get_saved_browser_backend(profile_name: str) -> str | None:
     return value if isinstance(value, str) and value else None
 
 
-def run_headless_auth(profile_name: str = "default", timeout: int = 30) -> Any | None:
+def run_headless_auth(
+    profile_name: str = "default",
+    timeout: int = 30,
+    expected_revision: str | None = None,
+    force: bool | None = None,
+) -> Any | None:
     """Try headless auth using the profile's saved backend, then reasonable fallbacks."""
     preferred_backend = _get_saved_browser_backend(profile_name)
     attempts: list[str] = []
@@ -149,7 +156,12 @@ def run_headless_auth(profile_name: str = "default", timeout: int = 30) -> Any |
         if backend == "chromium_cdp":
             from notebooklm_tools.utils.cdp import run_headless_auth as run_headless_chromium_auth
 
-            tokens = run_headless_chromium_auth(timeout=timeout, profile_name=profile_name)
+            tokens = run_headless_chromium_auth(
+                timeout=timeout,
+                profile_name=profile_name,
+                expected_revision=expected_revision,
+                force=force,
+            )
             if tokens:
                 return tokens
             continue
@@ -158,7 +170,12 @@ def run_headless_auth(profile_name: str = "default", timeout: int = 30) -> Any |
                 run_headless_auth as run_headless_firefox_auth,
             )
 
-            tokens = run_headless_firefox_auth(timeout=timeout, profile_name=profile_name)
+            tokens = run_headless_firefox_auth(
+                timeout=timeout,
+                profile_name=profile_name,
+                expected_revision=expected_revision,
+                force=force,
+            )
             if tokens:
                 return tokens
 

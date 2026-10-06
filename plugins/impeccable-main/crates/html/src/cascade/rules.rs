@@ -65,7 +65,8 @@
 //!   parse in the same process).
 
 use super::csstree::{self, Important, Node};
-use super::shorthand::expand_static_declaration;
+use super::shorthand::{expand_static_box_values, expand_static_declaration};
+use super::values::split_css_tokens;
 use impeccable_core::js;
 use indexmap::IndexMap;
 use once_cell::sync::Lazy;
@@ -124,6 +125,72 @@ static CLASS_STRIP_RE: Lazy<Regex> = Lazy::new(|| {
 static PUNCT_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"[*>+~(),]").expect("PUNCT_RE"));
 static TYPE_RE: Lazy<Regex> =
     Lazy::new(|| Regex::new(r"(?-u:\b)[a-zA-Z][0-9A-Za-z_-]*(?-u:\b)").expect("TYPE_RE"));
+static BORDER_SIDE_STYLE_PROP_RE: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(r"^border-(top|right|bottom|left)-style$").expect("BORDER_SIDE_STYLE_PROP_RE")
+});
+static BORDER_SIDE_SHORTHAND_RE: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(r"^border-(top|right|bottom|left)$").expect("BORDER_SIDE_SHORTHAND_RE")
+});
+static BORDER_STYLE_VALUE_RE: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(r"(?i)^(?:none|hidden|solid|dashed|dotted|double|groove|ridge|inset|outset)$")
+        .expect("BORDER_STYLE_VALUE_RE")
+});
+
+fn internal_border_style_expansion(prop: &str, value: &str) -> Vec<(String, String)> {
+    let prop = js::to_lower_case(prop);
+    let value = js::trim(value);
+    let side_names = [
+        "borderTopStyle",
+        "borderRightStyle",
+        "borderBottomStyle",
+        "borderLeftStyle",
+    ];
+    if prop == "border-style" {
+        let [top, right, bottom, left] = expand_static_box_values(&split_css_tokens(value));
+        return side_names
+            .into_iter()
+            .zip([top, right, bottom, left])
+            .map(|(name, value)| (name.to_string(), value))
+            .collect();
+    }
+    if let Some(captures) = BORDER_SIDE_STYLE_PROP_RE.captures(&prop) {
+        let index = match &captures[1] {
+            "top" => 0,
+            "right" => 1,
+            "bottom" => 2,
+            _ => 3,
+        };
+        return vec![(side_names[index].to_string(), value.to_string())];
+    }
+
+    let side = if prop == "border" {
+        None
+    } else if let Some(captures) = BORDER_SIDE_SHORTHAND_RE.captures(&prop) {
+        Some(match &captures[1] {
+            "top" => 0,
+            "right" => 1,
+            "bottom" => 2,
+            _ => 3,
+        })
+    } else {
+        return Vec::new();
+    };
+    let tokens = split_css_tokens(value);
+    let style = tokens
+        .iter()
+        .find(|token| BORDER_STYLE_VALUE_RE.is_match(token))
+        .or_else(|| tokens.iter().find(|token| token.to_ascii_lowercase().contains("var(")));
+    let Some(style) = style else {
+        return Vec::new();
+    };
+    match side {
+        Some(index) => vec![(side_names[index].to_string(), style.clone())],
+        None => side_names
+            .into_iter()
+            .map(|name| (name.to_string(), style.clone()))
+            .collect(),
+    }
+}
 
 /// JS: css-cascade.mjs#staticSpecificity(selector) -> [ids, classes, types]
 pub fn static_specificity(selector: &str) -> [u32; 3] {
@@ -186,7 +253,9 @@ pub fn apply_static_declaration<K: Hash + Eq>(
     meta: &DeclMeta,
 ) {
     let map = specified.map.entry(node).or_default();
-    for (expanded_prop, expanded_value) in expand_static_declaration(prop, value) {
+    let mut expanded = expand_static_declaration(prop, value);
+    expanded.extend(internal_border_style_expansion(prop, value));
+    for (expanded_prop, expanded_value) in expanded {
         let existing = map.get(&expanded_prop).map(|d| &d.meta);
         if compare_static_priority(existing, meta) {
             let next = SpecifiedDecl {

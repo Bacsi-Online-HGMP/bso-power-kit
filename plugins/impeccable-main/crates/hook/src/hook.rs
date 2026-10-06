@@ -185,6 +185,7 @@ pub fn run_hook(rt: &Runtime, stdin: &str) -> RunResult {
     let quiet_mode = truthy(rt.env("IMPECCABLE_HOOK_QUIET")) || config.quiet;
     let mut detector_threw_any = false;
     let mut last_skip = "no-scannable-file";
+    let mut live_preview_edit: Option<String> = None;
     let mut suppressed_hit = false;
     let mut cache_dirty = false;
     let mut deferred_total: usize = 0;
@@ -239,6 +240,20 @@ pub fn run_hook(rt: &Runtime, stdin: &str) -> RunResult {
             }
         }
 
+        // A live variant session owns a file carrying preview markers: stand
+        // down before the per-session edit cap can turn the variants wrap
+        // into a suppression notice.
+        if primary_files.contains(file_path) {
+            if let Ok(bytes) = std::fs::read(file_path) {
+                if crate::hook_lib::has_live_preview_markers(&String::from_utf8_lossy(&bytes)) {
+                    if live_preview_edit.is_none() {
+                        live_preview_edit = Some(file_path.clone());
+                    }
+                    last_skip = "live-preview";
+                    continue;
+                }
+            }
+        }
         let use_html_engine = match configured {
             Some(c) => c.engine == "html",
             None => ext == ".html" || ext == ".htm",
@@ -276,6 +291,18 @@ pub fn run_hook(rt: &Runtime, stdin: &str) -> RunResult {
                 };
             }
         };
+        if crate::hook_lib::has_live_preview_markers(&content) {
+            // A live variant session owns this file. When it is the edited
+            // (primary) file, the whole event stands down, co-scanned
+            // stylesheets included: a clean ack or a finding about the
+            // companion file is the same mid-session noise the stand-down
+            // exists to prevent.
+            if primary_files.contains(file_path) && live_preview_edit.is_none() {
+                live_preview_edit = Some(file_path.clone());
+            }
+            last_skip = "live-preview";
+            continue;
+        }
         let scan = scans.entry(file_path.clone()).or_insert_with(|| {
             design_system_options_for_file(rt, &config, &project_cwd, file_path)
         });
@@ -353,6 +380,17 @@ pub fn run_hook(rt: &Runtime, stdin: &str) -> RunResult {
                 clean_ack_deduped = false;
             }
         }
+    }
+    if let Some(file) = live_preview_edit {
+        audit.insert("file".into(), Value::String(file));
+        return result(
+            &audit,
+            vec![
+                ("emitted", Value::Bool(false)),
+                ("skipped", Value::from("live-preview")),
+                ("durationMs", ms_since(started)),
+            ],
+        );
     }
 
     if !fresh_groups.is_empty() {
@@ -602,15 +640,7 @@ pub fn run_stop_hook(rt: &Runtime, stdin: &str) -> RunResult {
     // `stop_hook_active`; Grok sends `stopHookActive`, copied onto the
     // snake_case field by the normalizer. Cursor and GitHub Copilot omit
     // the field, so the strict `=== true` is a no-op for them.
-    if event.get("stop_hook_active") == Some(&Value::Bool(true)) {
-        return result(
-            &audit,
-            vec![
-                ("skipped", Value::from("stop-hook-active")),
-                ("durationMs", ms_since(started)),
-            ],
-        );
-    }
+    let stop_hook_active = event.get("stop_hook_active") == Some(&Value::Bool(true));
     // JS: Grok fires Stop twice: `end_turn` (the gate that can inject
     // additionalContext) then an observe-only `shutdown`. A second deep
     // pass would re-emit the same findings. Claude omits `reason`; only
@@ -648,7 +678,39 @@ pub fn run_stop_hook(rt: &Runtime, stdin: &str) -> RunResult {
             ],
         );
     }
+    // Native projects skip the whole Stop pass, the build-completion reminder
+    // included. Resolving the platform reads PRODUCT.md, so it is paid only
+    // when there is a build state to remind about or touched files to scan.
+    let mut platform_memo: Option<Option<String>> = None;
+    let native_skip = |platform_memo: &mut Option<Option<String>>| -> Option<RunResult> {
+        let platform = platform_memo.get_or_insert_with(|| resolve_project_platform(rt, &project_cwd)).clone();
+        is_native_platform(platform.as_deref()).then(|| result(
+            &audit,
+            vec![
+                ("skipped", Value::from("native-platform")),
+                ("platform", Value::String(platform.unwrap_or_default())),
+                ("durationMs", ms_since(started)),
+            ],
+        ))
+    };
+    if std::path::Path::new(&project_cwd).join(".impeccable/build/state.json").is_file() {
+        if let Some(skip) = native_skip(&mut platform_memo) { return skip; }
+    }
     let mut cache = read_cache(&project_cwd);
+    if matches!(harness, "claude" | "codex" | "gemini") {
+        if let Some(message) = crate::build_completion::reminder(rt, &project_cwd, &session_id, stop_hook_active, &mut cache) {
+            return RunResult {
+                stdout: payload(&message, "Stop", harness),
+                audit: with(&audit, vec![("kind", Value::from("build-completion")), ("emitted", Value::Bool(true)), ("durationMs", ms_since(started))]),
+            };
+        }
+    }
+    if stop_hook_active {
+        return result(&audit, vec![("skipped", Value::from("stop-hook-active")), ("durationMs", ms_since(started))]);
+    }
+    if truthy(rt.env("IMPECCABLE_HOOK_COMPLETION_ONLY")) {
+        return result(&audit, vec![("skipped", Value::from("no-build-continuation")), ("durationMs", ms_since(started))]);
+    }
     let touched = touched_files(&cache, &session_id);
     if touched.is_empty() {
         return result(
@@ -659,17 +721,7 @@ pub fn run_stop_hook(rt: &Runtime, stdin: &str) -> RunResult {
             ],
         );
     }
-    let platform = resolve_project_platform(rt, &project_cwd);
-    if is_native_platform(platform.as_deref()) {
-        return result(
-            &audit,
-            vec![
-                ("skipped", Value::from("native-platform")),
-                ("platform", Value::String(platform.unwrap_or_default())),
-                ("durationMs", ms_since(started)),
-            ],
-        );
-    }
+    if let Some(skip) = native_skip(&mut platform_memo) { return skip; }
     let mut scans = HashMap::new();
 
     let mut fresh_groups: Vec<Group> = Vec::new();
@@ -707,6 +759,9 @@ pub fn run_stop_hook(rt: &Runtime, stdin: &str) -> RunResult {
             Ok(b) => String::from_utf8_lossy(&b).into_owned(),
             Err(_) => continue,
         };
+        if crate::hook_lib::has_live_preview_markers(&content) {
+            continue;
+        }
         let use_html_engine = match configured {
             Some(c) => c.engine == "html",
             None => ext == ".html" || ext == ".htm",
@@ -844,6 +899,28 @@ fn is_stop_event(stdin: &str) -> bool {
 
 /// `impeccable hook` (hook.mjs main). Returns the exit code (always 0).
 pub fn run(rt: &Runtime, stdin: &str, io: &mut impeccable_common::Io) -> i32 {
+    if let Ok(Value::Object(event)) = serde_json::from_str::<Value>(stdin) {
+        if event.get("hook_event_name").and_then(Value::as_str) == Some("BeforeTool")
+            && resolve_harness(rt, Some(&event)) == "gemini" {
+            // String checks first: this fires before every Gemini shell call.
+            if let Some(output) = crate::build_completion::gemini_shell_identity(rt, &event) {
+                if !truthy(rt.env("IMPECCABLE_HOOK_DISABLED")) && read_config(&rt.proc_cwd).enabled {
+                    io.out(&format!("{output}\n"));
+                }
+            }
+            return 0;
+        }
+        if event.get("hook_event_name").and_then(Value::as_str) == Some("SessionStart") {
+            let cwd = rt.resolve(&[event.get("cwd").and_then(Value::as_str).unwrap_or(&rt.proc_cwd)]);
+            if !truthy(rt.env("IMPECCABLE_HOOK_DISABLED")) && resolve_harness(rt, Some(&event)) == "claude"
+                && read_config(&cwd).enabled {
+                if let Some(session) = event.get("session_id").and_then(Value::as_str) {
+                    crate::build_completion::persist_session_identity(rt, session);
+                }
+            }
+            return 0;
+        }
+    }
     // JS: process.env.IMPECCABLE_HOOK_DEPTH = process.env.IMPECCABLE_HOOK_DEPTH || '1'
     // is exported for child processes; this binary spawns none, so the
     // pre-mutation snapshot in `rt.env` is the only value that matters.

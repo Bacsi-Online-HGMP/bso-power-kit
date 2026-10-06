@@ -126,33 +126,98 @@ impl<F: Fn(&str) -> Option<String>> CustomProps for F {
 /// value string, recursing up to 8 levels for chained refs. Returns the
 /// input unchanged when no refs are present or a chain does not resolve.
 pub fn resolve_var_refs(raw: &str, custom_props: &dyn CustomProps, depth: u32) -> String {
-    re!(
-        VAR_RE,
-        format!(
-            r"var\({ws}*(--[a-zA-Z0-9_-]+){ws}*(?:,{ws}*([^)]+))?\)",
-            ws = WS
-        )
-    );
-    if !raw.contains("var(") {
+    // CSS function names are ASCII case-insensitive; ASCII lowercasing keeps
+    // every byte offset, so positions found in `lower` index `raw` directly.
+    let lower = raw.to_ascii_lowercase();
+    if !lower.contains("var(") {
         return raw.to_string();
     }
     if depth > 8 {
         return raw.to_string();
     }
-    VAR_RE
-        .replace_all(raw, |caps: &regex::Captures| {
-            let name = caps.get(1).map(|m| m.as_str()).unwrap_or("");
-            if let Some(v) = custom_props.get(name) {
-                return resolve_var_refs(&v, custom_props, depth + 1);
+
+    let bytes = raw.as_bytes();
+    let mut out = String::with_capacity(raw.len());
+    let mut cursor = 0;
+    while let Some(relative_start) = lower[cursor..].find("var(") {
+        let start = cursor + relative_start;
+        let open = start + 3;
+        let mut nesting = 1_u32;
+        let mut quote = None;
+        let mut escaped = false;
+        let mut close = None;
+        for (offset, byte) in bytes[open + 1..].iter().copied().enumerate() {
+            let index = open + 1 + offset;
+            if escaped {
+                escaped = false;
+                continue;
             }
-            match caps.get(2) {
-                Some(fb) if !fb.as_str().is_empty() => {
-                    resolve_var_refs(js::trim(fb.as_str()), custom_props, depth + 1)
+            if byte == b'\\' {
+                escaped = true;
+                continue;
+            }
+            if let Some(active_quote) = quote {
+                if byte == active_quote {
+                    quote = None;
                 }
-                _ => caps.get(0).map(|m| m.as_str()).unwrap_or("").to_string(),
+                continue;
             }
-        })
-        .into_owned()
+            if byte == b'\'' || byte == b'"' {
+                quote = Some(byte);
+            } else if byte == b'(' {
+                nesting += 1;
+            } else if byte == b')' {
+                nesting -= 1;
+                if nesting == 0 {
+                    close = Some(index);
+                    break;
+                }
+            }
+        }
+        let Some(close) = close else {
+            out.push_str(&raw[cursor..]);
+            return out;
+        };
+
+        let body = &raw[open + 1..close];
+        let mut nested = 0_u32;
+        let mut comma = None;
+        for (index, byte) in body.as_bytes().iter().copied().enumerate() {
+            if byte == b'(' {
+                nested += 1;
+            } else if byte == b')' {
+                nested = nested.saturating_sub(1);
+            } else if byte == b',' && nested == 0 {
+                comma = Some(index);
+                break;
+            }
+        }
+        let (name, fallback) = match comma {
+            Some(index) => (js::trim(&body[..index]), Some(js::trim(&body[index + 1..]))),
+            None => (js::trim(body), None),
+        };
+        let valid_name = name.starts_with("--")
+            && name.len() > 2
+            && name[2..]
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_' || byte == b'-');
+
+        out.push_str(&raw[cursor..start]);
+        if valid_name {
+            if let Some(value) = custom_props.get(name) {
+                out.push_str(&resolve_var_refs(&value, custom_props, depth + 1));
+            } else if let Some(fallback) = fallback {
+                out.push_str(&resolve_var_refs(fallback, custom_props, depth + 1));
+            } else {
+                out.push_str(&raw[start..=close]);
+            }
+        } else {
+            out.push_str(&raw[start..=close]);
+        }
+        cursor = close + 1;
+    }
+    out.push_str(&raw[cursor..]);
+    out
 }
 
 /// JS: checks.mjs#parseColorResolved. Resolve var() refs (when a map is
@@ -765,5 +830,18 @@ mod tests {
             vec!["0 1px 2px rgba(0,0,0,0.3)", " 0 0 30px hsl(1, 2%, 3%)"]
         );
         assert_eq!(split_shadow_layers("none"), vec!["none"]);
+    }
+
+    #[test]
+    fn resolve_var_refs_handles_nested_fallbacks() {
+        let props = HashMap::new();
+        assert_eq!(
+            resolve_var_refs("var(--outer, var(--inner, 0))", &props, 0),
+            "0"
+        );
+        assert_eq!(
+            resolve_var_refs("calc(1px + var(--missing, 2px))", &props, 0),
+            "calc(1px + 2px)"
+        );
     }
 }

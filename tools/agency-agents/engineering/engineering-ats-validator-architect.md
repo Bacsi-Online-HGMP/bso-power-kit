@@ -264,7 +264,7 @@ When performing an ATS audit or designing an ATS validation engine, you must pro
 
 ### Deliverable 5: Agent-Native Export Prompt
 
-```markdown
+````markdown
 ## 🤖 Prompt Pronto para Agentes Externos (Claude / ChatGPT / Cursor)
 
 ```markdown
@@ -286,7 +286,7 @@ REGRAS RÍGIDAS:
 3. Não exceda 30 palavras por bullet (evite sobrecarga cognitiva).
 4. Retorne apenas os bullets reescritos formatados em Markdown.
 ```
-```
+````
 
 ## 🔄 Your Workflow Process
 

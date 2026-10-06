@@ -12,6 +12,7 @@ use impeccable_comp::raster::{self as r, Image};
 use once_cell::sync::Lazy;
 use regex::Regex;
 use serde_json::{json, Map, Value};
+use sha2::{Digest, Sha256};
 
 use crate::util::{self, arg, arg_or, flag, num, r4, r4f, round};
 
@@ -24,10 +25,10 @@ const COLS: &[u8] = b"ABCDEFGHIJ";
 pub const MAX_CODE_REGION_AREA: f64 = 0.25;
 pub const EDGE_CONTACT_MIN: f64 = 0.35;
 
-fn is_raster_kind(k: &str) -> bool {
+pub(crate) fn is_raster_kind(k: &str) -> bool {
     matches!(k, "plate" | "image" | "texture")
 }
-fn is_kind(k: &str) -> bool {
+pub(crate) fn is_kind(k: &str) -> bool {
     matches!(k, "plate" | "image" | "texture" | "text" | "control" | "chrome" | "band")
 }
 
@@ -35,6 +36,29 @@ fn is_kind(k: &str) -> bool {
 static PAINTED_NOTE: Lazy<Regex> = Lazy::new(|| {
     Regex::new(r"(?i)\b(diagram|drawing|drawn|illustration|illustrations|illustrated|figure|schematic|exploded|photo|photos|photograph\w*|picture|painting|painted|render|rendered|rendering|artwork|engraving|etching|linework|line art|texture|textured|textures|grain|fabric|halftone|watercolou?r|sketch|sketched|blueprint|geometry|leader lines?|callout lines?|thumbnail|silhouette|product shot|hero image|3d)\b").unwrap()
 });
+
+/// A raster note that names a frame (surround, window, shutters, doorway,
+/// arch...) and then an opening onto content behind it (a view, "showing",
+/// "looking out", an interior, "photograph of"). Order matters: in "photograph
+/// of a window" or "coast seen through a carriage window" the frame is the
+/// content, and a bare "framed portrait" gives no sign the frame is separate.
+static FRAME_WORD: Lazy<Regex> = Lazy::new(|| Regex::new(r"(?i)\b(surround(?:s|ed)?|frame[ds]?|framing|windows?|doorway|doors?|arch(?:es)?|archway|shutter(?:s|ed)?|cartouche|portal|niche|alcove|mirror|porthole|casement|proscenium)\b").unwrap());
+static OPENING: Lazy<Regex> = Lazy::new(|| Regex::new(r"(?i)\b(views?|viewing|vista|showing|shows|reveal(?:s|ing)?|looking (?:out|through|into|onto|over)|looks? (?:out|onto|into)|inside|interior|through|beyond|opening (?:onto|to|on)|opens? (?:onto|to|on)|glimpse|(?:photo(?:graph)?|scene|picture|image) of)\b").unwrap());
+static MOVING: Lazy<Regex> = Lazy::new(|| Regex::new(r"(?i)\b(shutters?|doors?|gates?|curtains?|blinds?)\b").unwrap());
+
+/// The reviewer-facing observation when a raster note bakes a frame around the content it opens onto.
+pub fn baked_composite(note: &str) -> Option<String> {
+    static BLEED: Lazy<Regex> = Lazy::new(|| Regex::new(r"(?i)full-?(?:frame|bleed)|frame[- ]filling").unwrap());
+    // A note that leads with the content ("photograph through window: ...") describes the
+    // view; a window or doors later in it are its subject matter, not a frame around it.
+    static CONTENT_LEAD: Lazy<Regex> = Lazy::new(|| Regex::new(r"(?i)^\W*(?:(?:a|an|the)\s+)?(?:[\w-]+\s+){0,2}?(?:photo(?:graph)?s?|views?|scenes?|pictures?|images?)\b").unwrap());
+    if CONTENT_LEAD.is_match(note.split([':', ',', ';']).next().unwrap_or("")) { return None; }
+    let note = BLEED.replace_all(note, "");
+    let frame = FRAME_WORD.find(&note)?;
+    OPENING.find_at(&note, frame.end())?;
+    let moving = MOVING.find(&note).map(|m| format!(" or move the {} on their own", m.as_str().to_lowercase())).unwrap_or_else(|| " on its own".into());
+    Some(format!("Frame and view are one image here, so the page can't swap the view{moving}."))
+}
 
 /// JS: gridToBox(span). Err(message) mirrors the thrown Error.
 pub fn grid_to_box(span: &str) -> Result<(f64, f64, f64, f64), String> {
@@ -339,6 +363,29 @@ pub fn snap_box_to_ink(comp: &Image, boxf: (f64, f64, f64, f64), ground: f64) ->
     ))
 }
 
+/// Automatic narrowing must not discard separate words/lines from a compound
+/// control. The original largest-cluster helper remains available to explicit
+/// callers; region measurement uses this conservative wrapper.
+fn snap_preserving_ink(comp: &Image, boxf: (f64, f64, f64, f64), ground: f64) -> Option<(f64, f64, f64, f64)> {
+    let snapped = snap_box_to_ink(comp, boxf, ground)?;
+    let original = r::clamp_rect(comp, boxf.0 * comp.width as f64, boxf.1 * comp.height as f64,
+        boxf.2 * comp.width as f64, boxf.3 * comp.height as f64);
+    let keep = r::clamp_rect(comp, snapped.0 * comp.width as f64, snapped.1 * comp.height as f64,
+        snapped.2 * comp.width as f64, snapped.3 * comp.height as f64);
+    let (mut total, mut lost) = (0u64, 0u64);
+    for y in original.y..original.y + original.h {
+        for x in original.x..original.x + original.w {
+            if (gray_no_alpha(&comp.data, (y * comp.width + x) * 4) - ground).abs() > 60. {
+                total += 1;
+                if x < keep.x || x >= keep.x + keep.w || y < keep.y || y >= keep.y + keep.h { lost += 1; }
+            }
+        }
+    }
+    // At most incidental noise may disappear. Preserve the supplied span when
+    // the algorithm cannot distinguish a second label from unrelated content.
+    (lost * 100 <= total * 5).then_some(snapped)
+}
+
 /// JS: uncoveredInkCells(comp, regions).
 fn uncovered_ink_cells(comp: &Image, regions: &[Value]) -> Vec<String> {
     let grid = m::detail_grid(comp, 10, 10, 512);
@@ -376,6 +423,162 @@ fn uncovered_ink_cells(comp: &Image, regions: &[Value]) -> Vec<String> {
     cells
 }
 
+/// Painted-pixel reading of a code region's comp crop: how many colours sit
+/// off the line between its two main tones (ground and ink, with every
+/// antialiased mix between them), and the share of continuous-tone pixels in
+/// its busy 8x8 blocks. Type and flat controls stay near their two tones;
+/// photographs, rendered figures and material surfaces do not.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct PaintedPixels { pub colours: usize, pub soft: f64 }
+/// A window reads painted when any clause holds: (colours, soft) at least
+/// (18, 0.44) or (28, 0.38), or 60 colours alone. Calibrated on 556 regions of
+/// 12 eval comps plus 24 replayed runs: no text or control region that shows
+/// only type reads painted, while every photograph and about half the plates do
+/// (the misses are small single-ink sprigs that look like type).
+pub const PAINTED_CLAUSES: [(usize, f64); 3] = [(18, 0.44), (28, 0.38), (60, 0.)];
+
+fn seg_dist(p: [f64; 3], a: [f64; 3], b: [f64; 3]) -> f64 {
+    let ab = [b[0] - a[0], b[1] - a[1], b[2] - a[2]];
+    let l2 = ab.iter().map(|v| v * v).sum::<f64>();
+    let t = if l2 == 0. { 0. } else { ((0..3).map(|k| (p[k] - a[k]) * ab[k]).sum::<f64>() / l2).clamp(0., 1.) };
+    (0..3).map(|k| (a[k] + t * ab[k] - p[k]).powi(2)).sum::<f64>().sqrt()
+}
+
+/// Side of the square window the painted reading is taken over, in comp
+/// pixels. A fixed window keeps the reading independent of how much calm
+/// ground a box also holds: a painted patch reads the same in a tight box and
+/// in a generous one.
+pub const PAINTED_WINDOW: usize = 64;
+
+/// The strongest reading over `PAINTED_WINDOW` windows (half-window stride; a
+/// crop smaller than a window is one window). None when no window keeps half
+/// its pixels and 64 samples (`skip` marks crop pixels another raster region owns).
+pub fn painted_pixels(img: &Image, skip: &dyn Fn(usize, usize) -> bool) -> Option<PaintedPixels> {
+    painted_pixels_window(img, skip, PAINTED_WINDOW)
+}
+
+pub fn painted_pixels_window(img: &Image, skip: &dyn Fn(usize, usize) -> bool, win: usize) -> Option<PaintedPixels> {
+    let starts = |n: usize| -> Vec<usize> { let w = win.min(n) & !1; if w == 0 { return vec![]; }
+        let mut v: Vec<usize> = (0..=(n - w)).step_by((w / 2).max(2) & !1).collect(); if *v.last().unwrap() != (n - w) & !1 { v.push((n - w) & !1); } v };
+    let (ww, wh) = (win.min(img.width) & !1, win.min(img.height) & !1);
+    let score = painted_score;
+    let mut best: Option<PaintedPixels> = None;
+    for &y in &starts(img.height) { for &x in &starts(img.width) {
+        let Some(p) = painted_window(img, skip, x, y, ww, wh) else { continue; };
+        if best.as_ref().map_or(true, |b| score(&p) > score(b)) { best = Some(p); }
+    }}
+    best
+}
+
+fn painted_window(img: &Image, skip: &dyn Fn(usize, usize) -> bool, x0: usize, y0: usize, w: usize, h: usize) -> Option<PaintedPixels> {
+    let d = &img.data;
+    let px = |x: usize, y: usize| { let i = (y * img.width + x) * 4; [d[i] as f64, d[i + 1] as f64, d[i + 2] as f64] };
+    let key = |p: [f64; 3]| ((p[0] as u32 >> 4) << 8) | ((p[1] as u32 >> 4) << 4) | (p[2] as u32 >> 4);
+    // 2x box average: comp grain and paper noise average out, painted tone does not.
+    let mut samples: Vec<[f64; 3]> = Vec::new();
+    for y in (y0..y0 + h).step_by(2) { for x in (x0..x0 + w).step_by(2) {
+        let cells = [(x, y), (x + 1, y), (x, y + 1), (x + 1, y + 1)];
+        if cells.iter().any(|&(cx, cy)| skip(cx, cy)) { continue; }
+        let s = cells.iter().fold([0.; 3], |a, &(cx, cy)| { let p = px(cx, cy); [a[0] + p[0], a[1] + p[1], a[2] + p[2]] });
+        samples.push([(s[0] / 4.).floor(), (s[1] / 4.).floor(), (s[2] / 4.).floor()]);
+    }}
+    if samples.len() < 64 || samples.len() * 8 < w * h { return None; }
+    let mut bins: std::collections::BTreeMap<u32, (usize, [f64; 3])> = Default::default();
+    for &p in &samples { let e = bins.entry(key(p)).or_insert((0, [0.; 3])); e.0 += 1; for k in 0..3 { e.1[k] += p[k]; } }
+    let mut ranked: Vec<(usize, [f64; 3])> = bins.values().map(|&(n, s)| (n, [s[0] / n as f64, s[1] / n as f64, s[2] / n as f64])).collect();
+    ranked.sort_by(|a, b| b.0.cmp(&a.0));
+    let ground = ranked[0].1;
+    let ink = ranked.iter().map(|r| r.1).find(|c| seg_dist(*c, ground, ground) > 48.).unwrap_or(ground);
+    let mut off: std::collections::HashMap<u32, usize> = Default::default();
+    for &p in &samples { if seg_dist(p, ground, ink) > 24. { *off.entry(key(p)).or_default() += 1; } }
+    let min = (samples.len() as f64 * 0.002).max(2.);
+    let colours = off.values().filter(|&&n| n as f64 >= min).count();
+    let (mut mid, mut busy) = (0usize, 0usize);
+    for by in (y0..y0 + h.saturating_sub(7)).step_by(8) { for bx in (x0..x0 + w.saturating_sub(7)).step_by(8) {
+        let cells: Vec<(usize, usize)> = (0..64).map(|k| (bx + k % 8, by + k / 8)).collect();
+        if cells.iter().any(|&(x, y)| skip(x, y)) { continue; }
+        let l: Vec<f64> = cells.iter().map(|&(x, y)| { let p = px(x, y); 0.299 * p[0] + 0.587 * p[1] + 0.114 * p[2] }).collect();
+        let (lo, hi) = l.iter().fold((f64::MAX, f64::MIN), |(a, b), &v| (a.min(v), b.max(v)));
+        if hi - lo < 24. { continue; }
+        busy += 64;
+        mid += l.iter().filter(|&&v| (v - lo) / (hi - lo) > 0.25 && (v - lo) / (hi - lo) < 0.75).count();
+    }}
+    Some(PaintedPixels { colours, soft: if busy == 0 { 0. } else { mid as f64 / busy as f64 } })
+}
+
+/// How far the reading gets toward its nearest clause; 1 or more reads painted.
+fn painted_score(p: &PaintedPixels) -> f64 {
+    PAINTED_CLAUSES.iter().map(|&(c, s)| (p.colours as f64 / c as f64).min(if s > 0. { p.soft / s } else { f64::MAX })).fold(0., f64::max)
+}
+
+pub fn reads_painted(p: &PaintedPixels) -> bool {
+    PAINTED_CLAUSES.iter().any(|&(c, s)| p.colours >= c && p.soft >= s)
+}
+
+/// What a code region's own pixels hold once raster regions and smaller
+/// regions inside it are set aside. `flat`: under 2% of them leave the main
+/// tone (a bare ground). `rules`: the box is at most 6px on its short side, or
+/// its ink is straight hairlines, at least 80% of ink pixels on a horizontal or
+/// vertical run of 12px or more that is at most 6px thick. Neither needs a
+/// human decision; emblems, marks and icons are neither.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Surface { pub flat: bool, pub rules: bool }
+
+pub fn surface_of(img: &Image, skip: &dyn Fn(usize, usize) -> bool) -> Surface {
+    let (w, h, d) = (img.width, img.height, &img.data);
+    let px = |x: usize, y: usize| { let i = (y * w + x) * 4; [d[i] as f64, d[i + 1] as f64, d[i + 2] as f64] };
+    let key = |p: [f64; 3]| ((p[0] as u32 >> 4) << 8) | ((p[1] as u32 >> 4) << 4) | (p[2] as u32 >> 4);
+    let mut bins: std::collections::HashMap<u32, (usize, [f64; 3])> = Default::default();
+    let mut kept = 0usize;
+    for y in 0..h { for x in 0..w { if skip(x, y) { continue; } kept += 1;
+        let p = px(x, y); let e = bins.entry(key(p)).or_insert((0, [0.; 3])); e.0 += 1; for k in 0..3 { e.1[k] += p[k]; } } }
+    let thin_box = w.min(h) <= 6;
+    let Some(&(n, sum)) = bins.values().max_by_key(|v| v.0) else { return Surface { flat: true, rules: thin_box }; };
+    let ground = sum.map(|v| v / n as f64);
+    let ink: Vec<bool> = (0..w * h).map(|i| !skip(i % w, i / w) && seg_dist(px(i % w, i / w), ground, ground) > 32.).collect();
+    let count = ink.iter().filter(|&&v| v).count();
+    // Length of the ink run through each pixel, per axis (index = y * w + x).
+    let runs = |horizontal: bool| -> Vec<usize> {
+        let (outer, inner) = if horizontal { (h, w) } else { (w, h) };
+        let at = |o: usize, i: usize| if horizontal { o * w + i } else { i * w + o };
+        let mut out = vec![0; w * h];
+        for o in 0..outer { let mut i = 0; while i < inner {
+            if !ink[at(o, i)] { i += 1; continue; }
+            let start = i; while i < inner && ink[at(o, i)] { i += 1; }
+            for k in start..i { out[at(o, k)] = i - start; }
+        }}
+        out
+    };
+    let (hr, vr) = (runs(true), runs(false));
+    let straight = (0..w * h).filter(|&i| ink[i] && ((hr[i] >= 12 && vr[i] <= 6) || (vr[i] >= 12 && hr[i] <= 6))).count();
+    Surface { flat: (count as f64) < 0.02 * kept as f64, rules: thin_box || (count > 0 && straight as f64 >= 0.8 * count as f64) }
+}
+
+/// Per code region: `surface` (above) and, when its crop reads painted, a
+/// `painted-pixels` flag. The flag is never a refusal; it sends the region to
+/// the human plan review. Pixels inside raster regions belong to their plates;
+/// containers are judged on what shows between their raster children.
+fn code_region_readings(comp: &Image, regions: &mut [Value]) {
+    let pxbox = |r: &Value| ["x", "y", "w", "h"].map(|k| r["px"][k].as_i64().unwrap_or(0));
+    let boxes: Vec<(String, bool, [i64; 4])> = regions.iter().filter(|r| r["kind"] != "band")
+        .map(|r| (r["id"].as_str().unwrap_or("").to_string(), r["kind"].as_str().is_some_and(is_raster_kind), pxbox(r))).collect();
+    let inside = |b: &[i64; 4], gx: i64, gy: i64| gx >= b[0] && gx < b[0] + b[2] && gy >= b[1] && gy < b[1] + b[3];
+    for region in regions.iter_mut() {
+        if !matches!(region["kind"].as_str(), Some("text" | "control" | "chrome")) { continue; }
+        let [x, y, w, h] = pxbox(region);
+        let crop = r::crop(comp, x as f64, y as f64, w as f64, h as f64);
+        let raster = |cx: usize, cy: usize| boxes.iter().any(|(_, r, b)| *r && inside(b, x + cx as i64, y + cy as i64));
+        // Smaller regions inside this one (its text, its controls) are theirs to judge.
+        let owned = |cx: usize, cy: usize| boxes.iter().any(|(id, r, b)| (*r || (b[2] * b[3] < w * h && region["id"] != id.as_str())) && inside(b, x + cx as i64, y + cy as i64));
+        let sf = surface_of(&crop, &owned);
+        region["surface"] = json!({"flat": sf.flat, "rules": sf.rules});
+        let Some(p) = painted_pixels(&crop, &raster).filter(reads_painted) else { continue; };
+        region["flags"] = json!([{"id": "painted-pixels", "message": format!(
+            "Looks painted: {} colours beyond its two main tones and soft shading across {}% of it. Drawn in code, this becomes a flat copy.",
+            p.colours, round(p.soft * 100.) as i64)}]);
+    }
+}
+
 fn box_json(b: (f64, f64, f64, f64)) -> Value {
     json!({ "x": r4(b.0), "y": r4(b.1), "w": r4(b.2), "h": r4(b.3) })
 }
@@ -403,10 +606,10 @@ pub fn measure_regions(comp: &Image, regions_input: &Value, comp_path: &str) -> 
         let raw_kind = raw.get("kind").and_then(Value::as_str);
         let kind = match raw_kind {
             Some(k) if is_kind(k) => k.to_string(),
-            _ => "band".to_string(),
+            _ => return Err(format!("region {id} has kind {}; use one of plate, image, texture, text, control, chrome, band", raw.get("kind").map_or("(missing)".into(), Value::to_string))),
         };
         let note = raw.get("note").and_then(Value::as_str);
-        if kind != "band" && !note.map(|n| n.trim().chars().count() >= 8).unwrap_or(false) {
+        if !note.map(|n| n.trim().chars().count() >= 8).unwrap_or(false) {
             return Err(format!(
                 "region {id} has no note. Say in a few words what the comp shows there (the element, its material, its role): the note drives the plate prompt and the gate's messages, and a drawing named as chrome is only caught by what its note says."
             ));
@@ -432,19 +635,35 @@ pub fn measure_regions(comp: &Image, regions_input: &Value, comp_path: &str) -> 
             }
         }
         // box: explicit raw.box (x is number) else gridToBox(raw.grid)
-        let has_box = raw
+        let has_normalized_box = raw
             .get("box")
             .and_then(|b| b.get("x"))
             .map(|x| x.is_number())
             .unwrap_or(false);
-        let mut boxf: (f64, f64, f64, f64) = if has_box {
-            let b = raw.get("box").unwrap();
-            (
-                b.get("x").and_then(Value::as_f64).unwrap_or(0.0),
-                b.get("y").and_then(Value::as_f64).unwrap_or(0.0),
-                b.get("w").and_then(Value::as_f64).unwrap_or(0.0),
-                b.get("h").and_then(Value::as_f64).unwrap_or(0.0),
-            )
+        let has_pixel_box = raw.get("pixelBox").is_some();
+        let has_box = has_normalized_box || has_pixel_box;
+        let mut boxf: (f64, f64, f64, f64) = if has_pixel_box {
+            if raw.get("box").is_some() || raw.get("grid").is_some() {
+                return Err(format!("region {id}: use pixelBox, box, or grid, not multiple coordinate formats"));
+            }
+            let b = &raw["pixelBox"];
+            let coords: Option<Vec<f64>> = ["x", "y", "w", "h"].iter().map(|key| b[*key].as_f64()).collect();
+            let Some(v) = coords else { return Err(format!("region {id}: pixelBox requires numeric x, y, w, h in original comp pixels")); };
+            if v.iter().any(|v| !v.is_finite() || v.fract() != 0.) || v[0] < 0. || v[1] < 0.
+                || v[2] <= 0. || v[3] <= 0. || v[0] + v[2] > w || v[1] + v[3] > h {
+                return Err(format!("region {id}: pixelBox must use whole pixels within the {w}x{h} comp with positive width and height"));
+            }
+            (v[0] / w, v[1] / h, v[2] / w, v[3] / h)
+        } else if has_normalized_box {
+            let b = &raw["box"];
+            let coords: Option<Vec<f64>> = ["x", "y", "w", "h"].iter().map(|key| b[*key].as_f64()).collect();
+            // Same geometry contract as pixelBox and --inspect-map: a region is at least one real comp pixel inside the frame.
+            match coords {
+                Some(v) if v.iter().all(|v| v.is_finite()) && v[0] >= 0. && v[1] >= 0. && v[2] > 0. && v[3] > 0.
+                    && v[0] + v[2] <= 1. + 1e-9 && v[1] + v[3] <= 1. + 1e-9
+                    && round(v[2] * w) >= 1. && round(v[3] * h) >= 1. => (v[0], v[1], v[2], v[3]),
+                _ => return Err(format!("region {id}: box must use numeric x, y, w, h within 0..1 of the comp, with positive size of at least one comp pixel")),
+            }
         } else {
             let grid = raw.get("grid").and_then(Value::as_str).unwrap_or("");
             grid_to_box(grid)?
@@ -453,7 +672,7 @@ pub fn measure_regions(comp: &Image, regions_input: &Value, comp_path: &str) -> 
         let grid_str = raw.get("grid").and_then(Value::as_str);
         let snap_not_false = raw.get("snap").and_then(Value::as_bool) != Some(false);
         if !has_box && grid_str.is_some() && (kind == "text" || kind == "control") && snap_not_false {
-            if let Some(snapped) = snap_box_to_ink(comp, boxf, page_ground) {
+            if let Some(snapped) = snap_preserving_ink(comp, boxf, page_ground) {
                 cover_box = Some(boxf);
                 boxf = snapped;
             }
@@ -511,6 +730,9 @@ pub fn measure_regions(comp: &Image, regions_input: &Value, comp_path: &str) -> 
         if raw.get("snap").and_then(Value::as_bool) == Some(false) {
             obj.insert("snap".into(), json!(false));
         }
+        for key in ["parentId", "reviewGroup"] {
+            if let Some(value) = raw.get(key) { obj.insert(key.into(), value.clone()); }
+        }
         if let Some(cb) = cover_box {
             obj.insert("coverBox".into(), box_json(cb));
         }
@@ -541,6 +763,25 @@ pub fn measure_regions(comp: &Image, regions_input: &Value, comp_path: &str) -> 
         obj.insert("plate".into(), plate);
         obj.insert("text".into(), raw.get("text").filter(|v| !v.is_null()).cloned().unwrap_or(Value::Null));
         regions.push(Value::Object(obj));
+    }
+    code_region_readings(comp, &mut regions);
+    // A frame plate with its own opening already decomposes whatever it covers.
+    static OPEN_FRAME: Lazy<Regex> = Lazy::new(|| Regex::new(r"(?i)\b(transparent|open|cut-?out|empty)\s+(opening|centre|center|aperture|window)\b|\bcut-?out\b").unwrap());
+    let pxb = |r: &Value| ["x", "y", "w", "h"].map(|k| r["px"][k].as_f64().unwrap_or(0.));
+    let frames: Vec<(Value, [f64; 4])> = regions.iter()
+        .filter(|r| r["kind"] == "plate" && r["note"].as_str().is_some_and(|n| FRAME_WORD.is_match(n) && OPEN_FRAME.is_match(n)))
+        .map(|r| (r["id"].clone(), pxb(r))).collect();
+    for region in regions.iter_mut().filter(|r| r["kind"].as_str().is_some_and(is_raster_kind)) {
+        let b = pxb(region);
+        let framed = frames.iter().any(|(id, f)| *id != region["id"] && {
+            let ix = (b[0] + b[2]).min(f[0] + f[2]) - b[0].max(f[0]);
+            let iy = (b[1] + b[3]).min(f[1] + f[3]) - b[1].max(f[1]);
+            ix > 0. && iy > 0. && ix * iy >= 0.5 * b[2] * b[3]
+        });
+        if framed { continue; }
+        if let Some(message) = region["note"].as_str().and_then(baked_composite) {
+            region["flags"] = json!([{"id": "baked-composite", "message": message}]);
+        }
     }
     let uncovered = uncovered_ink_cells(comp, &regions);
     if uncovered.len() > 3 && !truthy(regions_input.get("allowUncovered")) {
@@ -604,11 +845,49 @@ fn hex_to_rgb(hex: &str) -> Option<[u8; 3]> {
     ])
 }
 
-/// JS: plateReference(comp, spec, region).
+/// The exclusions are evidence about the reference, not an asset verdict.
+/// Count the union of rasterized rectangles, including already-ground pixels.
+pub struct PlateReference {
+    pub image: Image,
+    pub excluded_pixels: usize,
+    pub total_pixels: usize,
+    pub excluded_regions: Vec<Value>,
+    pub ignored_containers: Vec<String>,
+}
+
+impl PlateReference {
+    pub fn fully_excluded(&self) -> bool {
+        self.excluded_pixels == self.total_pixels
+    }
+
+    pub fn audit(&self) -> Value {
+        json!({"policy":"plate-reference-v2", "excludedPixels":self.excluded_pixels,
+            "totalPixels":self.total_pixels, "remainingPixels":self.total_pixels-self.excluded_pixels,
+            "excludedFraction":self.excluded_pixels as f64 / self.total_pixels.max(1) as f64,
+            "fullyExcluded":self.fully_excluded(), "regions":self.excluded_regions,
+            "ignoredContainers":self.ignored_containers})
+    }
+
+    pub fn issue(&self, id: &str) -> Option<String> {
+        if !self.fully_excluded() { return None; }
+        let ids = self.excluded_regions.iter().filter_map(|r|r["id"].as_str()).collect::<Vec<_>>().join(", ");
+        Some(format!("reference for {id} has no visible pixels after excluding {ids}; correct the overlapping region geometry or container roles in the comp spec before evaluating this asset"))
+    }
+}
+
+/// JS: plateReference(comp, spec, region). Kept for pure image consumers.
 pub fn plate_reference(comp: &Image, spec: &Value, region: &Value) -> Image {
+    prepare_plate_reference(comp, spec, region).image
+}
+
+pub fn prepare_plate_reference(comp: &Image, spec: &Value, region: &Value) -> PlateReference {
     let px = |k: &str| region.pointer(&format!("/px/{k}")).and_then(Value::as_f64).unwrap_or(0.0);
     let (rx, ry, rw, rh) = (px("x"), px("y"), px("w"), px("h"));
     let mut c = r::crop(comp, rx, ry, rw, rh);
+    let total_pixels = c.width * c.height;
+    let mut excluded = vec![false; total_pixels];
+    let mut excluded_regions = Vec::new();
+    let mut ignored_containers = Vec::new();
     let ground = region
         .get("palette")
         .and_then(Value::as_array)
@@ -634,10 +913,25 @@ pub fn plate_reference(comp: &Image, spec: &Value, region: &Value) -> Image {
             if ox2 <= ox || oy2 <= oy {
                 continue;
             }
+            // Containers describe layout/background extent, not foreground ink.
+            // Their actual child text/control regions remain independently masked.
+            if other.get("container").and_then(Value::as_bool) == Some(true) {
+                ignored_containers.push(oid.to_string());
+                continue;
+            }
+            let rect = r::clamp_rect(&c, ox, oy, ox2-ox, oy2-oy);
+            if rect.w == 0 || rect.h == 0 { continue; }
+            for y in rect.y..rect.y+rect.h {
+                for x in rect.x..rect.x+rect.w { excluded[y*c.width+x] = true; }
+            }
+            excluded_regions.push(json!({"id":oid,"kind":okind,
+                "cropPx":{"x":rect.x,"y":rect.y,"w":rect.w,"h":rect.h},
+                "pixels":rect.w*rect.h}));
             r::fill_rect(&mut c, ox, oy, ox2 - ox, oy2 - oy, [ground[0] as f64, ground[1] as f64, ground[2] as f64, 255.0]);
         }
     }
-    c
+    PlateReference { image:c, excluded_pixels:excluded.iter().filter(|v|**v).count(),
+        total_pixels, excluded_regions, ignored_containers }
 }
 
 /// JS: platePrompt(spec, region).
@@ -750,6 +1044,16 @@ pub fn print_spec(spec: &Value) -> String {
             note.map(|n| format!("  # {n}")).unwrap_or_default()
         ));
     }
+    for r in &regions {
+        for f in r["flags"].as_array().into_iter().flatten() {
+            let advice = match f["id"].as_str() {
+                Some("painted-pixels") => " If it shows an illustration, photograph or texture, make it a plate, image or texture region; the plan review asks the user either way.",
+                Some("baked-composite") => " Split it: a frame plate with a transparent opening, the view as its own image region beneath it, and moving parts (shutters, doors) as their own plates; the page composites the overlapping regions.",
+                _ => "",
+            };
+            lines.push(format!("FLAG {} {}: {}{advice}", r["id"].as_str().unwrap_or(""), f["id"].as_str().unwrap_or(""), f["message"].as_str().unwrap_or("")));
+        }
+    }
     let plates: Vec<&Value> = regions.iter().filter(|r| r.get("medium").and_then(Value::as_str) == Some("raster")).collect();
     let plate_ids = plates.iter().filter_map(|r| r.get("id").and_then(Value::as_str)).collect::<Vec<_>>().join(", ");
     lines.push(format!("PLATES {} to produce: {}", plates.len(), if plate_ids.is_empty() { "none".to_string() } else { plate_ids }));
@@ -802,10 +1106,29 @@ fn resolve(io: &Io, p: &str) -> PathBuf {
 // ---- CLI -------------------------------------------------------------------
 
 /// `impeccable comp-spec ...`
+/// A failed edit leaves the last valid measurements intact, but they cannot
+/// authorize a build against different source geometry.
+pub fn region_source_issue(io: &Io, spec: &Value) -> Option<String> {
+    let source = spec.get("regionsSource")?;
+    let Some(path) = source["path"].as_str() else {
+        return Some("spec has invalid region source evidence; re-run comp-spec --regions".into());
+    };
+    let current = std::fs::read(resolve(io,path)).ok()
+        .map(|bytes| format!("{:x}",Sha256::digest(&bytes)));
+    if current.as_deref().is_some_and(|hash| Some(hash) == source["sha256"].as_str()) { return None; }
+    Some(format!("region source {path} changed or is missing since measurement; fix it and re-run comp-spec --regions {path} before continuing"))
+}
+
 pub fn run(argv: &[String], io: &mut Io) -> i32 {
     let spec_path = arg_or(argv, "spec", SPEC_PATH).to_string();
+    if flag(argv, "schema") {
+        io.out(include_str!("region-map.schema.json"));
+        return 0;
+    }
     if flag(argv, "help") || argv.is_empty() {
-        io.out("usage: comp-spec.mjs --comp <png> --grid            write .impeccable/build/comp-grid.png (10x10 labeled grid) + palette + bands\n       comp-spec.mjs --comp <png> --regions <json>  measure regions -> .impeccable/build/spec.json\n         regions json: { \"regions\": [ { \"id\": \"art\", \"kind\": \"plate|image|texture|text|control|chrome\", \"grid\": \"E0:J4\", \"note\": \"...\" } ] }\n       comp-spec.mjs --comp <png> --auto            band regions when you have no regions file\n       comp-spec.mjs --print                        the compact spec\n       comp-spec.mjs --crop <id> [--out f] [--scale n]   reference crop of a region (never a shipping asset)\n       comp-spec.mjs --plate-prompt <id> [--background transparent|opaque|auto]  the regeneration prompt for a raster region\n");
+        io.out("MAP WORKFLOW: open --grid, author regions.json, run --regions regions.json --inspect-map, inspect its crops, then correct the map. Stop here for a mapping-only task.\nSCHEMA: comp-spec --schema lists required fields, coordinates, parentId and reviewGroup. Default inspection output is concise; --json prints the full report.\n");
+        io.out("REGION COORDINATES: use one of grid (coarse inclusive cells), box {x,y,w,h} (fractions of the comp, 0..1), or pixelBox {x,y,w,h} (whole pixels in the original comp). Use exact bounds when an element ends inside a grid cell; do not include neighbouring content.\n");
+        io.out("usage: comp-spec.mjs --comp <png> --grid            write .impeccable/build/comp-grid.png (10x10 labeled grid) + palette + bands\n       comp-spec.mjs --comp <png> --regions <json>  measure regions -> .impeccable/build/spec.json\n         regions json: { \"regions\": [ { \"id\": \"art\", \"kind\": \"plate|image|texture|text|control|chrome\", \"grid\": \"E0:J4\", \"note\": \"...\" } ] }\n       comp-spec.mjs --comp <png> --auto [--out f]  write a band draft; refine into elements before --regions\n       comp-spec.mjs --comp <png> --regions <json> --inspect-map [--out-dir dir] [--json]  inspect all crops and masks without writing a spec\n       comp-spec.mjs --print                        the compact spec\n       comp-spec.mjs --crop <id> [--out f] [--scale n]   reference crop of a region (never a shipping asset)\n       comp-spec.mjs --plate-prompt <id> [--background transparent|opaque|auto]  the regeneration prompt for a raster region\n");
         return 0;
     }
     if flag(argv, "print") {
@@ -854,8 +1177,15 @@ pub fn run(argv: &[String], io: &mut Io) -> i32 {
             }
         };
         let medium = region.get("medium").and_then(Value::as_str).unwrap_or("");
+        let mut reference_audit = None;
         let mut c = if medium == "raster" && !flag(argv, "raw") {
-            plate_reference(&comp, &spec, &region)
+            let reference = prepare_plate_reference(&comp, &spec, &region);
+            if let Some(issue) = reference.issue(id) {
+                io.err(&format!("comp-spec: {issue}.\n"));
+                return 2;
+            }
+            reference_audit = Some(reference.audit());
+            reference.image
         } else {
             let px = |k: &str| region.pointer(&format!("/px/{k}")).and_then(Value::as_f64).unwrap_or(0.0);
             r::crop(&comp, px("x"), px("y"), px("w"), px("h"))
@@ -870,7 +1200,10 @@ pub fn run(argv: &[String], io: &mut Io) -> i32 {
         if let Some(parent) = out_path.parent() {
             let _ = std::fs::create_dir_all(parent);
         }
-        let text = vec![("impeccable:crop-of".to_string(), format!("{comp_file}#{id}"))];
+        let mut text = vec![("impeccable:crop-of".to_string(), format!("{comp_file}#{id}"))];
+        if let Some(audit) = reference_audit {
+            text.push(("impeccable:reference-audit".into(), audit.to_string()));
+        }
         match png_io::encode_png(&c, &text) {
             Ok(bytes) => {
                 let _ = std::fs::write(&out_path, bytes);
@@ -896,6 +1229,10 @@ pub fn run(argv: &[String], io: &mut Io) -> i32 {
             return 1;
         }
     };
+
+    if flag(argv, "inspect-map") {
+        return crate::map_inspection::run(argv, io, &comp, comp_path);
+    }
 
     if flag(argv, "grid") {
         let grid_out = resolve(io, GRID_PATH);
@@ -931,13 +1268,43 @@ pub fn run(argv: &[String], io: &mut Io) -> i32 {
         io.out("  { \"regions\": [ { \"id\": \"exploded-plate\", \"kind\": \"plate\", \"grid\": \"E0:H4\", \"note\": \"exploded carburetor drawing\" }, { \"id\": \"masthead\", \"kind\": \"chrome\", \"grid\": \"A0:J0\", \"note\": \"navy bar\" } ] }\n");
         io.out("  kind: plate | image | texture (painted material: every illustration, photograph, figure, product object, texture; each ships as a raster plate) or text | control | chrome (code draws it). grid: <colrow>:<colrow>, A0 top-left to J9 bottom-right, inclusive.\n");
         io.out("  A texture region is a clean sample cell of the material (ground with no ink on it), not the whole band it covers; the page tiles it. Ink that sits on the material gets its own text/control region.\n");
+        io.out("  For exact edges, replace grid with pixelBox: {\"x\": <left>, \"y\": <top>, \"w\": <width>, \"h\": <height>} in original comp pixels, or box with fractions 0..1. Grid cells are approximate; an asset crop must not include the next section. comp-spec --help lists the command forms.\n");
         return 0;
     }
 
+    if flag(argv,"auto") && arg(argv,"regions").is_none() {
+        if flag(argv,"spec") {
+            io.err("comp-spec: --auto writes a draft, not a measured spec; use --out <draft.json> instead of --spec\n");
+            return 1;
+        }
+        let draft_path = arg_or(argv,"out",".impeccable/build/regions.draft.json");
+        let dest = resolve(io,draft_path);
+        if dest == resolve(io,SPEC_PATH) {
+            io.err("comp-spec: an automatic draft cannot replace the measured spec\n");
+            return 1;
+        }
+        let mut draft = auto_regions(&comp);
+        draft["draft"] = json!(true);
+        draft["comp"] = json!(comp_path);
+        if let Some(parent) = dest.parent() { let _ = std::fs::create_dir_all(parent); }
+        use std::io::Write;
+        let written = std::fs::OpenOptions::new().write(true).create_new(true).open(&dest)
+            .and_then(|mut file| file.write_all(util::json_pretty(&draft).as_bytes()));
+        if let Err(error) = written {
+            io.err(&format!("comp-spec: cannot write draft {draft_path}: {error}; use a new --out path to preserve existing work\n"));
+            return 1;
+        }
+        io.out(&format!("DRAFT {draft_path}: {} approximate horizontal bands, not an element map.\nRefine the bands into the visible elements, remove the draft flag, then run comp-spec --comp {comp_path} --regions {draft_path}. The measured spec and build state are unchanged.\n",draft["regions"].as_array().map_or(0,Vec::len)));
+        return 0;
+    }
+    let regions_source;
     let regions_input: Value = if let Some(rf) = arg(argv, "regions") {
         match std::fs::read_to_string(resolve(io, rf)) {
             Ok(raw) => match serde_json::from_str(&raw) {
-                Ok(v) => v,
+                Ok(v) => {
+                    regions_source = json!({"path":rf,"sha256":format!("{:x}",Sha256::digest(raw.as_bytes()))});
+                    v
+                },
                 Err(e) => {
                     io.err(&format!("comp-spec: cannot read regions {rf}: {e}\n"));
                     return 1;
@@ -948,13 +1315,20 @@ pub fn run(argv: &[String], io: &mut Io) -> i32 {
                 return 1;
             }
         }
-    } else if flag(argv, "auto") {
-        auto_regions(&comp)
     } else {
         io.err("comp-spec: pass --grid to get the coordinate grid, then --regions <json> (or --auto for band regions)\n");
         return 1;
     };
-    let spec = match measure_regions(&comp, &regions_input, comp_path) {
+    if regions_input["draft"] == true {
+        io.err("comp-spec: this is an automatic draft, not a measured element map; refine its bands into the visible elements before removing the draft flag\n");
+        return 1;
+    }
+    let group_issues = impeccable_comp::review_groups::issues(regions_input["regions"].as_array().unwrap_or(&Vec::new()));
+    if !group_issues.is_empty() {
+        for (id, message) in group_issues { io.err(&format!("comp-spec: region {id}: {message}\n")); }
+        return 1;
+    }
+    let mut spec = match measure_regions(&comp, &regions_input, comp_path) {
         Ok(s) => s,
         Err(e) => {
             io.err(&format!("comp-spec: {e}\n"));
@@ -962,6 +1336,18 @@ pub fn run(argv: &[String], io: &mut Io) -> i32 {
         }
     };
     let spec_out = resolve(io, &spec_path);
+    // Bind cached font evidence to the decoded reference, including dimensions.
+    // Legacy specs without this identity are deliberately remeasured once.
+    let mut hasher = Sha256::new();
+    hasher.update(comp.width.to_le_bytes());
+    hasher.update(comp.height.to_le_bytes());
+    hasher.update(&comp.data);
+    spec["compSha256"] = json!(format!("{:x}", hasher.finalize()));
+    spec["regionsSource"] = regions_source;
+    if let Some(previous) = std::fs::read(&spec_out).ok()
+        .and_then(|bytes| serde_json::from_slice::<Value>(&bytes).ok()) {
+        preserve_typography(&mut spec, &previous);
+    }
     if let Some(parent) = spec_out.parent() {
         let _ = std::fs::create_dir_all(parent);
     }
@@ -970,4 +1356,290 @@ pub fn run(argv: &[String], io: &mut Io) -> i32 {
     io.out(&format!("{}\n", print_spec(&spec)));
     let _ = r4f(0.0); // silence unused if optimized away
     0
+}
+
+/// Remeasuring an unrelated region must not erase measured font work. Reuse
+/// only the existing spec's evidence, never a `type` claim in the input file.
+fn preserve_typography(spec: &mut Value, previous: &Value) {
+    if !spec["compSha256"].is_string() || spec["compSha256"] != previous["compSha256"] {
+        return;
+    }
+    let Some(old_regions) = previous["regions"].as_array() else { return; };
+    let Some(regions) = spec["regions"].as_array_mut() else { return; };
+    for region in regions {
+        if !matches!(region["kind"].as_str(), Some("text" | "control")) { continue; }
+        let Some(old) = old_regions.iter().find(|old| old["id"] == region["id"]) else { continue; };
+        if ["kind", "medium", "box", "px", "text"].iter().all(|key| old[*key] == region[*key]) {
+            if let Some(ty) = old.get("type").filter(|ty| ty.is_object()) {
+                region["type"] = ty.clone();
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod reference_tests {
+    use super::*;
+    #[test]
+    fn mapping_schema_is_available_without_a_comp_or_workspace() {
+        let schema: Value = serde_json::from_str(include_str!("region-map.schema.json")).unwrap();
+        assert_eq!(schema["properties"]["regions"]["items"]["required"], json!(["id","kind","note"]));
+        assert_eq!(schema["properties"]["regions"]["items"]["oneOf"].as_array().unwrap().len(),3);
+        let mut io = Io::stdio();
+        io.cwd = std::path::PathBuf::from("/nonexistent/map-schema-test");
+        io.stdout = Box::new(Vec::<u8>::new());
+        assert_eq!(run(&["--schema".into()], &mut io),0);
+    }
+
+
+    #[test]
+    fn automatic_snap_preserves_separated_navigation_and_multiline_copy() {
+        let mut comp = r::create_image(300, 100, [255,255,255,255]);
+        r::fill_rect(&mut comp, 25., 30., 70., 12., [0.,0.,0.,255.]);
+        r::fill_rect(&mut comp, 185., 30., 45., 12., [0.,0.,0.,255.]);
+        assert!(snap_box_to_ink(&comp, (0.,0.,1.,1.), 255.).is_some());
+        assert!(snap_preserving_ink(&comp, (0.,0.,1.,1.), 255.).is_none());
+        let mut single = r::create_image(300, 100, [255,255,255,255]);
+        r::fill_rect(&mut single, 25., 30., 70., 12., [0.,0.,0.,255.]);
+        assert!(snap_preserving_ink(&single, (0.,0.,1.,1.), 255.).is_some());
+    }
+
+    fn fixture() -> (Image, Value) {
+        let mut comp = r::create_image(16, 16, [230, 220, 210, 255]);
+        r::fill_rect(&mut comp, 4., 4., 8., 8., [30., 70., 110., 255.]);
+        let region = json!({"id":"art","kind":"plate","medium":"raster",
+            "px":{"x":0,"y":0,"w":16,"h":16},"palette":[{"hex":"#e6dcd2"}]});
+        (comp, region)
+    }
+
+    #[test]
+    fn exact_pixel_box_excludes_the_neighbouring_section() {
+        let mut comp = r::create_image(301, 101, [20, 70, 110, 255]);
+        r::fill_rect(&mut comp, 0., 61., 301., 40., [240., 180., 10., 255.]);
+        let input = json!({"allowUncovered":true,"regions":[{"id":"photo","kind":"image",
+            "note":"Wide photograph","bleed":true,"pixelBox":{"x":0,"y":0,"w":301,"h":61}}]});
+        let spec = measure_regions(&comp, &input, "comp.png").unwrap();
+        assert_eq!(spec["regions"][0]["px"], json!({"x":0,"y":0,"w":301,"h":61}));
+        let reference = prepare_plate_reference(&comp, &spec, &spec["regions"][0]);
+        assert_eq!((reference.image.width, reference.image.height), (301, 61));
+        assert!(reference.image.data.chunks_exact(4).all(|px| px == [20,70,110,255]));
+        for bad in [json!({"x":0,"y":0,"w":302,"h":61}), json!({"x":0.5,"y":0,"w":300,"h":61}),
+            json!({"x":0,"y":0,"w":0,"h":61}), json!({"x":0,"y":0,"w":301})] {
+            let mut broken = input.clone();
+            broken["regions"][0]["pixelBox"] = bad;
+            assert!(measure_regions(&comp, &broken, "comp.png").unwrap_err().contains("pixelBox"));
+        }
+        let mut ambiguous = input;
+        ambiguous["regions"][0]["grid"] = json!("A0:J5");
+        assert!(measure_regions(&comp, &ambiguous, "comp.png").unwrap_err().contains("multiple"));
+    }
+
+    #[test]
+    fn container_background_preserves_art_but_foreground_control_still_masks() {
+        let (comp, region) = fixture();
+        let container = json!({"id":"background","kind":"chrome","container":true,
+            "px":{"x":0,"y":0,"w":16,"h":16}});
+        let spec = json!({"regions":[region,container]});
+        assert_eq!(plate_reference(&comp, &spec, &spec["regions"][0]).data, comp.data);
+        let mut spec = spec;
+        spec["regions"].as_array_mut().unwrap().push(json!({"id":"button","kind":"control",
+            "px":{"x":0,"y":0,"w":8,"h":8}}));
+        let mut expected = comp.clone();
+        r::fill_rect(&mut expected, 0., 0., 8., 8., [230.,220.,210.,255.]);
+        assert_eq!(plate_reference(&comp, &spec, &spec["regions"][0]).data, expected.data);
+    }
+
+    #[test]
+    fn exclusion_audit_counts_union_and_clips_to_crop() {
+        let (comp, region) = fixture();
+        let spec = json!({"regions":[region,
+            {"id":"left","kind":"text","px":{"x":-8,"y":0,"w":20,"h":16}},
+            {"id":"right","kind":"control","px":{"x":8,"y":0,"w":20,"h":16}}]});
+        let reference = prepare_plate_reference(&comp, &spec, &spec["regions"][0]);
+        assert_eq!(reference.excluded_pixels, 256);
+        assert_eq!(reference.excluded_regions[0]["pixels"], 192);
+        assert_eq!(reference.excluded_regions[1]["pixels"], 128);
+        assert!(reference.fully_excluded());
+        assert_eq!(reference.audit()["remainingPixels"], 0);
+        assert!(reference.issue("art").unwrap().contains("left, right"));
+    }
+
+    #[test]
+    fn uniform_reference_without_exclusions_is_not_an_exclusion_failure() {
+        let (_, region) = fixture();
+        let comp = r::create_image(16, 16, [230, 220, 210, 255]);
+        let spec = json!({"regions":[region]});
+        let reference = prepare_plate_reference(&comp, &spec, &spec["regions"][0]);
+        assert_eq!(reference.excluded_pixels, 0);
+        assert!(!reference.fully_excluded());
+        assert!(reference.issue("art").is_none());
+    }
+
+    /// Deterministic noise so the synthetic crops carry comp-like grain.
+    fn grain(seed: &mut u64) -> f64 { *seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407); ((*seed >> 33) % 13) as f64 - 6. }
+
+    fn text_like(ground: [f64; 3], ink: [f64; 3]) -> Image {
+        let mut img = r::create_image(240, 80, [0, 0, 0, 255]);
+        let mut seed = 7;
+        for y in 0..80 { for x in 0..240 {
+            // Glyph-ish strokes with a one-pixel antialiased ramp on each side.
+            let t = match (x % 9, (y / 20) % 2 == 0 && y % 20 > 4 && y % 20 < 16) { (3 | 4, true) => 1., (2 | 5, true) => 0.5, _ => 0. };
+            let i = (y * 240 + x) * 4;
+            for k in 0..3 { img.data[i + k] = (ground[k] + (ink[k] - ground[k]) * t + grain(&mut seed)).clamp(0., 255.) as u8; }
+        }}
+        img
+    }
+
+    #[test]
+    fn flat_type_on_grained_ground_does_not_read_painted() {
+        for (ground, ink) in [([236., 229., 214.], [40., 36., 30.]), ([34., 38., 44.], [235., 235., 230.]), ([226., 160., 60.], [30., 70., 45.])] {
+            let p = painted_pixels(&text_like(ground, ink), &|_, _| false).unwrap();
+            assert!(!reads_painted(&p), "{p:?}");
+        }
+    }
+
+    #[test]
+    fn continuous_tone_crop_reads_painted_and_is_flagged_on_a_code_region() {
+        // A shaded, multi-hue surface: what a photograph or rendered figure looks like.
+        let mut comp = r::create_image(240, 160, [0, 0, 0, 255]);
+        let mut seed = 11;
+        for y in 0..160 { for x in 0..240 {
+            let (fx, fy) = (x as f64 / 240., y as f64 / 160.);
+            let i = (y * 240 + x) * 4;
+            let rgb = [60. + 180. * fx * (1. - 0.5 * fy), 40. + 150. * (fy * 3.1).sin().abs(), 50. + 170. * ((fx + fy) * 2.3).cos().abs()];
+            for k in 0..3 { comp.data[i + k] = (rgb[k] + grain(&mut seed)).clamp(0., 255.) as u8; }
+        }}
+        let p = painted_pixels(&comp, &|_, _| false).unwrap();
+        assert!(reads_painted(&p), "{p:?}");
+        let input = json!({"allowUncovered": true, "regions": [
+            {"id": "figure", "kind": "chrome", "note": "decorative panel", "container": true, "pixelBox": {"x": 0, "y": 0, "w": 120, "h": 160}},
+            {"id": "art", "kind": "plate", "note": "the same surface as art", "pixelBox": {"x": 120, "y": 0, "w": 120, "h": 160}}]});
+        let spec = measure_regions(&comp, &input, "comp.png").unwrap();
+        assert_eq!(spec["regions"][0]["flags"][0]["id"], "painted-pixels");
+        assert!(spec["regions"][1].get("flags").is_none(), "raster regions are never flagged");
+        assert!(print_spec(&spec).contains("FLAG figure painted-pixels: Looks painted: ") && print_spec(&spec).contains("make it a plate, image or texture region"));
+        assert!(!spec["regions"][0]["flags"][0]["message"].as_str().unwrap().contains("make it"), "the stored message is an observation for the reviewer");
+        // A code region wholly covered by a raster region has no pixels of its own to judge.
+        let covered = json!({"allowUncovered": true, "regions": [
+            {"id": "caption", "kind": "text", "note": "caption over the art", "pixelBox": {"x": 20, "y": 20, "w": 80, "h": 60}},
+            {"id": "art", "kind": "image", "note": "full photograph", "pixelBox": {"x": 0, "y": 0, "w": 240, "h": 160}}]});
+        assert!(measure_regions(&comp, &covered, "comp.png").unwrap()["regions"][0].get("flags").is_none());
+    }
+
+    fn paint(comp: &mut Image, x0: usize, y0: usize, w: usize, h: usize, seed: &mut u64) {
+        for y in y0..y0 + h { for x in x0..x0 + w {
+            let (fx, fy) = ((x - x0) as f64 / w as f64, (y - y0) as f64 / h as f64);
+            let i = (y * comp.width + x) * 4;
+            let rgb = [60. + 180. * fx * (1. - 0.5 * fy), 40. + 150. * (fy * 3.1).sin().abs(), 50. + 170. * ((fx + fy) * 2.3).cos().abs()];
+            for k in 0..3 { comp.data[i + k] = (rgb[k] + grain(seed)).clamp(0., 255.) as u8; }
+        }}
+    }
+
+    #[test]
+    fn a_painted_patch_reads_the_same_in_a_tight_box_and_a_generous_one() {
+        // Type on paper with a painted sprig at the left, like foliage over a nav bar.
+        let mut comp = text_like([236., 229., 214.], [40., 36., 30.]);
+        let mut wide = r::create_image(640, 80, [0, 0, 0, 255]);
+        for y in 0..80 { for x in 0..640 { let (i, j) = ((y * 640 + x) * 4, (y * 240 + x % 240) * 4); wide.data[i..i + 4].copy_from_slice(&comp.data[j..j + 4]); } }
+        let mut seed = 5;
+        paint(&mut wide, 0, 8, 72, 64, &mut seed);
+        comp = wide;
+        let readings: Vec<PaintedPixels> = [120, 240, 400, 640].iter().map(|&w| painted_pixels(&r::crop(&comp, 0., 0., w as f64, 80.), &|_, _| false).unwrap()).collect();
+        assert!(readings.iter().all(reads_painted), "{readings:?}");
+        assert!(readings.windows(2).all(|p| p[0] == p[1]), "the strongest window is the same window: {readings:?}");
+        assert!(!reads_painted(&painted_pixels(&r::crop(&comp, 120., 0., 520., 80.), &|_, _| false).unwrap()), "type alone stays code");
+    }
+
+    #[test]
+    fn containers_flag_on_unmapped_painted_material_between_their_raster_children() {
+        let mut comp = r::create_image(480, 200, [236, 229, 214, 255]);
+        let mut seed = 9;
+        paint(&mut comp, 20, 20, 140, 160, &mut seed);
+        paint(&mut comp, 300, 20, 140, 160, &mut seed);
+        let map = |mapped_both: bool| {
+            let mut regions = vec![json!({"id": "grid", "kind": "control", "container": true, "note": "grid of room cards", "pixelBox": {"x": 0, "y": 0, "w": 480, "h": 200}}),
+                json!({"id": "photo-a", "kind": "image", "note": "room photograph", "pixelBox": {"x": 20, "y": 20, "w": 140, "h": 160}})];
+            if mapped_both { regions.push(json!({"id": "photo-b", "kind": "image", "note": "room photograph", "pixelBox": {"x": 300, "y": 20, "w": 140, "h": 160}})); }
+            measure_regions(&comp, &json!({"allowUncovered": true, "regions": regions}), "comp.png").unwrap()
+        };
+        assert_eq!(map(false)["regions"][0]["flags"][0]["id"], "painted-pixels", "the second photograph is in no raster region");
+        assert!(map(true)["regions"][0].get("flags").is_none(), "every painted pixel belongs to a plate");
+    }
+
+    #[test]
+    fn surface_separates_grounds_and_rules_from_marks() {
+        let ground = [30, 50, 80, 255];
+        let mut comp = r::create_image(800, 240, ground);
+        r::fill_rect(&mut comp, 10., 10., 300., 2., [200., 170., 90., 255.]); // a hairline rule
+        r::fill_rect(&mut comp, 40., 40., 120., 14., [240., 240., 240., 255.]); // a text child on the ground
+        for a in 0..360 { // a ring mark with a dot: curves, not rules
+            let t = a as f64 * std::f64::consts::PI / 180.;
+            r::fill_rect(&mut comp, (340. + 20. * t.cos()).round(), (80. + 20. * t.sin()).round(), 2., 2., [200., 170., 90., 255.]);
+        }
+        r::fill_rect(&mut comp, 337., 77., 6., 6., [200., 170., 90., 255.]);
+        let input = json!({"allowUncovered": true, "regions": [
+            {"id": "rule", "kind": "chrome", "note": "brass hairline rule", "pixelBox": {"x": 5, "y": 4, "w": 310, "h": 14}},
+            {"id": "panel", "kind": "chrome", "note": "blue panel ground", "pixelBox": {"x": 20, "y": 30, "w": 280, "h": 80}},
+            {"id": "label", "kind": "text", "note": "white label text", "pixelBox": {"x": 38, "y": 38, "w": 124, "h": 18}},
+            {"id": "mark", "kind": "chrome", "note": "brass ring mark", "pixelBox": {"x": 312, "y": 52, "w": 56, "h": 56}},
+            {"id": "tick", "kind": "chrome", "note": "short tick", "pixelBox": {"x": 320, "y": 10, "w": 40, "h": 5}}]});
+        let spec = measure_regions(&comp, &input, "comp.png").unwrap();
+        let surface = |i: usize| (spec["regions"][i]["surface"]["flat"] == true, spec["regions"][i]["surface"]["rules"] == true);
+        assert_eq!(surface(0), (false, true), "a hairline rule");
+        assert_eq!(surface(1), (true, false), "the panel's own pixels are bare ground once its label is set aside");
+        assert_eq!(surface(3), (false, false), "a mark is neither");
+        assert_eq!(surface(4).1, true, "a box under 6px is a rule");
+    }
+
+    #[test]
+    fn a_frame_note_that_opens_onto_content_is_a_baked_composite() {
+        // The live hotel run: frame, shutters and room photograph baked into one plate.
+        let hotel = baked_composite("painted stone window surround with keystone, green louvred shutters open, view inside of a whitewashed bedroom with linen bed and a balcony window to the sea").unwrap();
+        assert_eq!(hotel, "Frame and view are one image here, so the page can't swap the view or move the shutters on their own.");
+        assert!(baked_composite("small painted window with rose surround and open green shutters showing a bright hotel bedroom interior").is_some());
+        assert_eq!(baked_composite("arched stone niche framing a photograph of the owner").unwrap(), "Frame and view are one image here, so the page can't swap the view on its own.");
+        // The frame is the content, the frame comes after the view, or nothing opens onto content.
+        for note in ["a photograph of a window with blue shutters", "large sunlit coast photograph seen through a dark train carriage window",
+            "Room 4 Il Limone sea window photo", "framed portrait photo", "Full-frame deep blue Ligurian sea and sky",
+            "painted pale stone cartouche plaque with scalloped arched top, empty centre", "small dark green painted wooden shutter panel with louvre slats"] {
+            assert!(baked_composite(note).is_none(), "{note}");
+        }
+    }
+
+    #[test]
+    fn baked_composites_are_flagged_on_raster_regions_only() {
+        let comp = r::create_image(200, 100, [236, 229, 214, 255]);
+        let note = "painted window surround with open shutters, view of the sea";
+        let input = json!({"allowUncovered": true, "regions": [
+            {"id": "window", "kind": "plate", "note": note, "pixelBox": {"x": 0, "y": 0, "w": 80, "h": 100}},
+            {"id": "caption", "kind": "text", "note": "caption beside the window view of the sea", "codeDrawn": true, "pixelBox": {"x": 100, "y": 10, "w": 60, "h": 20}}]});
+        let spec = measure_regions(&comp, &input, "comp.png").unwrap();
+        assert_eq!(spec["regions"][0]["flags"], json!([{"id": "baked-composite", "message": "Frame and view are one image here, so the page can't swap the view or move the shutters on their own."}]));
+        assert!(spec["regions"][1].get("flags").is_none());
+        assert!(print_spec(&spec).contains("FLAG window baked-composite: Frame and view are one image here") && print_spec(&spec).contains("a frame plate with a transparent opening"));
+    }
+
+    #[test]
+    fn decomposed_views_are_not_baked_composites() {
+        let views = ["photograph through window: whitewashed guest room, blue-striped bed, balcony doors open to the sea",
+            "photograph through window: pergola terrace with a laid table and the sea beyond",
+            "view through the window of a tiled kitchen with copper pans and a door open onto the garden"];
+        for note in views { assert!(baked_composite(note).is_none(), "content-led note: {note}"); }
+        for note in ["painted stone window surround with keystone, green louvred shutters open, view inside of a whitewashed bedroom with linen bed and a balcony window to the sea",
+            "painted stone window surround with keystone, green louvred shutters open, view of a pergola terrace with a laid table, lantern and the sea",
+            "painted stone window surround with keystone, green louvred shutters open, view down a Ligurian cliff to the blue sea"] {
+            assert!(baked_composite(note).is_some(), "{note}");
+        }
+        // The same composite note under its own frame plate is already split; alone it is not.
+        let comp = r::create_image(400, 300, [236, 229, 214, 255]);
+        let baked = "painted stone window surround with keystone, green louvred shutters open, view inside of a whitewashed bedroom";
+        let map = |framed: bool| {
+            let mut regions = vec![json!({"id": "view-room", "kind": "image", "note": baked, "pixelBox": {"x": 40, "y": 40, "w": 120, "h": 200}})];
+            if framed { regions.push(json!({"id": "frame-3", "kind": "plate", "note": "painted grey stone window surround with pediment and sill, transparent opening", "pixelBox": {"x": 20, "y": 20, "w": 160, "h": 260}})); }
+            measure_regions(&comp, &json!({"allowUncovered": true, "regions": regions}), "comp.png").unwrap()
+        };
+        assert_eq!(map(false)["regions"][0]["flags"][0]["id"], "baked-composite");
+        let split = map(true);
+        assert!(split["regions"][0].get("flags").is_none() && split["regions"][1].get("flags").is_none(), "{split}");
+    }
 }

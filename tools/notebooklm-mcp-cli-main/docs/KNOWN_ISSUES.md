@@ -159,6 +159,48 @@ MCP servers unchanged.
 
 ---
 
+## 7. Claude Desktop Chat or Cowork doesn't use the skill
+
+### Symptoms
+
+- `/nlm-skill` works in Claude Desktop's **Code** tab but the skill is missing
+  from **Customize → Skills**, and Chat or Cowork don't use it.
+
+### Cause
+
+The **Code** tab is Claude Code: it reads skills from `~/.claude/skills/`, where
+`nlm setup` installs them. **Chat**, **Cowork**, and claude.ai only load skills
+uploaded to your Claude account. (The MCP itself reaches Chat and Cowork through
+the normal Claude Desktop connection.)
+
+### Fix
+
+1. Run `nlm skill package` (or `nlm setup` → **Add the skill to my tools/agents**
+   → tick **Claude Desktop / claude.ai**). It saves `~/Downloads/nlm-skill.zip`.
+2. In Claude Desktop or claude.ai open **Customize → Skills → Add**, pick the
+   file, and turn the skill on.
+3. After updating `nlm`, repeat both steps — `nlm setup` can't see skills
+   uploaded to your account, so it can't flag an outdated copy.
+
+---
+
+## 8. Protected Mode & Keystore Environments
+
+### Symptoms
+- `BackendUnavailableError: Cannot enable protected mode: OS credential store is unavailable or locked`
+- On macOS: authorization popup asking for Keychain access when running the desktop extension.
+- On Windows/macOS: refusal over SSH or remote non-interactive sessions.
+- On Linux: `D-Bus connection refused` or keystore locked on headless servers or Docker containers.
+- Downgrade error: older versions of `notebooklm-mcp-cli` cannot read `credentials.enc`.
+
+### Causes & Fixes
+- **macOS "Always Allow" & Desktop Extension:** Usually, no prompt appears during normal terminal operations. However, the Claude Desktop extension starts the server through `uvx` (its `python3` launcher only locates `uvx`), which runs in its own environment and may use a different Python build than the `uv tool` installation. If it does, macOS prompts for Keychain access once when the extension first reads a key created by the other Python. Enter your Mac login password and click **Always Allow**. Likewise, if Python is upgraded (e.g. via Homebrew or uv), do this once more. If the prompt goes unanswered for 60 seconds, the call fails with "approve the Keychain popup and retry" while the popup stays open: dismiss it, retry, and approve the new prompt.
+- **Remote / SSH Sessions (macOS and Windows):** Remote/SSH sessions cannot use the OS keystore (Keychain on macOS, Credential Manager on Windows). When attempting migration over SSH, `nlm auth storage set protected` safely refuses. Run from the desktop session, or keep the profile in file mode.
+- **Headless Linux / Docker:** Protected mode requires an interactive desktop session with an accessible secret service daemon (D-Bus). For headless machines, servers, or Docker containers, keep the profile in file mode (`nlm auth storage set file`).
+- **Downgrading to Older Versions:** Before installing an older version of `notebooklm-mcp-cli`, convert any protected profile back to file mode using `nlm auth storage set file --profile <name>`.
+
+---
+
 ## Reporting Issues
 
 When reporting issues, include:

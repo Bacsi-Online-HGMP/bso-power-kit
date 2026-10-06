@@ -71,7 +71,7 @@ profile is relaunched. On those accounts, set
 **Solutions:**
 
 1. **Ensure a supported Chromium-based browser is installed:**
-   Supported browsers (in priority order): Google Chrome, Arc (macOS), Dia (macOS) Brave, Microsoft Edge, Chromium, Vivaldi, Opera.
+   Supported browsers (in priority order): Google Chrome, Arc (macOS), Dia (macOS) Brave, Microsoft Edge, Microsoft Edge Beta, Chromium, Vivaldi, Opera.
 
    ```bash
    which google-chrome || which brave-browser || which chromium
@@ -124,10 +124,57 @@ profile is relaunched. On those accounts, set
    nlm login switch <profile-name>
    ```
 
+   From an MCP-only app, use the `profile` tool instead (`action="switch"`).
+
 5. **Check current session:**
    ```bash
    nlm login --check
    ```
+
+### Credential Storage Issues (Protected Mode)
+
+**Repeated Keychain Prompts (macOS):**
+When prompted by macOS to allow access to the keychain, enter the Mac login password and click **Always Allow**. If the prompt went unanswered for 60 seconds, the command fails with "approve the Keychain popup and retry" and the popup stays open: dismiss it, rerun, and approve the new prompt. If you click "Allow", macOS will prompt on every separate command or process invocation.
+
+**Headless Linux / SSH / Docker ("OS credential store unavailable"):**
+The OS credential store requires a running D-Bus session with a Secret Service provider (e.g., `gnome-keyring`). In headless environments without D-Bus, keep your profile in plain-file mode:
+```bash
+nlm auth storage set file
+```
+Or supply session cookies via the `NOTEBOOKLM_COOKIES` environment variable.
+
+**Windows SSH Sessions (Error 1312):**
+Windows Credential Manager requires an interactive logon session and is not accessible from non-interactive SSH sessions (Error 1312). Run `nlm auth storage set file` from an interactive desktop PowerShell / CMD session.
+
+**Credential Storage Conflict:**
+If both an encrypted credentials envelope (`credentials.enc`) and legacy plaintext files (`auth.json`, `cookies.json`) exist, `nlm` raises a conflict:
+- Keep plaintext files and discard encrypted leftovers:
+  ```bash
+  nlm auth storage resolve file
+  ```
+- Keep encrypted credentials and discard legacy plaintext:
+  ```bash
+  nlm auth storage resolve protected
+  ```
+
+**Stuck or Corrupt Operation Marker:**
+If a migration was interrupted or aborted mid-flight:
+```bash
+nlm auth storage resolve --clear-marker --yes
+```
+
+**Inaccessible Ciphertext / Lost Keychain Item:**
+If the keychain entry was deleted or the ciphertext is damaged:
+```bash
+nlm auth storage resolve --discard-inaccessible --yes
+nlm login
+```
+
+**Downgrading to Older nlm Versions:**
+Older versions of `notebooklm-mcp-cli` cannot read `credentials.enc`. Before installing an older version, decrypt all protected profiles:
+```bash
+nlm auth storage set file
+```
 
 ---
 

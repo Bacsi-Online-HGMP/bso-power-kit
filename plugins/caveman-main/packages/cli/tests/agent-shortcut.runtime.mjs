@@ -31,6 +31,13 @@ function runShortcut(agentId, cliArgs) {
     CAVEMAN_PROXY_BIN: join(binDir, "missing-caveman-proxy"),
   };
   delete env.CAVE_GATEWAY_URL;
+  // The stub above echoes $ANTHROPIC_BASE_URL so a test can assert what the
+  // CLI injected. Whoever runs this suite may have one exported already —
+  // routine for anyone pointing Claude at a gateway, caveman's own users
+  // included — and the stub cannot tell an inherited value from an injected
+  // one, so "must not inject" assertions fail on their machine and nowhere
+  // else. Strip it so the stub only ever reports what the CLI set.
+  delete env.ANTHROPIC_BASE_URL;
   return new Promise((resolve, reject) => {
     const child = spawn("node", [cli, ...cliArgs], { env });
     let stdout = "";
@@ -78,6 +85,10 @@ function runLockedClaude(routes, { harness = "pi", mutateDuringCheck = false } =
     PATH: `${binDir}:${process.env.PATH}`,
   };
   delete env.CAVE_TRANSFORM_IDS;
+  // Same reason as runShortcut: this stub echoes $ANTHROPIC_CUSTOM_HEADERS and
+  // $CAVE_AGENT_BUILD_STATE, so an inherited value would read as an injected one.
+  delete env.ANTHROPIC_CUSTOM_HEADERS;
+  delete env.CAVE_AGENT_BUILD_STATE;
   return new Promise((resolve, reject) => {
     const child = spawn("node", [cli, "claude"], { cwd: project, env });
     let stdout = "";
@@ -188,6 +199,8 @@ function nativeShortcutEnv() {
   };
   delete env.CAVE_GATEWAY_URL;
   delete env.CLAUDE_CONFIG_DIR;
+  // Same reason as runShortcut — the native stub echoes $ANTHROPIC_BASE_URL.
+  delete env.ANTHROPIC_BASE_URL;
   return { env, home };
 }
 
@@ -222,6 +235,40 @@ test("caveman claude enables the native integration and launches the agent direc
   assert.doesNotMatch(again.stderr, /planned user-scoped writes/, "an installed integration must not re-plan writes");
   const [againArgs] = again.stdout.split("|");
   assert.equal(againArgs, "-p hi");
+});
+
+test("caveman claude --remote-control never installs routing the host will refuse (#1101)", async () => {
+  const { env, home } = nativeShortcutEnv();
+  const out = await runWithEnv(env, ["claude", "--remote-control"]);
+  assert.equal(out.code, 0, `cli exited ${out.code}: ${out.stderr}`);
+  // The native door would install machine-wide routing and then launch Claude
+  // Code into a Remote Control session that refuses any non-first-party
+  // ANTHROPIC_BASE_URL — leaving the user both unrouted AND unable to start RC.
+  assert.match(out.stderr, /remote-control only runs against api\.anthropic\.com/);
+  assert.doesNotMatch(out.stderr, /native Caveman enabled/, "a route-bypassed surface must not enable the native integration");
+  const [agentArgs, baseURL] = out.stdout.split("|");
+  assert.equal(agentArgs, "--remote-control", "the flag must reach the host verbatim");
+  assert.equal(baseURL, "", "a Remote Control launch must not be routed");
+  assert.equal(existsSync(join(home, "integrations", "claude.json")), false, "must not journal a native install");
+  assert.equal(existsSync(join(home, ".claude", "settings.json")), false, "must not write ANTHROPIC_BASE_URL into Claude settings");
+});
+
+test("caveman claude --remote-control names the native install that still routes it (#1101)", async () => {
+  const { env, home } = nativeShortcutEnv();
+  const enabled = await runWithEnv(env, ["claude", "-p", "hi"]);
+  assert.equal(enabled.code, 0, `cli exited ${enabled.code}: ${enabled.stderr}`);
+  assert.ok(existsSync(join(home, "integrations", "claude.json")), "precondition: native install journaled");
+
+  // Launching directly cannot undo a base URL the native install wrote into
+  // Claude's own settings.json, so the host would still refuse Remote Control.
+  // Say which command clears it instead of leaving the host's opaque refusal.
+  const out = await runWithEnv(env, ["claude", "--remote-control"]);
+  assert.equal(out.code, 0, `cli exited ${out.code}: ${out.stderr}`);
+  assert.match(out.stderr, /native integration still routes claude from its own config/);
+  assert.match(out.stderr, /caveman disable claude/);
+  const [agentArgs, baseURL] = out.stdout.split("|");
+  assert.equal(agentArgs, "--remote-control");
+  assert.equal(baseURL, "", "the bypass must still launch unrouted");
 });
 
 test("caveman claude --help never installs persistent integration", async () => {

@@ -25,6 +25,7 @@ import logging
 import threading
 import time
 from dataclasses import dataclass, replace
+from pathlib import Path
 from typing import Any
 
 from notebooklm_tools.core import auth as _core_auth
@@ -48,6 +49,7 @@ __all__ = [
     "confirm_auth_via_api",
     "credentials_are_usable",
     "diagnose_auth_replay",
+    "ensure_profile_ready",
     "get_active_auth_mtime",
     "get_auth_health_checker",
     "get_cache_path",
@@ -72,6 +74,11 @@ def check_auth(*args, **kwargs):
     return _core_auth.check_auth(*args, **kwargs)
 
 
+def ensure_profile_ready(profile_name: str | None = None) -> None:
+    """Re-export of `notebooklm_tools.core.auth.ensure_profile_ready`."""
+    _core_auth.ensure_profile_ready(profile_name=profile_name)
+
+
 def load_cached_tokens(profile_name: str | None = None):
     """Re-export of `notebooklm_tools.core.auth.load_cached_tokens`."""
     if profile_name is None:
@@ -83,18 +90,25 @@ def save_tokens_to_cache(
     tokens,
     silent: bool = False,
     profile_name: str | None = None,
+    expected_revision: str | None = None,
+    force: bool = True,
 ):
     """Re-export of `notebooklm_tools.core.auth.save_tokens_to_cache`."""
-    if profile_name is None:
-        return _core_auth.save_tokens_to_cache(tokens, silent=silent)
-    return _core_auth.save_tokens_to_cache(
-        tokens,
-        silent=silent,
-        profile_name=profile_name,
-    )
+    kwargs: dict[str, Any] = {}
+    if profile_name is not None:
+        kwargs["profile_name"] = profile_name
+    if expected_revision is not None:
+        kwargs["expected_revision"] = expected_revision
+    kwargs["force"] = force
+    try:
+        return _core_auth.save_tokens_to_cache(tokens, silent=silent, **kwargs)
+    except TypeError:
+        kwargs.pop("force", None)
+        kwargs.pop("expected_revision", None)
+        return _core_auth.save_tokens_to_cache(tokens, silent=silent, **kwargs)
 
 
-def get_cache_path():
+def get_cache_path() -> Path:
     """Re-export of `notebooklm_tools.core.auth.get_cache_path`."""
     return _core_auth.get_cache_path()
 
@@ -150,6 +164,34 @@ def get_active_auth_mtime() -> float:
         return latest
     except Exception:
         return 0.0
+
+
+def get_active_auth_state(profile: str | None = None) -> Any:
+    """Return an invalidation state token for active auth storage.
+
+    In protected mode, returns (profile_name, 'protected', revision) where revision
+    is read from credentials.enc, guaranteeing that rapid writes within a single
+    filesystem mtime tick invalidate the cache.
+    In file mode, returns (profile_name, 'file', mtime) or the float mtime,
+    preserving main's exact behavior.
+    """
+    try:
+        from notebooklm_tools.core.credential_store import get_envelope_revision
+        from notebooklm_tools.utils.config import (
+            get_auth_storage_mode,
+            get_config,
+            get_profile_dir,
+        )
+
+        prof = (profile or get_config().auth.default_profile).strip()
+        mode = get_auth_storage_mode(prof)
+        if mode == "protected":
+            enc_file = get_profile_dir(prof, create=False) / "credentials.enc"
+            rev = get_envelope_revision(enc_file) if enc_file.exists() else None
+            return (prof, "protected", rev)
+        return (prof, "file", get_active_auth_mtime())
+    except Exception:
+        return (profile or "default", "unknown", 0.0)
 
 
 # Lazy-re-exported core classes. The shim does NOT cache these in module
@@ -241,6 +283,7 @@ class AuthHealthChecker:
         self._report: AuthHealthReport | None = None
         self._cache_ts: float = 0.0
         self._auth_mtime: float = 0.0
+        self._auth_state: Any = None
 
     # ------------------------------------------------------------------
     # Public API
@@ -261,14 +304,15 @@ class AuthHealthChecker:
         if not force and self._report is not None:
             age = now - self._cache_ts
             if age < self.CACHE_TTL:
-                current_mtime = get_active_auth_mtime()
-                if current_mtime == self._auth_mtime:
+                current_state = get_active_auth_state(self._profile)
+                if current_state == self._auth_state:
                     return replace(self._report, cached=True)
 
         report = self._run_checks(timeout=timeout)
 
         self._report = report
         self._cache_ts = now
+        self._auth_state = get_active_auth_state(self._profile)
         self._auth_mtime = get_active_auth_mtime()
         return report
 
@@ -276,6 +320,8 @@ class AuthHealthChecker:
         """Force the next ``check()`` call to re-run all probes."""
         self._report = None
         self._cache_ts = 0.0
+        self._auth_state = None
+        self._auth_mtime = 0.0
 
     # ------------------------------------------------------------------
     # Probe orchestration
@@ -614,14 +660,18 @@ def confirm_auth_via_api(profile: str | None = None) -> tuple[bool, str | None]:
         return False, str(exc)
 
 
-def credentials_are_usable(*, force: bool = False) -> tuple[bool, str, str | None]:
+def credentials_are_usable(
+    *,
+    force: bool = False,
+    profile: str | None = None,
+) -> tuple[bool, str, str | None]:
     """Return whether NotebookLM credentials can perform API operations.
 
     Runs ``AuthHealthChecker`` first, then falls back to a direct API probe
     when probes report ``stale`` or ``unverified`` — the semi-stale case
     where the homepage rejects cookies but RPC calls still work (#224).
     """
-    report = get_auth_health_checker().check(force=force)
+    report = get_auth_health_checker(profile=profile).check(force=force)
     if report.status == "configured":
         return True, report.status, None
 
@@ -635,20 +685,24 @@ def credentials_are_usable(*, force: bool = False) -> tuple[bool, str, str | Non
     return False, report.status, detail
 
 
-_checker: AuthHealthChecker | None = None
+_checkers: dict[str | None, AuthHealthChecker] = {}
 _checker_lock = threading.Lock()
 
 
-def get_auth_health_checker() -> AuthHealthChecker:
-    """Return the process-wide AuthHealthChecker singleton.
+def get_auth_health_checker(profile: str | None = None) -> AuthHealthChecker:
+    """Return the cached AuthHealthChecker for one auth profile.
 
-    The CLI's ``nlm doctor`` and the MCP's ``server_info`` will see the
-    same cached report within a 30-second window, so duplicate probes
-    for the same on-disk state are avoided across a single user session.
+    Calls that omit ``profile`` retain the historical shared checker for the
+    configured default profile. Explicit profile names receive independent
+    cached health state so one process can validate multiple saved accounts
+    without switching global configuration.
     """
-    global _checker
-    if _checker is None:
+    key = profile.strip() if isinstance(profile, str) and profile.strip() else None
+    checker = _checkers.get(key)
+    if checker is None:
         with _checker_lock:
-            if _checker is None:
-                _checker = AuthHealthChecker()
-    return _checker
+            checker = _checkers.get(key)
+            if checker is None:
+                checker = AuthHealthChecker(profile=key)
+                _checkers[key] = checker
+    return checker

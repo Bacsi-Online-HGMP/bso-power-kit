@@ -191,14 +191,22 @@ export class DataShapeClassifier {
     if (Array.isArray(data)) {
       if (data.length === 0) return 'leaf_item';
 
+      // Classify the whole sequence; a first-item guess can hide later content.
+      // Mixed scalars/mappings and nested sequences need structural rendering.
+      const allScalars = data.every(item => typeof item !== 'object' || item === null);
+      const allMappings = data.every(item =>
+        typeof item === 'object' && item !== null && !Array.isArray(item)
+      );
+      if (!allScalars && !allMappings) return 'block_group';
+
       // Sequence of Scalars
-      if (typeof data[0] !== 'object' || data[0] === null) {
+      if (allScalars) {
         const avgLength = data.reduce((acc, str) => acc + String(str).length, 0) / data.length;
         return avgLength <= 35 ? 'badge_list' : 'prose_flow';
       }
 
       // Sequence of Mappings
-      const records = data.filter(item => typeof item === 'object' && item !== null);
+      const records = data; // allMappings: every original item participates
       const uniformity = this.calculateJaccardUniformity(records);
 
       if (uniformity >= 0.55) {
@@ -254,14 +262,32 @@ export function executeReorderTransaction(
 ): { updatedYaml: string; changedRange: [number, number] } {
   const doc = parseDocument(yamlSource, { keepSourceTokens: true });
   
-  const seqPath = intent.targetSequencePointer.split('/').filter(Boolean);
-  const targetSeq = doc.getIn(seqPath);
+  if (doc.errors.length) throw new Error('Cannot reorder invalid YAML.');
+  const decodePointer = (pointer: string): string[] => {
+    if (pointer === '') return [];
+    if (!pointer.startsWith('/') || /~(?![01])/.test(pointer)) {
+      throw new Error('Invalid JSON pointer.');
+    }
+    return pointer.slice(1).split('/').map(part => part.replace(/~1/g, '/').replace(/~0/g, '~'));
+  };
+  const seqPath = decodePointer(intent.targetSequencePointer);
+  const sourcePath = decodePointer(intent.sourcePointer);
+  const indexToken = sourcePath.pop();
+  if (JSON.stringify(sourcePath) !== JSON.stringify(seqPath) || !/^(0|[1-9]\d*)$/.test(indexToken ?? '')) {
+    throw new Error('Source must be an item in the target sequence.');
+  }
+  const targetSeq = seqPath.length ? doc.getIn(seqPath) : doc.contents;
 
   if (!isSeq(targetSeq)) {
     throw new Error(`Target at pointer ${intent.targetSequencePointer} is not a valid sequence.`);
   }
 
-  const sourceIndex = parseInt(intent.sourcePointer.split('/').pop() || '0', 10);
+  const sourceIndex = Number(indexToken);
+  if (!Number.isSafeInteger(sourceIndex) || sourceIndex >= targetSeq.items.length ||
+      !Number.isInteger(intent.targetIndex) || intent.targetIndex < 0 ||
+      intent.targetIndex >= targetSeq.items.length) {
+    throw new Error('Reorder indices must identify valid final sequence positions.');
+  }
   const [movedNode] = targetSeq.items.splice(sourceIndex, 1);
   targetSeq.items.splice(intent.targetIndex, 0, movedNode);
 

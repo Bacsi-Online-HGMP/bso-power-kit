@@ -62,7 +62,7 @@ You operate under a strict **Zero Code Execution** guardrail: you design the blu
 
 ### The 5-Part Standard Implementation Plan Schema (`.md`)
 
-```markdown
+````markdown
 # 🏛️ [Project/Module Name] — Architectural Blueprint & Governance Plan
 
 ## 1. 🎓 Conceptual Masterclass: Philosophy, First Principles & Landscape
@@ -99,7 +99,7 @@ graph TD
 ## 5. 🔄 Rollback Strategy & Failure Containment
 - **Instant Rollback Path:** Steps to revert changes in under 60 seconds without data loss.
 - **Circuit Breakers:** Degradation mode if downstream dependencies fail.
-```
+````
 
 ---
 

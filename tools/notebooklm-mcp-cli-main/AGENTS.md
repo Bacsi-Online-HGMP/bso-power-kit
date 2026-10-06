@@ -124,10 +124,23 @@ src/notebooklm_tools/
 ```
 ├── config.toml                    # CLI settings (default_profile, output format)
 ├── aliases.json                   # Notebook aliases
-├── profiles/<name>/auth.json      # Per-profile credentials and email
+├── installation.json              # Installation identity
+├── locks/                         # Inter-process profile locks
+├── operations/                    # Migration state & quarantine markers
+├── profiles/<name>/
+│   ├── metadata.json              # Non-secret metadata (email, host, storage mode)
+│   ├── credentials.enc            # AES-256-GCM encrypted credentials (Protected mode)
+│   └── cookies.json               # Plaintext cookies (File mode only)
+├── auth.json                      # Root mirror of default profile (File mode only)
 ├── chrome-profile/                # Chrome session (single-profile/legacy)
 └── chrome-profiles/<name>/        # Chrome sessions (multi-profile)
 ```
+
+**Credential Storage Modes:**
+- **Protected mode (recommended for personal computers):** Credentials encrypted at rest (`credentials.enc`) with keys in OS keystore (macOS Keychain, Windows Credential Manager, Linux SecretService). Managed via `nlm auth storage status`, `set protected|file`, `resolve`, and `relocate`.
+- **File mode (default / servers / cron / Docker):** Plaintext cookies stored with `0600` permissions.
+- **First login:** for a NEW profile `nlm login` asks plain vs protected before the browser opens (only in a desktop terminal; `--storage protected|file` skips it). The marker is written right before the first save and rolled back if the save fails; the answer is recorded only after success.
+- **Safety rule for AI assistants:** Never print decrypted credentials, cookies, or raw keystore values. Output redacted diagnostics only.
 
 **Executables:**
 - `nlm` - Command-line interface
@@ -137,7 +150,11 @@ src/notebooklm_tools/
 `notebooklm-mcp` for compatibility). Claude Desktop setup detects regular and
 Relay AI/3P profiles, never creates missing profiles, and refuses to write
 while the selected Claude instance is running. User-level skill installation
-also requires the target tool to be detected.
+also requires the target tool to be detected. The `nlm setup` wizard flags
+entries still named `notebooklm-mcp`/`notebooklm` as "old name" and renames
+them on request. `nlm skill package` (`cli/skill_package.py`) builds the
+`nlm-skill.zip` upload file for Claude Desktop Chat/Cowork and claude.ai, which
+don't read local skill folders.
 
 ## MCP Tools Provided
 
@@ -157,6 +174,9 @@ also requires the target tool to be detected.
 | `chat_list` | List chat sessions for a notebook |
 | `chat_get` | Get full transcript of a chat session (defaults to latest) |
 | `chat_export` | Export a chat transcript to Markdown or JSON |
+| `chat_save_to_note` | Save a chat (or one turn) as a Note |
+| `profile` | List saved accounts, show storage status, switch account for this MCP server (`make_default=true` also saves it as the default) |
+| `alias` | Manage notebook ID aliases; every tool's `notebook_id` accepts an alias |
 | `source_list_drive` | List sources with types, check Drive freshness |
 | `source_sync_drive` | Sync stale Drive sources (REQUIRES confirmation) |
 | `source_rename` | Rename a source in a notebook |
@@ -241,7 +261,7 @@ Only read API_REFERENCE.md when:
 **[docs/MCP_CLI_TEST_PLAN.md](./docs/MCP_CLI_TEST_PLAN.md)**
 
 This includes:
-- Step-by-step test cases for all 43 MCP tools and CLI commands
+- Step-by-step test cases for all 53 MCP tools and CLI commands
 - Authentication and basic operations tests
 - Source management and Drive sync tests
 - Studio content generation tests (audio, video, infographics, etc.)

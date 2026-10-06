@@ -19,6 +19,186 @@ use serde_json::{json, Map, Value};
 
 static HTML: MissingHtmlEngine = MissingHtmlEngine;
 
+#[test]
+#[cfg(unix)]
+fn gemini_before_tool_preserves_command_body_and_only_carries_literal_identity() {
+    let t = Tmp::new();
+    let command = "printf '%s\\n' \"$IMPECCABLE_SESSION_ID\" # impeccable build-phase completion\nexit 7";
+    for (name, session, disabled, expected) in [
+        ("run_shell_command", "owner-123", false, true),
+        ("read_file", "owner-123", false, false),
+        ("run_shell_command", "bad'$(touch unsafe)", false, false),
+        ("run_shell_command", "owner-123", true, false),
+    ] {
+        let r = rt_with(&t.path(), env(&[("IMPECCABLE_HOOK_DISABLED", if disabled { "1" } else { "" })]));
+        let event = json!({"hook_event_name":"BeforeTool", "session_id":session,
+            "cwd":t.path(), "tool_name":name, "tool_input":{"command":command, "timeout":12}});
+        let (mut io, capture) = Io::captured("", t.0.clone(), HashMap::new());
+        hook::run(&r, &event.to_string(), &mut io);
+        let stdout = String::from_utf8(capture.stdout.borrow().clone()).unwrap();
+        if expected {
+            let output: Value = serde_json::from_str(&stdout).unwrap();
+            let rewritten = output["hookSpecificOutput"]["tool_input"]["command"].as_str().unwrap();
+            assert_eq!(rewritten, format!("export IMPECCABLE_SESSION_ID='owner-123'\n{command}"));
+            assert!(output["hookSpecificOutput"].get("additionalContext").is_none());
+            #[cfg(unix)] {
+                let execution = std::process::Command::new("sh").args(["-c", rewritten]).output().unwrap();
+                assert_eq!(execution.status.code(), Some(7));
+                assert_eq!(String::from_utf8(execution.stdout).unwrap(), "owner-123\n");
+            }
+        } else { assert!(stdout.is_empty()); }
+    }
+}
+
+#[test]
+fn gemini_before_tool_leaves_unrelated_shell_commands_untouched() {
+    // Only build-phase reads IMPECCABLE_SESSION_ID. Every other shell command
+    // must reach Gemini's allowlist / coreTools policy exactly as the model
+    // wrote it, so its first word is unchanged.
+    let t = Tmp::new();
+    let r = rt(&t.path());
+    for command in ["npm test", "git status && ls", "impeccable build-phase completion --session-id x"] {
+        let event = json!({"hook_event_name":"BeforeTool", "session_id":"owner-123",
+            "cwd":t.path(), "tool_name":"run_shell_command", "tool_input":{"command":command}});
+        let (mut io, capture) = Io::captured("", t.0.clone(), HashMap::new());
+        hook::run(&r, &event.to_string(), &mut io);
+        assert!(capture.stdout.borrow().is_empty(), "{command} was rewritten");
+    }
+}
+
+#[test]
+fn build_completion_reminder_skips_native_projects() {
+    let t = Tmp::new();
+    t.write("PRODUCT.md", "# P\n\n## Platform\nios\n");
+    t.write("index.html", "<main>In progress</main>");
+    t.write(".impeccable/build/state.json", &json!({
+        "sessionId":"owner", "artifact":"index.html", "startedAt":"native-build",
+        "phases":{"hero":{"status":"open"}}, "finish":null
+    }).to_string());
+    let stop = hook::run_stop_hook(&rt(&t.path()), &stop_event(&t.path(), "owner"));
+    assert!(stop.stdout.is_empty(), "{}", stop.stdout);
+    assert_eq!(stop.audit["skipped"], "native-platform");
+}
+
+#[test]
+fn session_start_respects_disabled_hook_config() {
+    let t = Tmp::new();
+    let env_path = t.write("session.env", "");
+    t.write(".impeccable/config.json", r#"{"hook":{"enabled":false}}"#);
+    let r = rt_with(&t.path(), env(&[("CLAUDE_ENV_FILE", &env_path)]));
+    let mut io = Io::captured("", t.0.clone(), HashMap::new()).0;
+    let event = json!({"hook_event_name":"SessionStart", "session_id":"owner-123", "cwd":t.path()}).to_string();
+    assert_eq!(hook::run(&r, &event, &mut io), 0);
+    assert_eq!(t.read("session.env"), "");
+}
+
+#[test]
+fn admin_on_and_reset_manage_gemini_without_losing_user_settings() {
+    let t = Tmp::new();
+    let cwd = t.path();
+    let r = rt(&cwd);
+    std::fs::create_dir_all(t.0.join(".gemini/skills/impeccable")).unwrap();
+    t.write(".gemini/settings.json", "{\n  // user model\n  \"model\": {\"name\": \"gemini-3-pro\"}, /* auth */\n  \"security\": {\"auth\": {\"selectedType\": \"oauth-personal\"}}\n}\n");
+    let (out, _, code) = admin_run(&r, &["on"]);
+    assert_eq!(code, 0);
+    assert!(out.contains("Installed or repaired hook manifests for: .gemini."), "{out}");
+    let settings: Value = serde_json::from_str(&t.read(".gemini/settings.json")).unwrap();
+    assert_eq!(settings["model"]["name"], "gemini-3-pro");
+    assert_eq!(settings["security"]["auth"]["selectedType"], "oauth-personal");
+    assert!(settings["hooks"]["AfterAgent"].is_array());
+    assert!(settings["hooks"]["BeforeTool"][0]["matcher"] == "^run_shell_command$");
+    assert!(t.exists(".gemini/settings.json.bak"), "commented settings are backed up before rewrite");
+    let (out, _, _) = admin_run(&r, &["reset"]);
+    assert!(out.contains("Removed hook entries from: .gemini."), "{out}");
+    let settings: Value = serde_json::from_str(&t.read(".gemini/settings.json")).unwrap();
+    assert!(settings.get("hooks").is_none());
+    assert_eq!(settings["model"]["name"], "gemini-3-pro");
+    // A settings file that is not JSON even after comments is left alone:
+    // it holds the user's whole Gemini configuration, not just our hooks.
+    t.write(".gemini/settings.json", "{ \"model\": ");
+    let (out, _, _) = admin_run(&r, &["on"]);
+    assert_eq!(t.read(".gemini/settings.json"), "{ \"model\": ");
+    assert!(out.contains(".gemini/settings.json"), "{out}");
+}
+
+#[test]
+fn gemini_after_agent_uses_native_retry_contract_and_session_scope() {
+    let t = Tmp::new();
+    t.write("index.html", "<main>In progress</main>");
+    t.write(".impeccable/build/state.json", &json!({
+        "sessionId":"gemini-owner", "artifact":"index.html", "startedAt":"gemini-build",
+        "phases":{"hero":{"status":"open"}}, "finish":null
+    }).to_string());
+    let r = rt(&t.path());
+    for (session, active, expected) in [("other", false, false), ("gemini-owner", false, true),
+        ("gemini-owner", true, true), ("gemini-owner", true, true), ("gemini-owner", true, false)] {
+        let event = json!({"hook_event_name":"AfterAgent", "session_id":session,
+            "cwd":t.path(), "stop_hook_active":active});
+        assert!(is_stop_event(event.as_object().unwrap()));
+        let result = hook::run_stop_hook(&r, &event.to_string());
+        if expected {
+            let output: Value = serde_json::from_str(&result.stdout).unwrap();
+            assert_eq!(output["decision"], "deny");
+            assert!(output["reason"].as_str().unwrap().contains("Comp build"));
+            assert!(output.get("hookSpecificOutput").is_none());
+        } else { assert!(result.stdout.is_empty()); }
+    }
+}
+
+#[test]
+fn session_start_persists_only_a_literal_session_identity() {
+    let t = Tmp::new();
+    let env_path = t.write("session.env", "export EXISTING=kept\n");
+    let r = rt_with(&t.path(), env(&[("CLAUDE_ENV_FILE", &env_path)]));
+    let mut io = Io::captured("", t.0.clone(), HashMap::new()).0;
+    for session in ["owner-123", "bad'$(touch unsafe)"] {
+        let event = json!({"hook_event_name":"SessionStart", "session_id":session, "cwd":t.path()}).to_string();
+        assert_eq!(hook::run(&r, &event, &mut io), 0);
+    }
+    assert_eq!(t.read("session.env"), "export EXISTING=kept\nexport IMPECCABLE_SESSION_ID='owner-123'\n");
+}
+
+#[test]
+fn unfinished_comp_stop_is_owned_bounded_and_does_not_reopen_on_unrelated_turn() {
+    let t = Tmp::new();
+    t.write("index.html", "<main>In progress</main>");
+    t.write(".impeccable/build/state.json", &json!({
+        "tool":"build-phase", "version":2, "startedAt":"build-one",
+        "sessionId":"owner", "artifact":"index.html", "finish":null,
+        "phases":{"hero":{"status":"open"}}
+    }).to_string());
+    let r = rt(&t.path());
+    assert!(hook::run_stop_hook(&r, &stop_event(&t.path(), "other")).stdout.is_empty());
+    let first = hook::run_stop_hook(&r, &stop_event(&t.path(), "owner"));
+    assert!(first.stdout.contains("Comp build"), "{}", first.stdout);
+    // A new unrelated turn must not spend another reminder on unchanged work.
+    assert!(hook::run_stop_hook(&r, &stop_event(&t.path(), "owner")).stdout.is_empty());
+    let active = json!({"session_id":"owner","cwd":t.path(),"hook_event_name":"Stop","stop_hook_active":true}).to_string();
+    assert!(hook::run_stop_hook(&r, &active).stdout.contains("Comp build"));
+    assert!(hook::run_stop_hook(&r, &active).stdout.contains("Comp build"));
+    assert!(hook::run_stop_hook(&r, &active).stdout.is_empty());
+}
+
+#[test]
+fn legacy_comp_state_never_implicitly_claims_the_current_session() {
+    let t = Tmp::new();
+    t.write("index.html", "<main>Old work</main>");
+    t.write(".impeccable/build/state.json", &json!({"artifact":"index.html","startedAt":"old","phases":{}}).to_string());
+    assert!(hook::run_stop_hook(&rt(&t.path()), &stop_event(&t.path(), "new")).stdout.is_empty());
+}
+
+#[test]
+fn completion_only_transport_does_not_duplicate_detector_feedback() {
+    let t = Tmp::new();
+    t.write("package.json", "{}");
+    let file = t.write("card.css", SIDE_TAB_CSS);
+    let r = rt_with(&t.path(), env(&[("IMPECCABLE_HOOK_COMPLETION_ONLY", "1")]));
+    hook::run_hook(&r, &edit_with_original(&t.path(), &file, "owner", ".card {}\n", ".card {}\n", SIDE_TAB_CSS));
+    let stop = hook::run_stop_hook(&r, &stop_event(&t.path(), "owner"));
+    assert!(stop.stdout.is_empty());
+    assert_eq!(stop.audit["skipped"], "no-build-continuation");
+}
+
 struct Tmp(PathBuf);
 impl Tmp {
     fn new() -> Tmp {
@@ -876,6 +1056,36 @@ fn git_excludes_land_in_info_exclude_not_gitignore() {
         ensure_hook_git_excludes(&rt(&t2.path()), &t2.path()).mode,
         "none"
     );
+}
+
+#[test]
+fn git_excludes_in_a_linked_worktree_reach_the_exclude_file_git_reads() {
+    let t = Tmp::new();
+    let repo = jsp::join(&[&t.path(), "repo"]);
+    let wt = jsp::join(&[&t.path(), "wt"]);
+    std::fs::create_dir_all(jsp::join(&[&t.path(), "empty-hooks"])).unwrap();
+    std::fs::create_dir_all(&repo).unwrap();
+    let hooks = format!("core.hooksPath={}/empty-hooks", t.path());
+    let git = |dir: &str, args: &[&str]| {
+        std::process::Command::new("git").current_dir(dir)
+            .args(["-c", "user.name=Test", "-c", "user.email=test@example.invalid",
+                "-c", "commit.gpgsign=false", "-c", &hooks])
+            .args(args).output().unwrap()
+    };
+    for args in [
+        &["init", "--quiet"][..],
+        &["commit", "--quiet", "--allow-empty", "-m", "init"],
+        &["worktree", "add", "--quiet", "../wt"],
+    ] {
+        let out = git(&repo, args);
+        assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    }
+    // A linked worktree's `.git` is a file; git reads `info/exclude` from the
+    // common dir, never from the per-worktree gitdir the file points at.
+    assert!(impeccable_detect::config::ensure_config_git_exclude(&wt));
+    assert!(git(&wt, &["check-ignore", "-q", ".impeccable/config.local.json"]).status.success());
+    ensure_hook_git_excludes(&rt(&wt), &wt);
+    assert!(git(&wt, &["check-ignore", "-q", ".impeccable/hook.cache.json"]).status.success());
 }
 
 // ── filtering ─────────────────────────────────────────────────────────────
@@ -2198,4 +2408,119 @@ fn codex_stop_emits_decision_block() {
     assert_eq!(out["decision"], json!("block"));
     assert!(out["reason"].as_str().unwrap().contains("[side-tab]"));
     assert!(out.get("hookSpecificOutput").is_none());
+}
+
+// ── live-preview stand-down ───────────────────────────────────────────────
+//
+// A live variant session owns files carrying preview scaffolding
+// (`data-impeccable-variants=` wrappers, `impeccable-carbonize-start`
+// blocks). Every hook entry stands down on them: findings there are noise
+// and acting on them derails the session; live-complete verifies the file
+// once the accepted variant is permanent.
+
+#[test]
+fn run_hook_stands_down_on_live_preview_markers() {
+    let t = Tmp::new();
+    let cwd = t.path();
+    let r = rt(&cwd);
+    // Control: the same slop without markers is reported.
+    let plain = t.write("src/plain.css", GRADIENT_CSS);
+    let reported = hook::run_hook(&r, &edit_event(&cwd, &plain, "s1"));
+    assert!(reported.stdout.contains("[gradient-text]"), "{}", reported.stdout);
+    // A carbonize block in flight: skipped, nothing emitted.
+    let carbonized = t.write(
+        "src/carbonized.css",
+        &format!("/* impeccable-carbonize-start ab12cd34 */\n{GRADIENT_CSS}/* impeccable-carbonize-end ab12cd34 */\n"),
+    );
+    let skipped = hook::run_hook(&r, &edit_event(&cwd, &carbonized, "s1"));
+    assert_eq!(skipped.stdout, "", "no findings while live markers are in the file");
+    assert_eq!(skipped.audit["skipped"], json!("live-preview"));
+    // A published variants wrapper, same stand-down.
+    let wrapped = t.write(
+        "src/wrapped.html",
+        "<!-- impeccable-variants-start ab12cd34 --><div data-impeccable-variants=\"ab12cd34\" data-impeccable-variant-count=\"3\"></div>\n",
+    );
+    let skipped = hook::run_hook(&r, &edit_event(&cwd, &wrapped, "s1"));
+    assert_eq!(skipped.stdout, "");
+    assert_eq!(skipped.audit["skipped"], json!("live-preview"));
+}
+
+#[test]
+fn before_edit_stands_down_on_live_preview_markers() {
+    let t = Tmp::new();
+    let cwd = t.path();
+    t.write("package.json", "{}");
+    let r = rt(&cwd);
+    let slop = ".t { background: linear-gradient(90deg,#f00,#00f); -webkit-background-clip: text; color: transparent; }\n";
+    // Control: denied at normal size without markers.
+    let (out, _) = hbe(&r, &cursor(&cwd, "Write", json!({"file_path": "src/x.css", "content": slop})));
+    assert!(out.starts_with("{\"permission\":\"deny\""), "{out}");
+    // The very first variants write introduces the markers in the proposed
+    // content itself.
+    let proposed = format!("/* impeccable-carbonize-start ab12cd34 */\n{slop}");
+    let (out, code) = hbe(&r, &cursor(&cwd, "Write", json!({"file_path": "src/x.css", "content": proposed})));
+    assert_eq!(code, 0);
+    assert_eq!(out, "{\"permission\":\"allow\"}");
+    // Later fragment edits touch a file that already carries them on disk:
+    // the proposed content alone looks like plain slop.
+    t.write("src/y.css", "/* impeccable-carbonize-start ab12cd34 */\n.v { color: red; }\n");
+    let (out, code) = hbe(&r, &cursor(&cwd, "Write", json!({"file_path": "src/y.css", "content": slop})));
+    assert_eq!(code, 0);
+    assert_eq!(out, "{\"permission\":\"allow\"}");
+}
+
+#[test]
+fn run_hook_stands_down_for_the_whole_edit_when_the_primary_carries_live_markers() {
+    // The edited JSX carries the wrapper; the stylesheet it imports does not.
+    // Co-scanning would still speak up about the stylesheet mid-session, so
+    // the whole event stands down. The same files without markers prove the
+    // co-scan is otherwise live.
+    let t = Tmp::new();
+    let cwd = t.path();
+    let r = rt(&cwd);
+    t.write("src/styles.css", GRADIENT_CSS);
+    let plain = t.write("src/Plain.jsx", "import './styles.css';\nexport default function Plain() { return <h1 className=\"hero-title\">Hi</h1>; }\n");
+    let reported = hook::run_hook(&r, &edit_event(&cwd, &plain, "s1"));
+    assert!(reported.stdout.contains("[gradient-text]"), "co-scanned stylesheet is reported without markers: {}", reported.stdout);
+    let wrapped = t.write(
+        "src/App.jsx",
+        "import './styles.css';\n{/* impeccable-variants-start ab12cd34 */}<div data-impeccable-variants=\"ab12cd34\" data-impeccable-variant-count=\"3\"></div>\n",
+    );
+    let skipped = hook::run_hook(&r, &edit_event(&cwd, &wrapped, "s2"));
+    assert_eq!(skipped.stdout, "", "nothing is emitted while the edited file is in a live session");
+    assert_eq!(skipped.audit["skipped"], json!("live-preview"));
+    let audited = audit_str(&skipped.audit, "file").unwrap_or("").replace('\\', "/");
+    assert!(audited.ends_with("src/App.jsx"), "the audit names the edited file, not the companion: {audited}");
+}
+
+#[test]
+fn run_hook_stands_down_before_the_edit_cap_can_suppress_a_live_file() {
+    // A file edited past the per-session cap would be skipped as
+    // "suppressed" (with the notice) before its content is read. A live
+    // wrap on such a file must stand down instead, every time.
+    let t = Tmp::new();
+    let cwd = t.path();
+    std::fs::create_dir_all(t.0.join(".impeccable")).unwrap();
+    let r = rt(&cwd);
+    // Seven plain edits cross the cap: the 7th carries the notice.
+    let css = t.write("src/b.css", GRADIENT_CSS);
+    let mut outputs = Vec::new();
+    for _ in 0..7 {
+        outputs.push(hook::run_hook(&r, &edit_event(&cwd, &css, "cap")));
+    }
+    assert_eq!(outputs[6].audit["suppressed"], json!(true));
+    assert!(outputs[6].stdout.contains("Suppressing further design hints"));
+    // Now a live session carbonizes into that same file: stand down, never
+    // suppress.
+    t.write(
+        "src/b.css",
+        &format!("/* impeccable-carbonize-start ab12cd34 */\n{GRADIENT_CSS}/* impeccable-carbonize-end ab12cd34 */\n"),
+    );
+    for i in 0..3 {
+        let out = hook::run_hook(&r, &edit_event(&cwd, &css, "cap"));
+        assert_eq!(out.stdout, "", "edit {i}: nothing emitted");
+        assert_eq!(out.audit["skipped"], json!("live-preview"), "edit {i}");
+        assert!(out.audit.get("suppressed").is_none(), "edit {i}: {:?}", out.audit);
+        assert!(out.audit.get("editCount").is_none(), "edit {i}: the cap is not bumped for a live wrap");
+    }
 }

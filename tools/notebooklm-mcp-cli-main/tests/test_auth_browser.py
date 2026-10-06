@@ -102,6 +102,70 @@ def test_get_chromium_path_selects_named_comet_on_macos():
     assert result == expected
 
 
+def test_edge_beta_is_a_supported_explicit_auth_browser():
+    from notebooklm_tools.utils.auth_browser import CHROMIUM_BROWSER_KEYS
+
+    assert "edge-beta" in CHROMIUM_BROWSER_KEYS
+
+
+def test_select_auth_backend_passes_edge_beta_preference():
+    from notebooklm_tools.utils.auth_browser import select_auth_backend
+
+    with (
+        patch(
+            "notebooklm_tools.utils.cdp._get_chromium_path",
+            return_value="msedge-beta",
+        ) as get_path,
+        patch(
+            "notebooklm_tools.utils.cdp.get_browser_display_name",
+            return_value="Microsoft Edge Beta",
+        ),
+        patch("notebooklm_tools.utils.firefox.get_firefox_path", return_value=None),
+    ):
+        backend = select_auth_backend("edge-beta")
+
+    get_path.assert_called_once_with("edge-beta")
+    assert backend == {"backend": "chromium_cdp", "browser": "Microsoft Edge Beta"}
+
+
+def test_get_chromium_path_selects_edge_beta_candidate(tmp_path, monkeypatch):
+    from notebooklm_tools.utils import cdp
+
+    beta = tmp_path / "msedge.exe"
+    beta.write_bytes(b"")
+    monkeypatch.setattr(cdp.platform, "system", lambda: "Windows")
+    monkeypatch.setattr(
+        cdp,
+        "_windows_browser_candidates",
+        lambda: [
+            ("Google Chrome", str(tmp_path / "missing-chrome.exe")),
+            ("Microsoft Edge Beta", str(beta)),
+        ],
+    )
+    monkeypatch.setattr(cdp, "_detected_browser_name", None)
+    monkeypatch.setattr(cdp, "_get_preferred_browser_path", lambda: "")
+
+    assert cdp._get_chromium_path("edge-beta") == str(beta)
+    assert cdp.get_browser_display_name() == "Microsoft Edge Beta"
+
+
+def test_platform_candidates_include_edge_beta():
+    from notebooklm_tools.utils.cdp import (
+        _LINUX_BROWSER_CANDIDATES,
+        _macos_browser_candidates,
+        _windows_browser_candidates,
+    )
+
+    assert ("Microsoft Edge Beta", "microsoft-edge-beta") in _LINUX_BROWSER_CANDIDATES
+    assert any(name == "Microsoft Edge Beta" for name, _ in _macos_browser_candidates())
+
+    beta_paths = [
+        path for name, path in _windows_browser_candidates() if name == "Microsoft Edge Beta"
+    ]
+    assert beta_paths
+    assert any(r"Microsoft\Edge Beta\Application\msedge.exe" in path for path in beta_paths)
+
+
 def test_explicit_browser_path_wins_over_named_discovery(tmp_path):
     from notebooklm_tools.utils.cdp import _get_chromium_path
 
@@ -285,3 +349,44 @@ def test_get_headers_flattens_list_cookies(tmp_path, monkeypatch):
     assert "SID=google" in headers["Cookie"]
     assert "youtube" not in headers["Cookie"]
     assert headers["X-Goog-Csrf-Token"] == "csrf1"
+
+
+def test_get_headers_uses_saved_base_host(tmp_path, monkeypatch):
+    """Origin/Referer follow the host the account was signed in on (issue #332)."""
+    from notebooklm_tools.core.auth import AuthManager
+
+    monkeypatch.setenv("NOTEBOOKLM_MCP_CLI_PATH", str(tmp_path))
+    monkeypatch.delenv("NOTEBOOKLM_BASE_URL", raising=False)
+
+    auth = AuthManager("default")
+    auth.save_profile(
+        cookies=[{"name": "SID", "value": "google", "domain": ".google.com"}],
+        csrf_token="csrf1",
+        email="u@example.com",
+        base_host="notebook.google.com",
+    )
+
+    headers = auth.get_headers()
+
+    assert headers["Origin"] == "https://notebook.google.com"
+    assert headers["Referer"] == "https://notebook.google.com/"
+
+
+def test_get_headers_defaults_host_when_unset(tmp_path, monkeypatch):
+    """No saved host falls back to the default (issue #332)."""
+    from notebooklm_tools.core.auth import AuthManager
+
+    monkeypatch.setenv("NOTEBOOKLM_MCP_CLI_PATH", str(tmp_path))
+    monkeypatch.delenv("NOTEBOOKLM_BASE_URL", raising=False)
+
+    auth = AuthManager("default")
+    auth.save_profile(
+        cookies=[{"name": "SID", "value": "google", "domain": ".google.com"}],
+        csrf_token="csrf1",
+        email="u@example.com",
+    )
+
+    headers = auth.get_headers()
+
+    assert headers["Origin"] == "https://notebooklm.google.com"
+    assert headers["Referer"] == "https://notebooklm.google.com/"

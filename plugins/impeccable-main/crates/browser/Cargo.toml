@@ -6,6 +6,7 @@ license.workspace = true
 publish.workspace = true
 
 [dependencies]
+impeccable-common = { workspace = true }
 impeccable-core = { workspace = true }
 impeccable-detect = { workspace = true }
 serde_json = { workspace = true, features = ["preserve_order", "float_roundtrip"] }
@@ -14,3 +15,5 @@ png = "0.18"
 base64 = "0.22"
 url = "2"
 percent-encoding = "2"
+
+sha2 = "0.10"

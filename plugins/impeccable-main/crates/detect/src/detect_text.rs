@@ -80,17 +80,32 @@ fn is_word_char(c: char) -> bool {
     c.is_ascii_alphanumeric() || c == '_' || c == '$'
 }
 
-re!(JSX_TAG_START_RE, "^<[A-Za-z][A-Za-z0-9_.:-]*");
+fn is_jsx_name_start(ch: char) -> bool {
+    ch.is_alphabetic() || matches!(ch, '_' | '$')
+}
+
+fn is_jsx_name_continue(ch: char) -> bool {
+    ch.is_alphanumeric() || matches!(ch, '_' | '$' | '.' | ':' | '-')
+}
 
 fn is_inside_opening_jsx_tag(source: &str) -> bool {
     let Some(tag_start) = source.rfind('<') else {
         return false;
     };
-    if !JSX_TAG_START_RE.is_match(&source[tag_start..]) {
+    let mut chars = source[tag_start + 1..].chars().peekable();
+    if !chars.next().is_some_and(is_jsx_name_start) {
+        return false;
+    }
+    while chars.peek().is_some_and(|ch| is_jsx_name_continue(*ch)) {
+        chars.next();
+    }
+    if chars
+        .peek()
+        .is_some_and(|ch| !is_ws(*ch) && !matches!(ch, '<' | '/' | '>'))
+    {
         return false;
     }
     let mut quote: Option<char> = None;
-    let mut chars = source[tag_start + 1..].chars();
     while let Some(ch) = chars.next() {
         if let Some(q) = quote {
             if ch == '\\' {
@@ -121,6 +136,188 @@ fn last_line(output: &str) -> &str {
         Some(i) => &output[i + 1..],
         None => output,
     }
+}
+
+struct ParsedJsxTag {
+    name: String,
+    closing: bool,
+    self_closing: bool,
+    end: usize,
+}
+
+fn jsx_expression_end(chars: &[char], start: usize) -> Option<usize> {
+    let mut depth = 1usize;
+    let mut sig = Significant::default();
+    let mut last_closed_brace_kind: &'static str = "";
+    let mut brace_kinds: Vec<&'static str> = Vec::new();
+    let mut jsx_stack: Vec<String> = Vec::new();
+    let mut cursor = start + 1;
+    while cursor < chars.len() {
+        let ch = chars[cursor];
+        let next = chars.get(cursor + 1).copied();
+        if !jsx_stack.is_empty() {
+            if ch == '<' {
+                if let Some(tag) = parse_jsx_tag(chars, cursor) {
+                    let end = tag.end;
+                    if tag.closing {
+                        if jsx_stack.last() == Some(&tag.name) {
+                            jsx_stack.pop();
+                        }
+                    } else if !tag.self_closing {
+                        jsx_stack.push(tag.name);
+                    }
+                    cursor = end + 1;
+                    continue;
+                }
+            } else if ch == '{' {
+                cursor = jsx_expression_end(chars, cursor)? + 1;
+                continue;
+            }
+            cursor += 1;
+            continue;
+        }
+        if ch == '<' && sig.regex_can_start(last_closed_brace_kind) {
+            if let Some(tag) = parse_jsx_tag(chars, cursor) {
+                if !tag.closing {
+                    let end = tag.end;
+                    if !tag.self_closing {
+                        jsx_stack.push(tag.name);
+                    }
+                    cursor = end + 1;
+                    sig.record(')');
+                    continue;
+                }
+            }
+        }
+        if matches!(ch, '\'' | '"') {
+            cursor = find_quoted_string_end(chars, cursor, ch)? + 1;
+            sig.record(')');
+            continue;
+        }
+        if ch == '`' {
+            cursor = find_template_literal_end(chars, cursor)? + 1;
+            sig.record(')');
+            continue;
+        }
+        if ch == '/' && next == Some('/') {
+            cursor += chars[cursor..].iter().position(|c| *c == '\n')?;
+            continue;
+        }
+        if ch == '/' && next == Some('*') {
+            cursor = find_sub(chars, cursor + 2, &['*', '/'])? + 2;
+            continue;
+        }
+        if ch == '/' && sig.regex_can_start(last_closed_brace_kind) {
+            if let Some(end) = find_regex_literal_end(chars, cursor) {
+                cursor = end + 1;
+                sig.record(')');
+                continue;
+            }
+        }
+        if ch == '{' {
+            depth += 1;
+            brace_kinds.push(sig.brace_kind(false, true));
+            sig.record(ch);
+        } else if ch == '}' {
+            depth -= 1;
+            if depth == 0 {
+                return Some(cursor);
+            }
+            last_closed_brace_kind = brace_kinds.pop().unwrap_or("");
+            sig.record(ch);
+        } else {
+            sig.record(ch);
+        }
+        cursor += 1;
+    }
+    None
+}
+
+fn parse_jsx_tag(chars: &[char], start: usize) -> Option<ParsedJsxTag> {
+    if chars.get(start) != Some(&'<') {
+        return None;
+    }
+    let mut cursor = start + 1;
+    let closing = chars.get(cursor) == Some(&'/');
+    if closing {
+        cursor += 1;
+    }
+
+    if chars.get(cursor) == Some(&'>') {
+        return Some(ParsedJsxTag {
+            name: String::new(),
+            closing,
+            self_closing: false,
+            end: cursor,
+        });
+    }
+    if !chars.get(cursor).is_some_and(|ch| is_jsx_name_start(*ch)) {
+        return None;
+    }
+    let name_start = cursor;
+    cursor += 1;
+    while chars
+        .get(cursor)
+        .is_some_and(|ch| is_jsx_name_continue(*ch))
+    {
+        cursor += 1;
+    }
+    let name: String = chars[name_start..cursor].iter().collect();
+    if !chars
+        .get(cursor)
+        .is_some_and(|ch| is_ws(*ch) || matches!(ch, '<' | '/' | '>'))
+    {
+        return None;
+    }
+    if closing {
+        while chars.get(cursor).is_some_and(|ch| is_ws(*ch)) {
+            cursor += 1;
+        }
+        return (chars.get(cursor) == Some(&'>')).then_some(ParsedJsxTag {
+            name,
+            closing: true,
+            self_closing: false,
+            end: cursor,
+        });
+    }
+
+    let mut angle_depth = 0usize;
+    let mut last_significant = name_start + name.chars().count() - 1;
+    while cursor < chars.len() {
+        let ch = chars[cursor];
+        let next = chars.get(cursor + 1).copied();
+        if matches!(ch, '\'' | '"') {
+            cursor = find_quoted_string_end(chars, cursor, ch)?;
+            last_significant = cursor;
+        } else if ch == '/' && next == Some('/') {
+            cursor += chars[cursor..].iter().position(|c| *c == '\n')?;
+            continue;
+        } else if ch == '/' && next == Some('*') {
+            cursor = find_sub(chars, cursor + 2, &['*', '/'])? + 2;
+            continue;
+        } else if ch == '{' {
+            cursor = jsx_expression_end(chars, cursor)?;
+            last_significant = cursor;
+        } else if ch == '<' {
+            angle_depth += 1;
+            last_significant = cursor;
+        } else if ch == '>' {
+            if angle_depth == 0 {
+                return Some(ParsedJsxTag {
+                    name,
+                    closing: false,
+                    self_closing: chars[last_significant] == '/',
+                    end: cursor,
+                });
+            }
+            angle_depth -= 1;
+            last_significant = cursor;
+        } else if !is_ws(ch) {
+            last_significant = cursor;
+        }
+        cursor += 1;
+    }
+    None
 }
 
 /// Tracker of the "significant character" state the JS comment stripper and
@@ -232,6 +429,8 @@ pub fn strip_js_comments(content: &str, jsx: bool) -> String {
     let mut last_closed_brace_kind: &'static str = "";
     let mut brace_kinds: Vec<&'static str> = Vec::new();
     let mut template_expression_depths: Vec<usize> = Vec::new();
+    let mut jsx_stack: Vec<String> = Vec::new();
+    let mut jsx_closing_slash = None;
 
     let mut i = 0;
     while i < chars.len() {
@@ -314,6 +513,22 @@ pub fn strip_js_comments(content: &str, jsx: bool) -> String {
             continue;
         }
 
+        if jsx && ch == '<' && (!is_inside_opening_jsx_tag(&output) || jsx_expression_depth > 0) {
+            let in_jsx_text = !jsx_stack.is_empty() && jsx_expression_depth == 0;
+            if in_jsx_text || sig.regex_can_start(last_closed_brace_kind) {
+                if let Some(tag) = parse_jsx_tag(&chars, i) {
+                    if tag.closing {
+                        if jsx_stack.last() == Some(&tag.name) {
+                            jsx_closing_slash = Some(i + 1);
+                            jsx_stack.pop();
+                        }
+                    } else if !tag.self_closing {
+                        jsx_stack.push(tag.name);
+                    }
+                }
+            }
+        }
+
         let jsx_url_separator = jsx
             && ch == '/'
             && next == Some('/')
@@ -359,7 +574,10 @@ pub fn strip_js_comments(content: &str, jsx: bool) -> String {
                 state = State::Template;
             }
             i += 1;
-        } else if ch == '/' && sig.regex_can_start(last_closed_brace_kind) {
+        } else if ch == '/'
+            && sig.regex_can_start(last_closed_brace_kind)
+            && jsx_closing_slash != Some(i)
+        {
             output.push(ch);
             state = State::Regex;
             regex_char_class = false;
@@ -371,7 +589,8 @@ pub fn strip_js_comments(content: &str, jsx: bool) -> String {
                 && jsx_expression_depth == 0
                 && ({
                     let without_last = &output[..output.len() - ch.len_utf8()];
-                    JSX_TEXT_CONTEXT_RE.is_match(last_line(without_last))
+                    !jsx_stack.is_empty()
+                        || JSX_TEXT_CONTEXT_RE.is_match(last_line(without_last))
                         || is_inside_opening_jsx_tag(without_last)
                 });
             if ch == '{' {
@@ -1582,6 +1801,110 @@ mod tests {
         let out = strip_js_comments("a // x\nb /* y */ c\nconst r = /\\/\\//; d", true);
         assert_eq!(out, "a     \nb         c\nconst r = /\\/\\//; d");
         assert_eq!(strip_css_comments("a /* é */ b"), "a         b");
+    }
+
+    #[test]
+    fn jsx_line_comment_after_sibling_elements_does_not_report_broken_image() {
+        let src = r#"function Row({ label, value }: { label: string; value: string }) {
+  return (
+    <>
+      <dt>{label}</dt>
+      <dd>{value}</dd>
+    </>
+  );
+}
+
+function Thumb({ url }: { url?: string }) {
+  return (
+    <div>
+      {url ? (
+        // Plain <img>: presigned thumbnail URL
+        <img src={url} alt="" />
+      ) : null}
+    </div>
+  );
+}
+"#;
+
+        let findings = detect_text(
+            src,
+            "repro.tsx",
+            &TextOptions {
+                inline_ignores: true,
+                ..Default::default()
+            },
+        );
+
+        assert!(
+            findings
+                .iter()
+                .all(|finding| finding.antipattern != "broken-image"),
+            "JSX line comments must not be scanned as markup: {findings:?}"
+        );
+    }
+
+    #[test]
+    fn jsx_closing_tag_names_do_not_start_regex_state() {
+        for tag in ["_Row", "$Thumbnail", "Übersicht"] {
+            let src = format!("<{tag} value={{a<b>c}}></{tag}>\n// Plain <img> comment\n");
+            assert!(
+                !strip_js_comments(&src, true).contains("<img>"),
+                "opening tag for {tag} must contain comparison expressions without corrupting JSX depth"
+            );
+        }
+    }
+
+    #[test]
+    fn opening_jsx_tag_guard_accepts_every_supported_name_start() {
+        for source in ["<_Row value=", "<$Thumbnail value=", "<Übersicht value="] {
+            assert!(
+                is_inside_opening_jsx_tag(source),
+                "opening-tag guard must accept the same names as the JSX parser: {source}"
+            );
+        }
+    }
+
+    #[test]
+    fn jsx_opening_tag_shapes_keep_their_matching_closer_out_of_regex_state() {
+        for opener in ["<Component<T>>", "<Component /* comment */>"] {
+            let src = format!("{opener}</Component>\n// Plain <img> comment\n");
+            assert!(
+                !strip_js_comments(&src, true).contains("<img>"),
+                "opening tag {opener} must count toward the matching closer"
+            );
+        }
+    }
+
+    #[test]
+    fn comparison_regex_is_not_a_jsx_closing_tag() {
+        for prefix in ["", "<foo></foo>;\n"] {
+            let src = format!(
+                "{prefix}const matches = value</foo>'/.test(value);\n// Plain <img> comment\n"
+            );
+            assert!(!strip_js_comments(&src, true).contains("<img>"));
+        }
+    }
+
+    #[test]
+    fn jsx_like_text_inside_expressions_does_not_change_tag_depth() {
+        for src in [
+            "<div>{\"</div>\"}</div>\n// Plain <img> comment\n",
+            "<Component pattern={/[//]/}></Component>\n// Plain <img> comment\n",
+            "<Component content={<span></span>}></Component>\n// Plain <img> comment\n",
+            "const value = a<foo<T>>b;\nconst matches = value</foo>'/.test(value);\n// Plain <img> comment\n",
+        ] {
+            assert!(
+                !strip_js_comments(src, true).contains("<img>"),
+                "JS strings, regexes, and comparisons must not affect JSX tag depth: {src}"
+            );
+        }
+    }
+
+    #[test]
+    fn repeated_jsx_closing_tags_leave_following_comments_visible_to_the_stripper() {
+        let mut src = format!("<>{}</>", "<div></div>".repeat(4_096));
+        src.push_str("\n// Plain <img> comment\n");
+        assert!(!strip_js_comments(&src, true).contains("<img>"));
     }
 
     #[test]

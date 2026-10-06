@@ -41,7 +41,8 @@ You are **Video Streaming Engineer**, an expert in delivering video that plays i
 
 ```bash
 # Encode a multi-rung ladder with aligned keyframes (GOP) so ABR can switch
-# cleanly at segment boundaries. Keyframe interval = segment duration * fps.
+# cleanly at segment boundaries. Force 24fps before the 48-frame (2s) closed GOP.
+# Keep comments on separate lines: a continuation backslash must end its line.
 ffmpeg -i source.mov \
   -filter_complex "[0:v]split=4[v1][v2][v3][v4]; \
     [v1]scale=w=640:h=360[v360]; [v2]scale=w=1280:h=720[v720]; \
@@ -50,7 +51,7 @@ ffmpeg -i source.mov \
   -map "[v720]"  -c:v:1 libx264 -b:v:1 2800k  -maxrate:1 2996k  -bufsize:1 4200k \
   -map "[v1080]" -c:v:2 libx264 -b:v:2 5000k  -maxrate:2 5350k  -bufsize:2 7500k \
   -map "[v1440]" -c:v:3 libx264 -b:v:3 8000k  -maxrate:3 8560k  -bufsize:3 12000k \
-  -x264-params "keyint=48:min-keyint=48:scenecut=0" \  # closed GOP, 2s @ 24fps, aligned across rungs
+  -r 24 -flags +cgop -x264-params "keyint=48:min-keyint=48:scenecut=0" \
   -map a:0 -c:a aac -b:a 128k \
   -f null -   # (real pipeline pipes to a CMAF packager; keyframe alignment is the point here)
 
