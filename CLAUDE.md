@@ -59,7 +59,7 @@ steps stay here, beside the script.
 
 **`bootstrap-device/plugins-claude-code.tsv` is generated.** Only the `pack` column is edited by
 hand; `export-plugins.sh` preserves it and regenerates everything else. Rejections live in
-`plugins-loai.tsv` so they are not re-litigated.
+`plugins-rejected.tsv` so they are not re-litigated.
 
 ---
 

@@ -4,7 +4,7 @@ Community skills, plugins and MCPs for Claude — Cowork and Code — kept down 
 
 **For** clinicians, researchers, and hands-on builders who want a strong default toolset without wading through 1,800-skill mega-catalogs. Everything here is free and runs on almost any machine that can run Claude. Tools marked **`Code`** work only in Claude Code, not Cowork.
 
-**33 plugins.** Every entry earned its place against a 9-axis rubric; the reasoning lives in `SCORING.md`, `RANKING-CLAUDE-CODE.md`, and `bootstrap-device/scoring-layer-2.md`. Rejections are recorded in `bootstrap-device/plugins-loai.tsv` so nobody re-litigates them from scratch.
+**33 plugins.** Every entry earned its place against a 9-axis rubric; the reasoning lives in `SCORING.md`, `RANKING-CLAUDE-CODE.md`, and `bootstrap-device/scoring-layer-2.md`. Rejections are recorded in `bootstrap-device/plugins-rejected.tsv` so nobody re-litigates them from scratch.
 
 ## What's inside
 
@@ -71,7 +71,7 @@ This group is the most crowded in the kit, and the overlap is not free. Seven to
 
 ## Dropped, and why
 
-Recorded so the decisions are not made twice. Full reasoning in `bootstrap-device/plugins-loai.tsv`.
+Recorded so the decisions are not made twice. Full reasoning in `bootstrap-device/plugins-rejected.tsv`.
 
 | Dropped | Reason |
 |---|---|

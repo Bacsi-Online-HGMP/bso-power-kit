@@ -8,7 +8,7 @@ set -euo pipefail
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
 OUT="$HERE/plugins-claude-code.tsv"
-DENY="$HERE/plugins-loai.tsv"
+DENY="$HERE/plugins-rejected.tsv"
 SRC="$HOME/.claude/plugins"
 
 [ -d "$SRC" ] || { echo "Cannot find $SRC - is Claude Code installed on this machine?" >&2; exit 1; }
@@ -55,7 +55,7 @@ lines = [
     '# Applies to `plugin` rows only. Every marketplace is always added - a generous store, a tight enable list.',
     '# This column is assigned by hand and preserved by export across regenerations.',
     '#',
-    '# Rejected entries live in plugins-loai.tsv and do not appear here. Scoring: scoring-layer-2.md',
+    '# Rejected entries live in plugins-rejected.tsv and do not appear here. Scoring: scoring-layer-2.md',
 ]
 
 local = []
@@ -108,7 +108,7 @@ if blocked:
     print(f'  (i) this machine has {len(blocked)} rejected plugins installed - not written to the TSV:')
     for n, rule in blocked:
         print(f'    - {n}  [{rule}]')
-    print('    Remove with: claude plugin uninstall <name>   - to restore one, delete its row in plugins-loai.tsv')
+    print('    Remove with: claude plugin uninstall <name>   - to restore one, delete its row in plugins-rejected.tsv')
 if new:
     print(f'  ! {len(new)} NEW plugins have no pack yet (left as "?") and will not install unless --all:')
     print('    ' + ', '.join(new))

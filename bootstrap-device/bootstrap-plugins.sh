@@ -6,7 +6,7 @@
 # Layer 3 (MCP connectors) must be authorised by hand. See bso-marketing/docs/new-machine-setup.md.
 #
 # The list passed the 9-axis rubric on 2026-08-06: 16 kept, 65 rejected.
-# Per-item scores: scoring-layer-2.md - reasons for rejection: plugins-loai.tsv
+# Per-item scores: scoring-layer-2.md - reasons for rejection: plugins-rejected.tsv
 #
 # Dry run to see what it would do:  ./bootstrap-plugins.sh --dry-run
 # Runs on bash 3.2 (the macOS default).

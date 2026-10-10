@@ -56,9 +56,9 @@ TOOLS=(
   design.md ai-website-cloner-template-master vercel-labs-skills-main
 )
 
-# Dropped in 0.2.0 — do not re-add. Reasons: bootstrap-device/plugins-loai.tsv
+# Dropped in 0.2.0 — do not re-add. Reasons: bootstrap-device/plugins-rejected.tsv
 #   superpowers-main           mattpocock-skills covers it; verification-before-completion split out
-#   ECC-main                   NG=1, no usable skill
+#   ECC-main                   TOKENS=1, no usable skill
 #   huggingface-skills-main    19 ML skills, all hit the PH floor
 #   AI-Research-SKILLs-main    model training, not content work
 #   SocratiCode-main           duplicate job, unused

@@ -1,14 +1,13 @@
-<!-- lang-exception: scoring-axis codes and names are Vietnamese initials (e.g. DL = Doc lap), each glossed in English; the pack names (vanphong, noidung) and the file name plugins-loai.tsv are literal values used by the install scripts. -->
 # Scoring — Layer 2 (Claude Code plugins)
 
 Scoring the 81 Layer-2 plugins against the 9-axis rubric in
 `bso-marketing/docs/tool-scoring-rubric.md`. Dated 2026-08-06. The results produce
-`plugins-claude-code.tsv` (what gets installed) and `plugins-loai.tsv` (what was rejected, with the
+`plugins-claude-code.tsv` (what gets installed) and `plugins-rejected.tsv` (what was rejected, with the
 reason kept).
 
-> **Language note.** The axis codes (`PH`, `CP`, `AT`, `FR`, `ĐL`, `VH`, `NG`, `PB`, `TR`) and the pack
-> names (`core`, `code`, `seo`, `vanphong`) are kept verbatim — the axes are the scoring-table headers
-> shared across documents, and the pack names are literal values in the TSV files.
+> **Language note.** The pack names (`core`, `code`, `seo`, `vanphong`) are kept verbatim: they are
+> literal values in the TSV files. The axis codes were renamed to English on 2026-10-09; the rubric
+> lists the old codes.
 
 ## Why this pass was necessary
 
@@ -21,30 +20,30 @@ had never been scored by any rubric. This is **a first scoring, not a re-scoring
 
 ## A hole in the rubric that had to be patched before scoring was possible
 
-The 58 first-party Anthropic plugins take a 5 almost automatically on `AT FR ĐL VH PB`. `csharp-lsp`
+The 58 first-party Anthropic plugins take a 5 almost automatically on `SAFE FREE UPSELL COST STAR`. `csharp-lsp`
 comes out at **40 points = tier S** even though BSO does not write a single line of C#. The old cut
 rule only bit from tier B downward, so it never touched it.
 
-Patched with **a hard floor: `PH` = 1 → rejected outright, independent of tier** (and `PB` = 1 →
-rejected outright). The full reasoning is recorded in the rubric. In exchange, every `PH` = 1 below
+Patched with **a hard floor: `FIT` = 1 → rejected outright, independent of tier** (and `STAR` = 1 →
+rejected outright). The full reasoning is recorded in the rubric. In exchange, every `FIT` = 1 below
 **carries a one-line reason** — that was the condition the rubric set when it accepted the hard floor.
 
 ## Two different rejection rules — do not confuse them
 
 | Rule | Where | What it examines |
 |---|---|---|
-| **The cut rule** | The rubric, section *Cut rule* | The quality of **one** entry: the `PH`/`PB` floors, tier, low-score flags |
+| **The cut rule** | The rubric, section *Cut rule* | The quality of **one** entry: the `FIT`/`STAR` floors, tier, low-score flags |
 | **The duplication rule** | `bso-marketing/tools/workspace-root/files/CLAUDE.md` — *heavy overlap, enable one* | The relationship between **two** entries |
 
-The `TR` axis **is not used in the cut rule** — the rubric says so explicitly. So the 5 entries below
+The `DUP` axis **is not used in the cut rule** — the rubric says so explicitly. So the 5 entries below
 rejected for duplication were rejected under the *duplication rule*, not the cut rule. Their scores
 remain high.
 
 ## Kept — 16 plugins, scored on all 9 axes
 
-The score column runs `PH CP AT FR ĐL VH NG PB`, then `TR`.
+The score column runs `FIT LEGAL SAFE FREE UPSELL COST TOKENS STAR`, then `DUP`.
 
-| Plugin | Source | Pack | PH CP AT FR ĐL VH NG PB | TR | Total | Tier | Notes |
+| Plugin | Source | Pack | FIT LEGAL SAFE FREE UPSELL COST TOKENS STAR | DUP | Total | Tier | Notes |
 |---|---|---|---|:--:|:--:|:--:|---|
 | `claude-md-management` | official | core | 5 5 5 5 5 5 5 5 | 5 | **45** | S | Four tiers of CLAUDE.md (root · marketing · core · assets) — exactly the job |
 | `plugin-dev` | official | core | 5 5 5 5 5 5 5 5 | 5 | **45** | S | BSO runs two marketplaces of its own. Nothing replaces it |
@@ -53,15 +52,15 @@ The score column runs `PH CP AT FR ĐL VH NG PB`, then `TR`.
 | `pyright-lsp` | official | code | 4 5 5 5 5 5 4 5 | 5 | **43** | S | The video pipeline and `okf.py` are both Python |
 | `security-guidance` | official | core | 3 5 5 5 5 5 5 5 | 4 | **42** | S | "Never commit a secret" is a house rule — a machine layer helping is welcome |
 | `hookify` | official | core | 3 5 4 5 5 5 5 5 | 5 | **42** | S | A hook running `okf check` before a push |
-| `desktop-commander` | official | core | 5 5 3 5 5 5 4 5 | 4 | **41** | S | **IN USE.** `AT`=3: it runs arbitrary shell on the real machine, a very wide permission |
-| `code-review` | official | code | 3 5 5 5 5 5 5 5 | 3 | **41** | S | `TR`=3 against brooks-lint and mattpocock — light overlap, enable both |
+| `desktop-commander` | official | core | 5 5 3 5 5 5 4 5 | 4 | **41** | S | **IN USE.** `SAFE`=3: it runs arbitrary shell on the real machine, a very wide permission |
+| `code-review` | official | code | 3 5 5 5 5 5 5 5 | 3 | **41** | S | `DUP`=3 against brooks-lint and mattpocock — light overlap, enable both |
 | `caveman` | caveman | vanphong | 3 4 4 5 4 5 5 5 | 5 | **40** | S | 96k stars, pushed 04-08. Reduces output tokens; **never used for product-facing copy** |
 | `ponytail` | ponytail | vanphong | 3 5 5 5 4 5 5 5 | 3 | **40** | S | 96.5k stars, pushed 15-07. Concise code style |
-| `github` | official | code | 4 5 4 5 5 5 4 5 | 3 | **40** | S | `TR`=3: the `gh` CLI already does most of it |
-| `andrej-karpathy-skills` | karpathy-skills | code | 4 5 2 5 5 5 5 4 | 4 | **39** | S | 🟠 **`AT`=2** — see the warning below |
+| `github` | official | code | 4 5 4 5 5 5 4 5 | 3 | **40** | S | `DUP`=3: the `gh` CLI already does most of it |
+| `andrej-karpathy-skills` | karpathy-skills | code | 4 5 2 5 5 5 5 4 | 4 | **39** | S | 🟠 **`SAFE`=2** — see the warning below |
 | `chrome-devtools-mcp` | official | seo | 4 5 4 5 5 5 3 5 | 2 | **38** | S | Overlaps three ways — see *the duplication rule* |
-| `superpowers` | official | code | 4 5 5 5 5 4 2 5 | 3 | **38** | S | `NG`=2: 14 self-triggering skills. The heaviest of the kept set |
-| `ecc` | ecc | code | 2 4 3 5 4 4 1 5 | 3 | **31** | A | 238k stars. `NG`=1 — a full agent OS. Keep it in the store, **consider not enabling it** |
+| `superpowers` | official | code | 4 5 5 5 5 4 2 5 | 3 | **38** | S | `TOKENS`=2: 14 self-triggering skills. The heaviest of the kept set |
+| `ecc` | ecc | code | 2 4 3 5 4 4 1 5 | 3 | **31** | A | 238k stars. `TOKENS`=1 — a full agent OS. Keep it in the store, **consider not enabling it** |
 
 ### 🟠 `andrej-karpathy-skills` — the repo changed hands
 
@@ -69,7 +68,7 @@ The source in the TSV reads `forrestchang/andrej-karpathy-skills`. The GitHub AP
 **`multica-ai/andrej-karpathy-skills`** — the repo has moved, and the old path still works through a
 redirect. The repo **has no licence**, and was last pushed 2026-04-20.
 
-Under the rubric, "an author who looks like an impersonating fork" is a low-`AT` signal; changing
+Under the rubric, "an author who looks like an impersonating fork" is a low-`SAFE` signal; changing
 hands plus losing the licence lands in that same box. The total is 39, so the cut rule cannot catch it
 — **this is a human decision, not the rubric's.** Two routes: fix the source to `multica-ai/...` and
 pin a commit, or drop it and keep the rules in an in-house skill. Undecided, and the source has not
@@ -77,7 +76,7 @@ been changed.
 
 ### `ecc` — keep it in the store, do not enable it yet
 
-`NG`=1 is the heaviest score in the kept set: ECC is a full agent harness (agents + commands + hooks +
+`TOKENS`=1 is the heaviest score in the kept set: ECC is a full agent harness (agents + commands + hooks +
 skills + MCP). Under the *generous store, tight enable list* rule it belongs in the TSV, but in the
 `code` pack, installed only when there is a real need.
 
@@ -91,17 +90,17 @@ Nothing here is poor. They were rejected because **something else in the same do
 | `claude-code-setup` | 41 (S) | `bootstrap-device` | The in-house installer has the `pack` column and understands the three plugin layers |
 | `playwright` | 38 (S) | `chrome-devtools-mcp` | Both drive a browser; DevTools can also read the console and the network |
 | `remember` | 37 (A) | Cowork's memory | Memory already exists per account; a second layer is unnecessary |
-| `huggingface-skills` *(the official copy)* | 35 (A) | — | It drags in 19 ML skills; all 19 are rejected by the `PH` floor below |
+| `huggingface-skills` *(the official copy)* | 35 (A) | — | It drags in 19 ML skills; all 19 are rejected by the `FIT` floor below |
 
 `chrome-devtools-mcp` overlaps **three** ways: the official copy (kept), the copy in the
 `bso-power-kit` marketplace, and Claude-in-Chrome in Cowork. Enable **one** — the official copy,
 because it travels with Claude Code and needs no build-standalone.
 
-## Rejected by the hard `PH` = 1 floor — 44 plugins
+## Rejected by the hard `FIT` = 1 floor — 44 plugins
 
 Each row carries a reason, exactly as the rubric required when it accepted the hard floor.
 
-| Plugin | Reason for `PH` = 1 |
+| Plugin | Reason for `FIT` = 1 |
 |---|---|
 | `csharp-lsp` · `jdtls-lsp` · `php-lsp` · `clangd-lsp` · `typescript-lsp` | BSO does not write C#, Java, PHP, C/C++ or TypeScript |
 | `auth0` · `firebase` · `supabase` · `vercel` · `expo` | Web/mobile application infrastructure — BSO has no software product |
@@ -118,10 +117,10 @@ Each row carries a reason, exactly as the rubric required when it accepted the h
 
 ## Rejected by the ordinary cut rule — 6 plugins
 
-They do not hit the `PH` floor, but land in tier B with a flag, or at `PH` = 2 with no real work for
+They do not hit the `FIT` floor, but land in tier B with a flag, or at `FIT` = 2 with no real work for
 them.
 
-| Plugin | PH | Why |
+| Plugin | FIT | Why |
 |---|:--:|---|
 | `pr-review-toolkit` | 2 | BSO pushes straight to `main` and has no PR flow — `CLAUDE.md` says plainly "there is still no gate on `main`" |
 | `code-modernization` | 2 | There is no legacy codebase to modernise; the two video pipelines run fine |
@@ -191,29 +190,29 @@ This is exactly the third cell of the `harvest` table: **read it, take the idea,
 97,679 stars · 8,638 forks · MIT · pushed 2026-05-20 · 36 skills. Enabled at **Layer 1 (Cowork)** and
 never in the Layer 2 TSV.
 
-| PH | CP | AT | FR | ĐL | VH | NG | PB | TR | Total | Tier |
+| FIT | LEGAL | SAFE | FREE | UPSELL | COST | TOKENS | STAR | DUP | Total | Tier |
 |:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|---|
 | 3 | 5 | 4 | 5 | 3 | 4 | 2 | 5 | 2 | **33** | A |
 
-- **`PH`=3** — a clear split. Hits: `handoff` (BSO already works this way), `writing-great-skills`,
+- **`FIT`=3** — a clear split. Hits: `handoff` (BSO already works this way), `writing-great-skills`,
   `grilling`, `diagnosing-bugs`, `code-review`, `teach`, `edit-article`. Misses: `to-issues`, `to-prd`,
   `triage`, `implement` and `setup-matt-pocock-skills` all assume an issue tracker BSO does not have;
   `migrate-to-shoehorn`, `setup-pre-commit` and `scaffold-exercises` are the TypeScript ecosystem;
   `obsidian-vault` is unused because BSO's knowledge base runs on OKF.
-- **`AT`=4** — MIT, with an identifiable author. One point off because the default install path is
+- **`SAFE`=4** — MIT, with an identifiable author. One point off because the default install path is
   `npx skills@latest add` (running a third party's network code), and several skills install Husky
   hooks and generate bash scripts.
-- **`ĐL`=3** — the README funnels toward the `aihero.dev` newsletter and a `skills.sh` badge. Not paid
+- **`UPSELL`=3** — the README funnels toward the `aihero.dev` newsletter and a `skills.sh` badge. Not paid
   SaaS, but it is a funnel and it depends on an installer.
-- **`NG`=2** — 36 skills, of which **4 `deprecated` + 6 `in-progress` still ship**, plus `ask-matt`,
+- **`TOKENS`=2** — 36 skills, of which **4 `deprecated` + 6 `in-progress` still ship**, plus `ask-matt`,
   a router running across all of them. A lot of description surface for roughly 8 genuinely useful
   skills.
-- **`TR`=2** — overlaps three ways: `diagnosing-bugs` ↔ `systematic-debugging`, `tdd` ↔
+- **`DUP`=2** — overlaps three ways: `diagnosing-bugs` ↔ `systematic-debugging`, `tdd` ↔
   `test-driven-development`, `writing-great-skills` ↔ `writing-skills`, `handoff` ↔ the power-kit
   `handoff` plugin already in use, `code-review` ↔ the official `code-review` + `brooks-lint`.
 
-**Not caught by the cut rule** (`PH`≠1, `PB`≠1, tier A). But two scores of 2 — had it landed in tier B
-it would have been cut. This is the old hole in a milder form: the hard `PH` floor cannot catch
+**Not caught by the cut rule** (`FIT`≠1, `STAR`≠1, tier A). But two scores of 2 — had it landed in tier B
+it would have been cut. This is the old hole in a milder form: the hard `FIT` floor cannot catch
 something *half-fitting but bulky*.
 
 **Conclusion: do not install all 36.** The right treatment is what was already planned for
@@ -222,14 +221,14 @@ for that set, not another plugin to enable.
 
 ## The 2026-08-06 pass, session three — one scoring error fixed, the merged set settled
 
-### ⚠ Correcting the `mattpocock/skills` score: `NG` 2 → 3, total 33 → **34**
+### ⚠ Correcting the `mattpocock/skills` score: `TOKENS` 2 → 3, total 33 → **34**
 
 The previous scoring counted **36 skills** by running `find` for `SKILL.md` files on disk. That was
 wrong. Reading `.claude-plugin/plugin.json` shows the plugin ships only **19 skills** — `deprecated/`
 (4), `in-progress/` (6), `misc/` (4) and `personal/` (2) **are not in the manifest**; they are in the
 repo but not packaged.
 
-The usable ratio is **11/19**, not 8/36. `NG` = 3.
+The usable ratio is **11/19**, not 8/36. `TOKENS` = 3.
 
 *The lesson, recorded so it does not recur: **count a plugin's skills from its manifest, not from
 `find` on disk.** A repo contains more than it publishes.*
@@ -262,7 +261,7 @@ do-not-edit line — to update it, copy again from the source rather than patchi
 `revendor.sh` does that copy (its `sources.tsv` row names the one directory to take), and
 `patches/add-verification-attribution.sh` re-adds the frontmatter afterwards.
 
-`superpowers` and `ecc` now live in `plugins-loai.tsv`.
+`superpowers` and `ecc` now live in `plugins-rejected.tsv`.
 
 ### Two colliding `handoff` skills — resolved through the description, not a fork
 
@@ -292,14 +291,14 @@ third party's file, recorded here so it can be reconciled the next time upstream
 ## Three token-compression tools — scored 2026-08-06, all three rejected
 
 Candidates supplied by the user. **They are not a replacement for `caveman`** — `caveman` trims what
-Claude *writes*, while these three compress what *goes in*. Different stages, so `TR` is only 3, not a
+Claude *writes*, while these three compress what *goes in*. Different stages, so `DUP` is only 3, not a
 duplication contest.
 
-| Repo | Stars | Licence | PH CP AT FR ĐL VH NG PB | TR | Total | Tier | Rejected for |
+| Repo | Stars | Licence | FIT LEGAL SAFE FREE UPSELL COST TOKENS STAR | DUP | Total | Tier | Rejected for |
 |---|:--:|---|---|:--:|:--:|:--:|---|
-| `alexgreensh/token-optimizer` | 1,811 | **PolyForm NC 1.0.0** | 3 5 2 **1** 3 4 4 4 | 3 | **29** | B | `FR`=1 |
+| `alexgreensh/token-optimizer` | 1,811 | **PolyForm NC 1.0.0** | 3 5 2 **1** 3 4 4 4 | 3 | **29** | B | `FREE`=1 |
 | `headroomlabs-ai/headroom` | 65,018 | Apache-2.0 | **2** 4 **2** 5 3 4 **2** 5 | 3 | **30** | B | three scores of 2 |
-| `ooples/token-optimizer-mcp` | 466 | MIT | 2 **1** 2 5 4 4 2 3 | 3 | **26** | B | `CP`=1 |
+| `ooples/token-optimizer-mcp` | 466 | MIT | 2 **1** 2 5 4 4 2 3 | 3 | **26** | B | `LEGAL`=1 |
 
 ### `alexgreensh/token-optimizer` — a licence forbidding commercial use
 
@@ -307,7 +306,7 @@ GitHub displays `NOASSERTION`; reading the `LICENSE` file directly shows **PolyF
 License 1.0.0**.
 
 BSO sells health supplements. Using a tool that forbids commercial use inside the pipeline that
-produces sales content is **a licence breach**, not a matter of taste. `FR`=1 because it is free but
+produces sales content is **a licence breach**, not a matter of taste. `FREE`=1 because it is free but
 BSO cannot use it lawfully without buying a separate licence.
 
 *This is the first time the cut rule has caught something on its licence. Recorded: `NOASSERTION` on
@@ -319,20 +318,20 @@ opened and read.*
 65k stars, Apache-2.0, pushed 2026-08-05, with a `.claude-plugin/marketplace.json`. A strong repo.
 Rejected anyway.
 
-- **`AT`=2** — `headroom wrap` stands up a **local proxy**, **installs Serena itself**, then runs the
+- **`SAFE`=2** — `headroom wrap` stands up a **local proxy**, **installs Serena itself**, then runs the
   agent through that proxy. Every request passes through an intermediary layer, including the contents
   of `core/claims-matrix/`. The repo says *local-first* and *reversible*, but it is still one more
   place compliance data flows through, and it installs a second tool without asking.
-- **`PH`=2** — the advertised figures are *60–95% for JSON* and *15–20% for a coding agent*. BSO's
+- **`FIT`=2** — the advertised figures are *60–95% for JSON* and *15–20% for a coding agent*. BSO's
   heavy context is **Vietnamese markdown** — rules, claims, handoffs — not JSON. BSO lands squarely at
   the low end.
-- **`NG`=2** — a library plus a proxy plus MCP, with a long list of extras, one of which needs a whole
+- **`TOKENS`=2** — a library plus a proxy plus MCP, with a long list of extras, one of which needs a whole
   C++ toolchain.
 
 The old `SCORING.md` met `headroom` once before and filed it *MESH → caveman* at 63 points. The new
 rubric gives it 30 and rejects it outright. Two independent measurements reaching the same conclusion.
 
-### `ooples/token-optimizer-mcp` — `CP`=1, a hard block
+### `ooples/token-optimizer-mcp` — `LEGAL`=1, a hard block
 
 This is the only entry that touches the compliance axis, and it touches it hard. The README states the
 mechanism plainly:
@@ -343,7 +342,7 @@ mechanism plainly:
 BSO's `CLAUDE.md` carries one rule that cannot be got wrong: **quote verbatim from
 `core/claims-matrix/` only; rephrasing an approved claim also counts as creating a new claim.** A cache
 layer that **refuses `Read` and returns a summary instead** is a core principle pushing straight toward
-a breach — precisely the rubric's definition of `CP`=1.
+a breach — precisely the rubric's definition of `LEGAL`=1.
 
 On top of that, 466 stars is far too thin a confirmation for something that blocks an agent's built-in
 tool.
@@ -369,9 +368,9 @@ regulatory breach, that intervening layer is a risk, not a convenience.
    skills under `.agents/skills/`, MIT) · `mattpocock` (36 skills, MIT) — all three MIT, so extraction
    was possible with only an attribution line. Each function **would have had to pick one version**, or
    the new set would reproduce exactly the contradiction `bso-marketing/tools/workspace-root/files/CLAUDE.md` forbids. Building it would
-   have allowed removing `superpowers` (`NG`=2) and `ecc` (`NG`=1) from the install list.
+   have allowed removing `superpowers` (`TOKENS`=2) and `ecc` (`TOKENS`=1) from the install list.
 2. ~~**`ecc` is in the store but enabling it is undecided**~~ **CLOSED** — rejected outright, moved to
-   `plugins-loai.tsv`.
+   `plugins-rejected.tsv`.
 3. ~~**`mattpocock/skills` is not in the TSV**~~ **CLOSED** — added, in pack `code`.
 4. **`andrej-karpathy-skills` still has no licence.** The source now points correctly, but no commit
    has been pinned.
@@ -387,7 +386,7 @@ regulatory breach, that intervening layer is a risk, not a convenience.
 | `seo` | 1 | chrome-devtools-mcp |
 | `vanphong` | 2 | caveman · ponytail |
 
-67 entries in `plugins-loai.tsv`. The total of 83 = the 81 scored + `mattpocock-skills` +
+67 entries in `plugins-rejected.tsv`. The total of 83 = the 81 scored + `mattpocock-skills` +
 `verification-before-completion`.
 
 ## `mcp-video-analyzer` — Gemini native-YouTube fallback added by hand (2026-08-24)
